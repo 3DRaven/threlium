@@ -5,7 +5,7 @@
   "type": "function",
   "function": {
     "name": "response_finalize",
-    "description": "Send final reply. Short answer: full text in content. Built via response_append: omit content or add closing fragment. For long responses built with response_append, prefer using response_observe first to verify completeness. subject required. Match user language; factual; Markdown when helpful; never fabricate.",
+    "description": "Send final reply. Short answer: full text in content. Built via response_append: omit content or add closing fragment. For long responses built with response_append, prefer using response_observe first to verify completeness. subject required. Match user language; factual; Markdown when helpful; never fabricate. When NOT to use: not for a partial draft with sub-questions still open or a buffer not yet verified — keep appending / observe first; not while the hop budget still permits resolving an unverified assumption.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -29,7 +29,7 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 500,
-          "description": "What you verified before finalizing. For buffered responses: sections present, coherence, factual accuracy checks. For direct replies: briefly state why content is correct and complete."
+          "description": "What you verified before finalizing. For buffered responses: sections present, coherence, factual accuracy checks. For direct replies: briefly state why content is correct and complete. In both cases, list which sub-questions were resolved and any discovered issues surfaced or addressed (or state none were found)."
         }
       },
       "required": ["reasoning", "subject", "verification_summary"],

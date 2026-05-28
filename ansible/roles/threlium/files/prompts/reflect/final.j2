@@ -27,6 +27,7 @@ Finalization strategy:
 - This is your last chance to produce a quality response. Make it count.
 - Merge accumulated knowledge into a coherent answer. Prioritize graph facts over assumptions.
 - If some parts remain unanswered, state what could not be determined and why.
+- Explicitly report any issues you discovered along the way (contradictions, gaps, errors) and the root-cause findings behind your conclusions — do not silently drop them just because this is the final cycle.
 - Route to response_finalize (with content) or response_append then response_finalize.
 - Do NOT route to reflect, cli_intent, or subagent_intent — insufficient budget.
 

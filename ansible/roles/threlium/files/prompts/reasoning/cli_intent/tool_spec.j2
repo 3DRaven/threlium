@@ -5,7 +5,7 @@
   "type": "function",
   "function": {
     "name": "cli_intent",
-    "description": "Request shell execution via CLI pipeline (allow/deny/HITL). Use only for external effects not available from memory/context. Safety: non-interactive flags; limit output; no destructive commands without explicit user request; no secrets in argv.",
+    "description": "Request shell execution via CLI pipeline (allow/deny/HITL). Use only for external effects or live system state not available from memory/context. Safety: non-interactive flags; limit output; no destructive commands without explicit user request; no secrets in argv.\n\nWhen NOT to use: a fact retrievable from the knowledge base/memory → memory_query (no shell call); a multi-step exploration → subagent_intent. Cost/latency: commands may route through allow/deny policy or human-in-the-loop confirmation before running, so expect added latency and a possible denial — keep each command single-purpose and justified.\n\nExample argv (array form, non-interactive): [\"ls\", \"-la\", \"/var/log\"] or [\"pip\", \"install\", \"--no-input\", \"ruff\"].",
     "parameters": {
       "type": "object",
       "properties": {

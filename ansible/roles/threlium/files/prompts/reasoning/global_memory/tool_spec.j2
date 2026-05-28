@@ -5,7 +5,7 @@
   "type": "function",
   "function": {
     "name": "global_memory",
-    "description": "Store a global fact about the agent, tasks, policies, or stable environment. Use ONLY for facts relevant to future threads, not a single dialog turn (use thread_memory for thread-local notes). The note is indexed into the knowledge graph and is later retrievable across threads via memory_query.",
+    "description": "Store a global fact about the agent, tasks, policies, or stable environment. Use ONLY for facts relevant to future threads, not a single dialog turn (use thread_memory for thread-local notes). The note is indexed into the knowledge graph and is later retrievable across threads via memory_query. When NOT to use: do not persist transient reasoning scratch, and do not store conversation-local context here — that is thread_memory. Boundary: global_memory = stable, reusable across all threads; thread_memory = scoped to this conversation.",
     "parameters": {
       "type": "object",
       "properties": {

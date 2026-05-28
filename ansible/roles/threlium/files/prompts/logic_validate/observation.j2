@@ -13,4 +13,6 @@ The query executed but failed — often an undeclared prefix in sh:select (decla
 violations: {{ violations }}
 {% if vacuous %}WARNING: conforms=true but NO target nodes matched your shapes against the facts. The validation was vacuous — nothing was actually checked. Verify sh:targetClass/targetNode names and prefixes match the facts (and enable inference if you relied on subclass/equivalence). Do NOT treat this as a proof.
 {% endif %}{{ report_text }}
-{% endif %}
+{% if violations and violations | int > 0 %}
+Each violation is a problem to resolve, not merely to report: trace it to its root cause, correct the underlying facts or rules, and re-validate. Do not finalize while an invariant you set out to prove is still violated.
+{% endif %}{% endif %}

@@ -5,7 +5,7 @@
   "type": "function",
   "function": {
     "name": "egress_router",
-    "description": "Send final reply on the original channel (email / Matrix / Telegram). Use when the answer is complete and no further CLI or reasoning cycle is needed.",
+    "description": "Legacy/inactive route — the reasoning stage MUST NOT call this directly; deliver every user reply via response_finalize, which routes to egress internally. Sends final reply on the original channel (email / Matrix / Telegram) when the answer is complete and no further CLI or reasoning cycle is needed.",
     "parameters": {
       "type": "object",
       "properties": {

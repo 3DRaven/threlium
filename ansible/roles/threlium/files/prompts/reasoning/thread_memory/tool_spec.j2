@@ -5,7 +5,7 @@
   "type": "function",
   "function": {
     "name": "thread_memory",
-    "description": "Store a note for the CURRENT dialog thread. Use for facts or decisions needed on later turns in this thread; not for global agent or world facts. The note is indexed into the knowledge graph and is later retrievable via memory_query (use global_memory instead for facts that should outlive this thread).",
+    "description": "Store a note for the CURRENT dialog thread. Use for facts or decisions needed on later turns in this thread; not for global agent or world facts. The note is indexed into the knowledge graph and is later retrievable via memory_query (use global_memory instead for facts that should outlive this thread). When NOT to use: do not persist transient reasoning scratch you will not need again, and do not store cross-thread facts here — that is global_memory. Boundary: thread_memory = scoped to this conversation; global_memory = relevant to all future threads.",
     "parameters": {
       "type": "object",
       "properties": {

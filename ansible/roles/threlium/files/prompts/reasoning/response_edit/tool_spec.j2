@@ -5,7 +5,7 @@
   "type": "function",
   "function": {
     "name": "response_edit",
-    "description": "Replace or delete a reply fragment at position [N] from response_observe. To delete, pass position with new_content null. To replace, pass new text in new_content.",
+    "description": "Replace or delete a reply fragment at position [N] from response_observe. To delete, pass position with new_content null. To replace, pass new text in new_content. When NOT to use: not to add new content — that is response_append; obtain the position from response_observe first rather than guessing it.",
     "parameters": {
       "type": "object",
       "properties": {
