@@ -1,0 +1,45 @@
+{#- LLM-facing text is English-only: Cyrillic uses roughly 2–3× more tokens per word.
+    This Jinja comment is stripped and never sent to the model.
+    docs/ARCHITECTURE.md §6.2: tool-spec for route `logic_validate`. -#}
+{
+  "type": "function",
+  "function": {
+    "name": "logic_validate",
+    "description": "Arbitrary-logic verification engine: formally check whether a set of facts satisfies a set of logical rules, and get back every rule that is violated. Use this to verify your own conclusions, check consistency of derived facts, enforce domain invariants, and build provably correct relationships before acting on them — instead of trusting unchecked reasoning.\n\nHow it works (the underlying toolchain):\n- You provide the facts under test as an RDF graph in Turtle (facts_ttl) — entities, their types, and relationships.\n- You provide the rules/assertions as SHACL shapes in Turtle (shapes_ttl). Simple rules use SHACL property constraints (datatype, cardinality, value range, regex). Arbitrary first-order predicates use SHACL-SPARQL (sh:sparql): any condition expressible as a SPARQL WHERE clause over your facts becomes a checkable rule.\n- The pySHACL engine evaluates the rules against the facts and reports conformance. SHACL Advanced Features are enabled, so you may also use sh:rule (SPARQL-based inference of new triples), custom SPARQL targets (sh:target [ sh:select ... ]), and sh:SPARQLFunction.\n\nMental model: shapes_ttl is your suite of 'assertions/tests', facts_ttl is 'the state under test'. Any predicate expressible in first-order logic over your data graph can be verified.\n\nCRITICAL SHACL-SPARQL semantics (the #1 source of wrong results):\n- In sh:sparql, the SELECT/WHERE must match the VIOLATING cases — the NEGATION of your invariant. Every row the query returns is reported as a violation. To check 'end must be >= start', you FILTER for the bad case (?end < ?start), NOT the good one. If you select the satisfying cases instead, the result inverts and conforms becomes meaningless.\n- conforms=true only means 'no violations found among matched target nodes'. It is NOT a positive proof. If a shape's target matches nothing (typo in a class/prefix, or you relied on inference that was not enabled), the check is vacuous and still reports conforms=true — the observation will warn you when this happens. Never treat a vacuous pass as a proof.\n\nPrefixes inside sh:select: @prefix lines in shapes_ttl do NOT propagate into the SPARQL query. Declare every prefix the query uses via sh:prefixes [ sh:declare [ sh:prefix \"ex\" ; sh:namespace \"http://example.org/\"^^xsd:anyURI ] ] . An undeclared prefix raises a runtime error. Because the namespace literal is typed ^^xsd:anyURI, the shapes_ttl document must also declare @prefix xsd: .\n\nUse cases:\n- Verify that your inferred facts satisfy domain invariants before responding to the user.\n- Check cardinality, type, and cross-property constraints on data you constructed.\n- Validate complex business rules expressed as SPARQL predicates (sh:sparql).\n- Catch contradictions in your reasoning by encoding expected properties as shapes and testing your conclusions against them.\n- Build compositional proofs: encode premises as facts, encode the negation of the expected conclusion as a SHACL constraint, and confirm it yields zero violations over a non-empty target set.\n\nReturns: conforms (true/false) + a violation count + a detailed report naming each failed rule (plus a vacuous-target warning when applicable). Idempotent, safe, no side effects. Budget: 2 hops per call — analyze the report carefully before retrying.\n\nExample — verifying a temporal ordering invariant (an event must not end before it starts). Note the explicit sh:prefixes and that the FILTER selects the VIOLATION:\n```turtle\n@prefix sh: <http://www.w3.org/ns/shacl#> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n@prefix ex: <http://example.org/> .\n\nex:TimeOrderShape a sh:NodeShape ;\n  sh:targetClass ex:Event ;\n  sh:sparql [\n    sh:prefixes [ sh:declare [ sh:prefix \"ex\" ; sh:namespace \"http://example.org/\"^^xsd:anyURI ] ] ;\n    sh:select \"\"\"\n      SELECT $this (ex:endDate AS ?path) (?end AS ?value)\n      WHERE { $this ex:startDate ?start ; ex:endDate ?end . FILTER (?end < ?start) }\n    \"\"\" ;\n    sh:message \"Event end date must not precede start date\" ;\n  ] .\n```",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "shapes_ttl": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32000,
+          "description": "SHACL shapes graph (your logical assertions/constraints) in Turtle. Each shape encodes an invariant or rule that the data must satisfy. Use sh:sparql for complex predicates (the WHERE clause must select VIOLATING nodes). Declare prefixes used inside sh:select via sh:prefixes/sh:declare. Must include @prefix sh: <http://www.w3.org/ns/shacl#> (and @prefix xsd: when you use ^^xsd:anyURI)."
+        },
+        "facts_ttl": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32000,
+          "description": "Data graph (the facts/conclusions you want to verify) in Turtle. This is 'the state under test' — encode your derived relationships, inferred facts, or proposed domain state here."
+        },
+        "ontology_ttl": {
+          "type": "string",
+          "maxLength": 32000,
+          "description": "Optional ontology graph (rdfs:subClassOf, owl:equivalentClass, property domains/ranges) merged into the facts. sh:targetClass already follows rdfs:subClassOf when selecting targets without any inference. Full RDFS/OWL entailment — rdfs:domain/range type inference, owl:equivalentClass, property hierarchies — only takes effect if you also set the `inference` parameter."
+        },
+        "inference": {
+          "type": "string",
+          "enum": ["none", "rdfs", "owlrl", "both"],
+          "description": "Optional RDFS/OWL reasoning to run before validation. Default 'none'. Required for owl:equivalentClass, rdfs:domain/range type inference, and property-hierarchy entailment to fire; plain subclass-based sh:targetClass works without it. 'owlrl'/'both' are more expensive — use only when your rules depend on that entailment."
+        },
+        "reasoning": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "description": "What logical property you are verifying and why — short text for logs and the observation note."
+        }
+      },
+      "required": ["shapes_ttl", "facts_ttl", "reasoning"],
+      "additionalProperties": false
+    }
+  }
+}

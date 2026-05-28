@@ -1,0 +1,8 @@
+{#- LLM-facing text is English-only: Cyrillic uses roughly 2–3× more tokens per word.
+    This Jinja comment is stripped and never sent to the model.
+    memory_query → enrich_fast observation-note. -#}
+reasoning: {{ reasoning }}
+---
+{% if no_results %}(no results from knowledge base)
+{% else %}{{ answer }}
+{% endif %}

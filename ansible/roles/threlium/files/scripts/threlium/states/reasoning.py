@@ -68,6 +68,8 @@ ROUTE_TO_ADDRESS: dict[RouteLiteral, FsmStage] = {
     "response_edit": FsmStage.RESPONSE_EDIT,
     "response_observe": FsmStage.RESPONSE_OBSERVE,
     "response_finalize": FsmStage.RESPONSE_FINALIZE,
+    "logic_validate": FsmStage.LOGIC_VALIDATE,
+    "memory_query": FsmStage.MEMORY_QUERY,
 }
 
 RouteLiteral = Literal[
@@ -80,6 +82,8 @@ RouteLiteral = Literal[
     "response_edit",
     "response_observe",
     "response_finalize",
+    "logic_validate",
+    "memory_query",
 ]
 
 
@@ -121,6 +125,7 @@ def _build_prompt(
     response_state = _extract_context_part(msg, EnrichPartId.RESPONSE_STATE, max_chars)
     plan_state = _extract_context_part(msg, EnrichPartId.PLAN_STATE, max_chars)
     memory_note = _extract_context_part(msg, EnrichPartId.MEMORY_NOTE, max_chars)
+    observation_note = _extract_context_part(msg, EnrichPartId.OBSERVATION_NOTE, max_chars)
 
     return render_prompt(
         PromptPath.REASONING_USER,
@@ -138,6 +143,7 @@ def _build_prompt(
         response_state=response_state,
         plan_state=plan_state,
         memory_note=memory_note,
+        observation_note=observation_note,
     )
 
 

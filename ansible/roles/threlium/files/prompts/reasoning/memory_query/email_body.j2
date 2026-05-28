@@ -1,0 +1,4 @@
+{#- LLM-facing text is English-only: Cyrillic uses roughly 2–3× more tokens per word.
+    This Jinja comment is stripped and never sent to the model.
+    memory_query body: canonical JSON for knowledge_fsm.parse_memory_query_payload. -#}
+{{ {'reasoning': reasoning, 'query': query} | tojson }}

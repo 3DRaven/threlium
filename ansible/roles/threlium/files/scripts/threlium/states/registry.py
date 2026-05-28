@@ -18,6 +18,8 @@ from threlium.states import (
     egress_telegram,
     global_memory,
     ingress,
+    logic_validate,
+    memory_query,
     reasoning,
     reflect,
     response_append,
@@ -26,6 +28,8 @@ from threlium.states import (
     response_observe,
     subagent_end,
     subagent_intent,
+    summarize_context,
+    summarize_memory,
     thread_memory,
 )
 
@@ -51,6 +55,10 @@ STAGE_MAIN_HANDLERS: dict[FsmStage, StateHandler] = {
     FsmStage.EGRESS_EMAIL: egress_email.main,
     FsmStage.EGRESS_TELEGRAM: egress_telegram.main,
     FsmStage.EGRESS_MATRIX: egress_matrix.main,
+    FsmStage.LOGIC_VALIDATE: logic_validate.main,
+    FsmStage.MEMORY_QUERY: memory_query.main,
+    FsmStage.SUMMARIZE_CONTEXT: summarize_context.main,
+    FsmStage.SUMMARIZE_MEMORY: summarize_memory.main,
     FsmStage.ARCHIVE: archive.main,
 }
 

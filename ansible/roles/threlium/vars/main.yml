@@ -23,6 +23,10 @@ threlium_fsm_mailbox_stages:
   - { id: egress_email }
   - { id: egress_telegram }
   - { id: egress_matrix }
+  - { id: logic_validate }
+  - { id: memory_query }
+  - { id: summarize_context }
+  - { id: summarize_memory }
   - { id: archive }
 
 threlium_fsm_stage_ids: "{{ threlium_fsm_mailbox_stages | map(attribute='id') | list }}"
@@ -60,6 +64,8 @@ _threlium_litellm_base:
       target_embedding_score: 0.0
     lightrag_rerank:
       target_rerank_score: 0.0
+    summarize_context:
+      target_score: 0.0
 
 _threlium_lightrag_base:
   language: "Russian"
@@ -84,6 +90,10 @@ _threlium_lightrag_base:
   rag_loop_shutdown_timeout_sec: 30
   llm_max_tokens: 0
 
+_threlium_knowledge_base:
+  logic_report_max_chars: 4000
+  observation_max_chars: 180000
+
 _threlium_enrich_base:
   context_thread_n: 200
   context_thread_memory_n: 100
@@ -104,6 +114,11 @@ _threlium_enrich_base:
   type_weight_tool_observation: 0.5
   type_weight_system: 0.3
   type_weight_service: 0.1
+  tool_observation_estimate_cap_chars: 500
+  tier1_medium_ratio: 2
+  summarize_enabled: true
+  summarize_batch_max_messages: 10
+  summarize_trigger_min_excess_chars: 500
 
 # Внутренний контракт: обязательные Jinja2-промпты (не user-facing настройка).
 threlium_required_prompts:
@@ -142,6 +157,8 @@ threlium_required_prompts:
   - cli_hitl_out/unparsable.j2
   - cli_hitl_out/subject.j2
   - cli_exec/observation.j2
+  - logic_validate/observation.j2
+  - memory_query/observation.j2
   - egress/self_archive_subject.j2
   - egress/self_archive_body.j2
   - subagent_intent/budget_exhausted.j2
@@ -178,6 +195,12 @@ threlium_required_prompts:
   - reasoning/response_finalize/tool_spec.j2
   - reasoning/response_finalize/email_body.j2
   - reasoning/response_finalize/email_subject.j2
+  - reasoning/logic_validate/tool_spec.j2
+  - reasoning/logic_validate/email_body.j2
+  - reasoning/logic_validate/email_subject.j2
+  - reasoning/memory_query/tool_spec.j2
+  - reasoning/memory_query/email_body.j2
+  - reasoning/memory_query/email_subject.j2
   - ingress/response_not_formed.j2
   - response_observe/state_summary.j2
   - response_observe/observe_system.j2
@@ -187,3 +210,5 @@ threlium_required_prompts:
   - response_finalize/chunk_assembly.j2
   - response_edit/error_invalid_body.j2
   - response_edit/error_invalid_position.j2
+  - summarize_context/system.j2
+  - summarize_context/user.j2

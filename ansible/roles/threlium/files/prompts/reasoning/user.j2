@@ -60,3 +60,9 @@ X-Threlium-Hop-Budget: {{ hop_budget or "(none)" }}
 {{ memory_note }}
 </memory_note>
 {% endif %}
+{% if observation_note %}
+
+<observation>
+{{ observation_note }}
+</observation>
+{% endif %}

@@ -1,0 +1,29 @@
+{#- LLM-facing text is English-only: Cyrillic uses roughly 2–3× more tokens per word.
+    This Jinja comment is stripped and never sent to the model.
+    docs/ARCHITECTURE.md §6.2: tool-spec for route `memory_query`. -#}
+{
+  "type": "function",
+  "function": {
+    "name": "memory_query",
+    "description": "Retrieve from the agent's unified knowledge base and memory (LightRAG): indexed domain knowledge (ontology, documentation, rules, facts) AND previously recorded thread_memory / global_memory notes and past conversations. This is the targeted knowledge-access mechanism — use it to look up a specific fact, recall something recorded earlier, or check reference material when the current context blocks (<knowledge_graph>, <thread_memory>, <global_memory>) do not already contain it. Cheaper than reflect (2 hops vs 3): returns a focused answer without rebuilding full context.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000,
+          "description": "Specific question to retrieve from the knowledge base / memory. Be precise — the query is passed directly to the RAG retrieval engine over the unified knowledge+memory graph."
+        },
+        "reasoning": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "description": "Why this knowledge lookup is needed — short text for logs."
+        }
+      },
+      "required": ["query", "reasoning"],
+      "additionalProperties": false
+    }
+  }
+}

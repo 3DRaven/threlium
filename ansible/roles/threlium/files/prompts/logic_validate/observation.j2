@@ -1,0 +1,16 @@
+{#- LLM-facing text is English-only: Cyrillic uses roughly 2–3× more tokens per word.
+    This Jinja comment is stripped and never sent to the model.
+    logic_validate → enrich_fast observation-note. -#}
+reasoning: {{ reasoning }}
+---
+{% if error_kind == "parse" %}PARSE ERROR (Turtle): {{ error_message }}
+Fix the Turtle syntax of facts_ttl/shapes_ttl/ontology_ttl and retry.
+{% elif error_kind == "shape" %}SHAPE LOAD ERROR (SHACL): {{ error_message }}
+A shape/constraint is malformed (e.g. bad sh:declare, sh:select, or sh:path). Fix the shape definition and retry.
+{% elif error_kind == "runtime" %}RUNTIME ERROR (SPARQL/validation): {{ error_message }}
+The query executed but failed — often an undeclared prefix in sh:select (declare it via sh:prefixes/sh:declare) or an invalid SPARQL expression. Fix and retry.
+{% else %}conforms: {{ conforms }}
+violations: {{ violations }}
+{% if vacuous %}WARNING: conforms=true but NO target nodes matched your shapes against the facts. The validation was vacuous — nothing was actually checked. Verify sh:targetClass/targetNode names and prefixes match the facts (and enable inference if you relied on subclass/equivalence). Do NOT treat this as a proof.
+{% endif %}{{ report_text }}
+{% endif %}

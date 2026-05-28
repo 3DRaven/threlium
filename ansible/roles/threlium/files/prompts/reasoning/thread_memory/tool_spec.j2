@@ -5,7 +5,7 @@
   "type": "function",
   "function": {
     "name": "thread_memory",
-    "description": "Record a note for the CURRENT dialog thread. Use for facts or decisions needed on later turns in this thread; not for global agent or world facts.",
+    "description": "Store a note for the CURRENT dialog thread. Use for facts or decisions needed on later turns in this thread; not for global agent or world facts. The note is indexed into the knowledge graph and is later retrievable via memory_query (use global_memory instead for facts that should outlive this thread).",
     "parameters": {
       "type": "object",
       "properties": {
