@@ -1076,6 +1076,43 @@ def journal_has_request(
     return False
 
 
+def journal_entries_for_stub_tag_with_header(
+    public_base: str,
+    *,
+    stub_tag: str,
+    header_name: str,
+    header_value: str,
+    url_contains: str | None = None,
+    timeout: float = TIMEOUT_POLL_SHORT,
+) -> list[dict[str, Any]]:
+    """Journal entries filtered by stub_tag + request header value (+ optional url substring).
+
+    Header name matching is case-insensitive (WireMock may store headers in lowercase).
+    """
+    want_lower = header_name.lower()
+    results: list[dict[str, Any]] = []
+    for entry in journal_entries_for_stub_tag(
+        public_base, stub_tag=stub_tag, timeout=timeout
+    ):
+        req = entry.get("request")
+        if not isinstance(req, dict):
+            continue
+        headers = req.get("headers")
+        if not isinstance(headers, dict):
+            continue
+        matched = False
+        for hk, hv in headers.items():
+            if hk.lower() == want_lower and isinstance(hv, str) and hv == header_value:
+                matched = True
+                break
+        if not matched:
+            continue
+        if url_contains is not None and url_contains not in str(req.get("url") or ""):
+            continue
+        results.append(entry)
+    return results
+
+
 @dataclass(frozen=True)
 class WiremockCorrelation:
     """Корреляция одного e2e-прогона с журналом WireMock (``test_id`` в ``stub_tag`` и якоря запросов к LLM).

@@ -1,0 +1,47 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
+    "headers": {
+      "X-Threlium-Call-Site": {
+        "equalTo": "summarize_context"
+      }
+    },
+    "bodyPatterns": [
+      {
+        "contains": "context summarizer"
+      }
+    ],
+    "customMatcher": {
+      "name": "state-matcher",
+      "parameters": {
+        "hasContext": "stub-reasoning-litellm-ctx-trim-01::{{request.headers.[x-threlium-thread-root]}}"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "transformers": [
+      "response-template"
+    ],
+    "jsonBody": {
+      "id": "chatcmpl-e2e-wiremock-ctx-trim-summarize",
+      "object": "chat.completion",
+      "created": 0,
+      "model": "gpt-4o-mini",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "stop",
+          "message": {
+            "role": "assistant",
+            "content": "E2E-CTX-TRIM-TAIL-MARKER: consolidated thread summary keeping the relevant tail for the context-trim e2e pipeline."
+          }
+        }
+      ]
+    }
+  }
+}

@@ -336,6 +336,11 @@ E2E_CTX_TRIM_TAIL_MARKER = "E2E-CTX-TRIM-TAIL-MARKER"
 # собственный бюджет context_max_chars).
 E2E_CTX_TRIM_JOURNAL_SLACK_CHARS = 12000
 
+E2E_SUMMARY_MARKER = "E2E-SUM-CONTEXT-MARKER"
+E2E_SUM_ORIG_HEAD_MARKER = "E2E-SUM-ORIG-HEAD-MARKER"
+E2E_SUM_ORIG_PAD_MARKER = "E2E-SUM-ORIG-PAD-MARKER"
+E2E_SUMMARIZE_LLM_NEEDLE = "context summarizer"
+
 
 def e2e_dense_threlium_ctx_body(*, head: str, correlation_key: str) -> str:
     """Текст письма: ``head`` + много строк с тем же ``correlation_key`` подряд.
@@ -369,6 +374,23 @@ def e2e_oversized_context_trim_body(
         f"e2e_ctx_tail {correlation_key}\n"
     )
     return core
+
+
+def e2e_summarize_overflow_inject_body(
+    *,
+    head: str,
+    correlation_key: str,
+    pad_chars: int = 25_000,
+) -> str:
+    """Тело для e2e summarize overflow: HEAD + длинный PAD (исключается после суммаризации)."""
+    pad = max(0, pad_chars)
+    return (
+        f"{E2E_SUM_ORIG_HEAD_MARKER}\n"
+        f"{head.rstrip()}\n"
+        f"{E2E_SUM_ORIG_PAD_MARKER}\n"
+        f"{'P' * pad}\n"
+        f"e2e_sum_tail {correlation_key}\n"
+    )
 
 
 def e2e_smtp_inject_ingress_route_wire_for_message_id(
@@ -2018,6 +2040,7 @@ def smtp_inject_inbound(
     message_id: str | None = None,
     subject: str | None = None,
     body: str | None = None,
+    in_reply_to: str | None = None,
 ) -> None:
     """Отправляет письмо в GreenMail по SMTP с хоста pytest (localhost:mapped_port)."""
     del checkout
@@ -2034,6 +2057,8 @@ def smtp_inject_inbound(
         cmd += ["--subject", subject]
     if body is not None:
         cmd += ["--body", body]
+    if in_reply_to is not None:
+        cmd += ["--in-reply-to", in_reply_to]
 
     r = subprocess.run(
         cmd,
@@ -2681,6 +2706,91 @@ sys.exit(0 if n >= want else 6)
         ) from None
 
 
+def assert_notmuch_thread_tag_count(
+    project_name: str,
+    *,
+    anchor_message_id: str,
+    tag: str,
+    min_count: int = 1,
+    repo_root: Path | None = None,
+    poll_timeout: float | None = None,
+) -> None:
+    """В треде якорного ``Message-ID`` не меньше ``min_count`` сообщений с ``tag:<tag>``."""
+    tag_val = str(tag).strip().removeprefix("tag:")
+    if not tag_val:
+        raise ValueError("assert_notmuch_thread_tag_count: empty tag")
+    root = repo_root or REPO_ROOT
+    w = float(poll_timeout) if poll_timeout is not None else float(TIMEOUT_POLL_SHORT)
+    _id_q_lit = repr(notmuch_id_search_term(anchor_message_id))
+    tag_lit = repr(tag_val)
+    mc = int(min_count)
+    py = f"""import json, os, subprocess, sys
+{_E2E_REMOTE_PROBE_LOGGER_BOOT}os.environ.setdefault("HOME", "{E2E_REMOTE_POSIX_HOME}")
+os.environ.setdefault("NOTMUCH_CONFIG", "{E2E_REMOTE_POSIX_HOME}/.notmuch-config")
+id_q = {_id_q_lit}
+tag = {tag_lit}
+want = {mc}
+p = subprocess.run(
+    ["notmuch", "search", "--limit=1", "--output=threads", "--format=json", id_q],
+    capture_output=True,
+    text=True,
+)
+try:
+    payload = json.loads((p.stdout or "").strip() or "[]")
+except json.JSONDecodeError:
+    payload = []
+tid = ""
+if isinstance(payload, list) and payload:
+    first = payload[0]
+    if isinstance(first, str):
+        tid = first.strip()
+    elif isinstance(first, dict):
+        tid = str(first.get("thread") or first.get("thread_id") or "").strip()
+if not tid:
+    sys.exit(2)
+if not tid.startswith("thread:"):
+    tid = f"thread:{{tid}}"
+q = f'{{tid}} tag:{{tag}}'
+c = subprocess.run(["notmuch", "count", q], capture_output=True, text=True)
+try:
+    n = int((c.stdout or "0").strip() or "0")
+except ValueError:
+    n = 0
+_probe_out.info("NOTMUCH_THREAD_TAG_COUNT n=" + str(n) + " q=" + repr(q))
+sys.exit(0 if n >= want else 6)
+"""
+    cmd = ["bash", "-lc", "python3 <<'PY'\n" + py + "\nPY"]
+    last: dict[str, Any] = {"r": None}
+
+    def _probe() -> bool | None:
+        r = service_exec(
+            project_name,
+            "sut",
+            cmd,
+            repo_root=root,
+            timeout=int(TIMEOUT_POLL_SHORT),
+        )
+        last["r"] = r
+        return True if r.returncode == 0 else None
+
+    try:
+        poll_until(
+            _probe,
+            timeout=w,
+            interval=2.0,
+            desc=f"notmuch thread tag:{tag_val!r} count>={min_count} (anchor={anchor_message_id!r})",
+        )
+    except TimeoutError:
+        r = last["r"]
+        out = ""
+        if r is not None:
+            out = f"\nscript output:\n{r.stdout}\n{r.stderr}"
+        raise AssertionError(
+            f"notmuch thread had fewer than {min_count} messages with tag:{tag_val!r} within {w}s "
+            f"(anchor id={anchor_message_id!r}).{out}"
+        ) from None
+
+
 def wait_for_greenmail_user_reply(
     project_name: str,
     *,
@@ -3133,6 +3243,7 @@ class MailflowScenarioSpec:
     body_head: str
     body_override: str | None = None
     oversized_trim_body: bool = False
+    summarize_overflow_body: bool = False
     min_chat_completion_posts: int = 1
     min_embedding_posts: int = 7
     min_rerank_posts: int = 1
@@ -3284,6 +3395,10 @@ def mailflow_inject_and_wait(
         inject_body = spec.body_override
     elif spec.oversized_trim_body:
         inject_body = e2e_oversized_context_trim_body(
+            head=spec.body_head, correlation_key=correlation_key
+        )
+    elif spec.summarize_overflow_body:
+        inject_body = e2e_summarize_overflow_inject_body(
             head=spec.body_head, correlation_key=correlation_key
         )
     else:

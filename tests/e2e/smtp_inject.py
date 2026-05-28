@@ -9,6 +9,7 @@ Env overrides (lower priority than CLI)::
 
     THRELIUM_E2E_INJECT_MESSAGE_ID   — Message-ID without angle brackets
     THRELIUM_E2E_INJECT_SUBJECT      — Subject header
+    THRELIUM_E2E_INJECT_IN_REPLY_TO  — In-Reply-To / References (inner MID, без скобок)
     THRELIUM_E2E_FETCHMAIL_USER      — local-part или полный адрес получателя (по умолчанию ``test`` → ``test@localhost``)
 """
 from __future__ import annotations
@@ -33,6 +34,7 @@ def main() -> None:
     message_id: str | None = None
     subject: str | None = None
     body_text: str | None = None
+    in_reply_to: str | None = None
 
     positional: list[str] = []
     i = 0
@@ -46,6 +48,9 @@ def main() -> None:
         elif args[i] == "--body" and i + 1 < len(args):
             body_text = args[i + 1]
             i += 2
+        elif args[i] == "--in-reply-to" and i + 1 < len(args):
+            in_reply_to = args[i + 1]
+            i += 2
         else:
             positional.append(args[i])
             i += 1
@@ -57,6 +62,7 @@ def main() -> None:
 
     message_id = message_id or os.environ.get("THRELIUM_E2E_INJECT_MESSAGE_ID") or _DEFAULT_MESSAGE_ID
     subject = subject or os.environ.get("THRELIUM_E2E_INJECT_SUBJECT") or _DEFAULT_SUBJECT
+    in_reply_to = in_reply_to or os.environ.get("THRELIUM_E2E_INJECT_IN_REPLY_TO")
     to_addr = os.environ.get("THRELIUM_E2E_FETCHMAIL_USER", "test").strip()
     if not to_addr:
         raise SystemExit("THRELIUM_E2E_FETCHMAIL_USER must be non-empty when set")
@@ -68,6 +74,10 @@ def main() -> None:
     msg["To"] = to_addr
     msg["Subject"] = subject
     msg["Message-ID"] = f"<{message_id.strip('<>')}>"
+    if in_reply_to:
+        irt = f"<{in_reply_to.strip('<>')}>"
+        msg["In-Reply-To"] = irt
+        msg["References"] = irt
     msg.set_content(body_text if body_text is not None else "e2e body")
     # Thread-root MID в SUT: e2e_thread_root_mid_for_message_id(message_id)
     with smtplib.SMTP(host, port) as s:

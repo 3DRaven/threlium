@@ -1,4 +1,4 @@
-"""E2e: enrich.context_max_chars + trim_context_text — хвост контекста доходит до reasoning LLM."""
+"""E2e: enrich overflow (summarize_enabled) → summarize_context — TAIL контекста доходит до reasoning, HEAD нет."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -43,6 +43,8 @@ REASONING_CTX_TRIM_SPEC = MailflowScenarioSpec(
     expect_notmuch_stage_folders=(
         FsmStage.INGRESS.value,
         FsmStage.ENRICH.value,
+        FsmStage.SUMMARIZE_CONTEXT.value,
+        FsmStage.SUMMARIZE_MEMORY.value,
         FsmStage.REASONING.value,
         FsmStage.RESPONSE_FINALIZE.value,
         FsmStage.EGRESS_ROUTER.value,
@@ -64,7 +66,7 @@ def reasoning_ctx_trim_processed_stack(deployed_stack: str) -> object:
 def test_reasoning_litellm_context_trim_mailflow(
     reasoning_ctx_trim_processed_stack: tuple[str, str, str, str, str, str],
 ) -> None:
-    """Длинное тело → trim хвоста; reasoning LiteLLM в журнале WireMock содержит TAIL, не HEAD."""
+    """Длинное тело → overflow → summarize_context; reasoning LiteLLM в журнале WireMock содержит TAIL, не HEAD."""
     project, raw_id, _canonical_id, nm_inner, stub_tag, correlation_key = (
         reasoning_ctx_trim_processed_stack
     )

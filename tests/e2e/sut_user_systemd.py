@@ -30,6 +30,11 @@ def e2e_threlium_user_unit_journalctl_bash(
 
     ``user_unit`` передаётся в ``--user-unit`` (имя или шаблон с ``*``). ``shell_redirect`` — хвост
     команды (например ``2>/dev/null`` для ``if … | grep`` без ``|| true``).
+
+    ``transport_journal=True`` (по умолчанию) оставляет только записи с ``_TRANSPORT=journal``
+    (сообщения systemd о start/stop). Логи приложения (structlog на stdout → journald
+    ``_TRANSPORT=stdout``) для проверок вроде ``bootstrap_knowledge`` задавайте
+    ``transport_journal=False``.
     """
     uq = shlex.quote(user_unit)
     n = max(1, int(lines))

@@ -327,6 +327,47 @@ def _compose_prereq_failure_message() -> str | None:
     return None
 
 
+# Модули только на уже поднятом стеке (``e2e_live``): без session ``compose_stack`` / bake.
+# Подготовка: ``wipe_bake`` / compose up; синхронизация кода — ``wipe_sync.py`` (``--tags refresh``).
+_E2E_COMPOSE_AUTOUSE_SKIP_MODULES = frozenset({
+    "test_knowledge_bootstrap_live_e2e.py",
+    "test_logic_validate_chain_e2e.py",
+    "test_mailflow_live_only_e2e.py",
+    "test_greenmail_delivery_e2e.py",
+    "test_matrix_wiremock_live_e2e.py",
+    "test_telegram_wiremock_live_e2e.py",
+})
+
+
+@pytest.fixture(scope="module")
+def live_e2e_project_name() -> str:
+    """Имя healthy compose-проекта; skip, если стека нет (без ``compose_stack`` / Ansible)."""
+    pn = discover_live_e2e_project_name()
+    if not pn:
+        pytest.skip(
+            "No live e2e stack: start compose (wipe_bake / shared stack). "
+            "Sync code to SUT: pytest -n0 tests/e2e/wipe_sync.py"
+        )
+    if not e2e_shared_compose_stack_is_healthy(pn):
+        pytest.skip(f"Live e2e stack not healthy: {pn!r}")
+    return pn
+
+
+@pytest.fixture(scope="module")
+def live_e2e_stack_ready(live_e2e_project_name: str) -> str:
+    """Live stack с запущенными engine + bridges (после ``sessionfinish`` они могут быть остановлены)."""
+    global _ACTIVE_E2E_PROJECT
+    _ACTIVE_E2E_PROJECT = live_e2e_project_name
+    os.environ["COMPOSE_PROJECT_NAME"] = live_e2e_project_name
+    rt = discover_runtime(live_e2e_project_name)
+    wm = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
+    reset_request_journal(wm)
+    e2e_start_threlium_user_pipeline_services(rt)
+    wait_for_sut_threlium_user_workers_idle(live_e2e_project_name, timeout=120.0)
+    reset_request_journal(wm)
+    return live_e2e_project_name
+
+
 @pytest.fixture(autouse=True, scope="function")
 def _e2e_autouse_compose_stack(request: pytest.FixtureRequest) -> None:
     """Для сценарных модулей ``tests/e2e/test_*.py`` поднимает/присоединяет shared compose один раз на сессию."""
@@ -338,6 +379,8 @@ def _e2e_autouse_compose_stack(request: pytest.FixtureRequest) -> None:
     if len(parts) < 3 or parts[-2] != "e2e" or parts[-3] != "tests":
         return
     if not (path.name.startswith("test_") and path.suffix == ".py"):
+        return
+    if path.name in _E2E_COMPOSE_AUTOUSE_SKIP_MODULES:
         return
     request.getfixturevalue("compose_stack")
 
