@@ -150,10 +150,9 @@ def _sync_since_from_index(thome: Path) -> MatrixSyncBatchCursor | None:
     )
     with nm.notmuch_database(write=False) as db:
         for nm_msg in db.messages(q, sort=notmuch2.Database.SORT.NEWEST_FIRST):
-            raw = nm.header_field_optional(nm_msg, MailHeaderName.ROUTE)
-            if raw is None:
-                continue
-            route_w = IngressRouteB62Wire.parse_present_optional(str(raw))
+            route_w = IngressRouteB62Wire.parse_present_from_nm_message(
+                nm_msg, MailHeaderName.ROUTE.value
+            )
             if route_w is None:
                 continue
             info = _parse_matrix_routing(route_w)

@@ -2,8 +2,11 @@
 """Email-bridge: IMAP IDLE → canonicalize → fdm (long-running).
 
 Единый long-running процесс: подключение к IMAP, IDLE-ожидание,
-обработка UNSEEN-писем (дедупликация через notmuch, канонизация,
-доставка через ``fdm``). См. docs/ARCHITECTURE.md §2.3.
+обработка хвоста INBOX по IMAP UID-watermark (``imap_uid`` /
+``imap_uidvalidity`` в ``X-Threlium-Route``, читается из notmuch при старте):
+``UID SEARCH UID <wm+1>:*`` → дедупликация через notmuch → канонизация →
+доставка через ``fdm``. См. docs/ARCHITECTURE.md §2.3 и
+docs/IDENTITY_AND_CHECKPOINTS.md § Email.
 
 Запуск: инстанс ``threlium-bridge@email.service`` →
 ``python -m threlium.runners.bridge email`` (раннер передаёт ``deliver``).
@@ -31,7 +34,8 @@ from email.message import EmailMessage
 from email.parser import BytesParser
 from email.utils import formatdate, getaddresses
 
-from imap_tools import A, MailBox, MailBoxUnencrypted
+import notmuch2  # pyright: ignore[reportMissingImports]
+from imap_tools import MailBox, MailBoxUnencrypted
 from imap_tools.errors import MailboxUidsError
 from imap_tools.mailbox import BaseMailBox, Criteria
 from imap_tools.message import MailMessage as ImapMailMessage
@@ -42,7 +46,7 @@ from threlium.fsm_emit import HDR_HOP_BUDGET, HDR_ROUTE
 from threlium.litellm_route_context import e2e_route_wire_tail
 from threlium.delivery import fdm_bytes_from_message, run_fdm
 from threlium.logutil import logger
-from threlium.mime_reform import canonicalize_mime, ingress_raw_email_capture
+from threlium.mime_reform import canonicalize_mime, ingress_raw_email_capture, parse_rfc822
 from threlium.bridges import attach_raw_ingress_capture
 from threlium.systemd_notify import notify_status
 from threlium.types.systemd_status import SystemdStatusBody
@@ -54,7 +58,10 @@ from threlium.types import (
     ExternalRfcMidWire,
     IngressRouteB62Wire,
     IrtHashWire,
+    NotmuchBridgeFromLocalhost,
     NotmuchMessageIdInner,
+    NotmuchQueryConnective,
+    NotmuchTag,
     RfcInReplyToWire,
     RfcMessageIdWire,
     RfcReferencesWire,
@@ -186,8 +193,18 @@ def _bridge_wire_from_angle_inner(inner: str) -> RfcMessageIdWire:
     return RfcMessageIdWire.from_native(_bridge_email_native_from_angle_inner(inner))
 
 
-def _build_canonical(msg: EmailMessage, *, settings: ThreliumSettings) -> EmailMessage:
-    """FSM-каноничное письмо: wire ``Message-ID`` / ``In-Reply-To`` / ``References`` через ``EmailNativeId(v=1)`` + ``from_native``."""
+def _build_canonical(
+    msg: EmailMessage,
+    *,
+    settings: ThreliumSettings,
+    imap_uid: int | None = None,
+    imap_uidvalidity: int | None = None,
+) -> EmailMessage:
+    """FSM-каноничное письмо: wire ``Message-ID`` / ``In-Reply-To`` / ``References`` через ``EmailNativeId(v=1)`` + ``from_native``.
+
+    ``imap_uid`` / ``imap_uidvalidity`` (если заданы мостом на ingress) попадают в
+    ``EmailIngressRoute`` как checkpoint INBOX (watermark).
+    """
     origin = _origin_address(msg)
     mid_w = RfcMessageIdWire.parse_present_from_email(msg, _HDR.MESSAGE_ID)
     if mid_w is None:
@@ -233,6 +250,8 @@ def _build_canonical(msg: EmailMessage, *, settings: ThreliumSettings) -> EmailM
         channel="email",
         origin=origin,
         reply_target_rfc_message_id=reply_tgt,
+        imap_uid=imap_uid,
+        imap_uidvalidity=imap_uidvalidity,
     )
     route_wire = IngressRouteB62Wire.from_ingress_route(route_struct).value
     out[_HDR.FROM] = "email@localhost"
@@ -262,13 +281,27 @@ def _build_canonical(msg: EmailMessage, *, settings: ThreliumSettings) -> EmailM
     return out
 
 
-def rfc822_bytes_to_fsm_message(raw: bytes, *, settings: ThreliumSettings) -> EmailMessage:
-    """Raw RFC822 → MIME canonicalize → FSM ``EmailMessage`` (wire mid/irt)."""
+def rfc822_bytes_to_fsm_message(
+    raw: bytes,
+    *,
+    settings: ThreliumSettings,
+    imap_uid: int | None = None,
+    imap_uidvalidity: int | None = None,
+) -> EmailMessage:
+    """Raw RFC822 → MIME canonicalize → FSM ``EmailMessage`` (wire mid/irt).
+
+    ``imap_uid`` / ``imap_uidvalidity`` пробрасываются в ``EmailIngressRoute`` checkpoint.
+    """
     incoming: EmailMessage = BytesParser(
         policy=email_policy.default
     ).parsebytes(raw)  # type: ignore[assignment]
     canonical = canonicalize_mime(incoming)
-    return _build_canonical(canonical, settings=settings)
+    return _build_canonical(
+        canonical,
+        settings=settings,
+        imap_uid=imap_uid,
+        imap_uidvalidity=imap_uidvalidity,
+    )
 
 
 def rfc822_bytes_to_fsm_bytes(raw: bytes, *, settings: ThreliumSettings) -> bytes:
@@ -283,18 +316,20 @@ def _is_duplicate(incoming_inner: str) -> bool:
     return nm.notmuch_index_has_message_id(mid)
 
 
-def _imap_fetch_full_by_uid(
+def _imap_rfc822_by_uid(
     mailbox: BaseMailBox,
     uid: str,
     *,
     mark_seen: bool,
-) -> ImapMailMessage:
-    """Полное тело по UID через ``UID FETCH`` (без ``fetch(A(uid=…))`` → ``UID SEARCH UID …``).
+    headers_only: bool = False,
+) -> bytes:
+    """Сырые RFC822-байты (тело или только заголовки) по UID через ``UID FETCH``.
 
-    GreenMail отвечает ``BAD Search command not supported`` на критерий ``UID <n>`` внутри
-    ``UID SEARCH`` (см. journal ``threlium-bridge-email``).
+    Без ``fetch(A(uid=…))`` → ``UID SEARCH (UID …)``: GreenMail отвечает
+    ``BAD Search command not supported`` на критерий ``UID`` в скобках внутри ``UID SEARCH``
+    (проверено на e2e GreenMail). ``UID FETCH`` по конкретному UID работает на всех серверах.
+    Границу «байты → :class:`EmailMessage`» делает вызывающий через :func:`parse_rfc822`.
     """
-    headers_only = False
     message_parts = (
         f"(BODY{'' if mark_seen else '.PEEK'}[{'HEADER' if headers_only else ''}] "
         "UID FLAGS RFC822.SIZE)"
@@ -302,51 +337,145 @@ def _imap_fetch_full_by_uid(
     raw = next(mailbox._fetch_by_one([uid], message_parts), None)
     if raw is None:
         raise RuntimeError(f"IMAP: UID FETCH для UID {uid} вернул пусто")
-    return ImapMailMessage(raw)
+    return ImapMailMessage(raw).obj.as_bytes()
 
 
-def process_unseen_emails(
+def _parse_email_routing(route_wire: IngressRouteB62Wire | None) -> EmailIngressRoute:
+    """Wire ``X-Threlium-Route`` → ``EmailIngressRoute`` (строго: нет wire / не email → ошибка FSM)."""
+    r = IngressRouteB62Wire.parse_route_from_optional_header(route_wire)
+    if r is None:
+        raise RuntimeError(
+            "FSM-инвариант: письмо из выборки notmuch с X-Threlium-Route "
+            "не содержит непустого заголовка X-Threlium-Route"
+        )
+    if not isinstance(r, EmailIngressRoute):
+        raise RuntimeError(
+            f"FSM-инвариант: ожидался EmailIngressRoute, получен {type(r).__name__} (channel={r.channel!r})"
+        )
+    return r
+
+
+def _max_imap_checkpoint_from_notmuch() -> tuple[int | None, int]:
+    """``(imap_uidvalidity, imap_uid)`` из новейшего ``tag:route from:email`` письма с непустым uid.
+
+    Аналог ``telegram._max_update_id`` / ``matrix._sync_since_from_index``. Исходящие письма
+    агента (egress) и legacy без ``imap_uid`` пропускаются; пустой результат → ``(None, 0)``.
+    """
+    q = NotmuchQueryConnective.join_and(
+        NotmuchTag.ROUTE.as_tag_query_term(),
+        NotmuchBridgeFromLocalhost.EMAIL.as_from_query_term(),
+    )
+    with nm.notmuch_database(write=False) as db:
+        for nm_msg in db.messages(q, sort=notmuch2.Database.SORT.NEWEST_FIRST):
+            route_w = IngressRouteB62Wire.parse_present_from_nm_message(
+                nm_msg, MailHeaderName.ROUTE.value
+            )
+            if route_w is None:
+                continue
+            r = _parse_email_routing(route_w)
+            if r.imap_uid is None:
+                continue
+            return r.imap_uidvalidity, int(r.imap_uid)
+    return None, 0
+
+
+def _folder_uidvalidity(mailbox: BaseMailBox) -> int:
+    """``UIDVALIDITY`` текущей папки (INBOX) через ``STATUS``; ``RuntimeError`` при некорректном."""
+    st = mailbox.folder.status(mailbox.folder.get(), ("UIDVALIDITY",))
+    v = st.get("UIDVALIDITY")
+    if not isinstance(v, int) or v <= 0:
+        raise RuntimeError(f"IMAP: некорректный UIDVALIDITY от сервера: {v!r}")
+    return v
+
+
+def _search_uids_from(mailbox: BaseMailBox, start_uid: int) -> list[int]:
+    """UID ``>= start_uid`` в INBOX через raw ``UID SEARCH UID <start>:*`` (без скобок), по возрастанию.
+
+    ``imap_tools`` оборачивает критерий в ``(UID n:*)`` — GreenMail это отвергает
+    (``BAD Search command not supported``), а raw-форму без скобок принимает (проверено).
+    Фильтр ``>= start_uid`` нейтрализует RFC-квирк ``n:*`` (диапазон может включать старший UID).
+    """
+    crit = f"UID {start_uid}:*".encode("ascii")
+    typ, data = mailbox.client.uid("SEARCH", crit)  # type: ignore[attr-defined]
+    if typ != "OK":
+        raise RuntimeError(f"IMAP: UID SEARCH UID {start_uid}:* → {typ} {data!r}")
+    raw = data[0] if data else None
+    if not raw:
+        return []
+    return sorted(u for u in (int(x) for x in raw.decode().split()) if u >= start_uid)
+
+
+def _incoming_inner_mid(head: EmailMessage, uid: str) -> str:
+    """Inner ``Message-ID`` (без угловых скобок) через ``RfcMessageIdWire`` (как ``_build_canonical``)."""
+    mid_w = RfcMessageIdWire.parse_present_from_email(head, _HDR.MESSAGE_ID)
+    if mid_w is None:
+        raise RuntimeError(f"FSM-инвариант: UID {uid} без Message-ID")
+    prev_inner = mid_w.value.strip("<>")
+    if not prev_inner:
+        raise RuntimeError(f"FSM-инвариант: UID {uid} с пустым Message-ID")
+    return prev_inner
+
+
+def process_inbox_tail(
     mailbox: BaseMailBox,
     *,
     deliver: Callable[[EmailMessage], None] | None = None,
     settings: ThreliumSettings,
-) -> None:
-    """Fetch UNSEEN → dedup via notmuch → canonicalize → deliver → flag \\\\Seen.
+    session_high_uid: int,
+) -> int:
+    """UID-watermark INBOX → dedup via notmuch → canonicalize (+imap_uid в Route) → deliver → ``\\Seen``.
 
-    Ошибка ``deliver`` или инварианта — исключение наружу (раннер моста не ловит).
+    Watermark = ``max(notmuch checkpoint, session_high_uid)``; выборка ``UID <watermark+1>:*``.
+    Возвращает обновлённый ``session_high_uid`` (двигается на каждом обработанном UID, включая
+    ``duplicate_skip`` — иначе при ``UID SEARCH`` без ``\\Seen``-фильтра дубли крутятся вечно).
+    Ошибка ``deliver`` / инварианта — исключение наружу (раннер моста не ловит); ``session_high_uid``
+    для этого UID не двигается → повтор при рестарте.
     """
     _deliver = deliver if deliver is not None else (
         lambda m: run_fdm(fdm_bytes_from_message(m))
     )
-    for msg in mailbox.fetch(
-        A(seen=False), charset=None, headers_only=True, mark_seen=False  # type: ignore[arg-type]
-    ):
-        uid_raw = msg.uid
-        if uid_raw is None or not str(uid_raw).strip():
-            raise RuntimeError("FSM-инвариант: UNSEEN без UID от IMAP")
-        uid: str = str(uid_raw).strip()
+    current_v = _folder_uidvalidity(mailbox)
+    stored_v, stored_u = _max_imap_checkpoint_from_notmuch()
+    if stored_v is not None and stored_v != current_v:
+        log.warning("imap_uidvalidity_changed", stored=stored_v, current=current_v)
+        stored_u = 0
+    effective_start = max(stored_u, session_high_uid) + 1
+    uids = _search_uids_from(mailbox, effective_start)
+    log.info(
+        "imap_watermark",
+        stored_uid=stored_u,
+        stored_uidvalidity=stored_v,
+        session_high=session_high_uid,
+        current_uidvalidity=current_v,
+        effective_start=effective_start,
+        found=len(uids),
+    )
 
-        mid_values = msg.headers.get(_HDR.MESSAGE_ID.lower())
-        if not mid_values or not mid_values[0]:
-            raise RuntimeError(f"FSM-инвариант: UNSEEN UID {uid} без Message-ID")
-
-        raw_mid = mid_values[0].strip()
-        prev_inner = raw_mid.strip("<>")
-        if not prev_inner:
-            raise RuntimeError(f"FSM-инвариант: UNSEEN UID {uid} с пустым Message-ID")
+    for uid_int in uids:
+        uid = str(uid_int)
+        head = parse_rfc822(
+            _imap_rfc822_by_uid(mailbox, uid, mark_seen=False, headers_only=True)
+        )
+        prev_inner = _incoming_inner_mid(head, uid)
 
         if _is_duplicate(prev_inner):
             log.info("duplicate_skip", message_id=prev_inner, uid=uid)
             if _e2e_litellm_route_correlation(settings):
                 log.debug("e2e_bridge_duplicate_skip", inner_incoming_mid=prev_inner, uid=uid)
             mailbox.flag(uid, "\\Seen", True)
+            session_high_uid = max(session_high_uid, uid_int)
             continue
 
-        full_msg = _imap_fetch_full_by_uid(mailbox, uid, mark_seen=False)
+        full_raw = _imap_rfc822_by_uid(mailbox, uid, mark_seen=False)
 
         notify_status(SystemdStatusBody.bridge_email_delivering_uid(uid=uid))
 
-        data = rfc822_bytes_to_fsm_message(full_msg.obj.as_bytes(), settings=settings)
+        data = rfc822_bytes_to_fsm_message(
+            full_raw,
+            settings=settings,
+            imap_uid=uid_int,
+            imap_uidvalidity=current_v,
+        )
         route_w = IngressRouteB62Wire.parse_present_optional(data.get(HDR_ROUTE))
         dec = IngressRouteB62Wire.parse_route_from_optional_header(route_w)
         if dec is None:
@@ -359,11 +488,14 @@ def process_unseen_emails(
         _deliver(data)
 
         mailbox.flag(uid, "\\Seen", True)
+        session_high_uid = max(session_high_uid, uid_int)
         if _e2e_litellm_route_correlation(settings):
             rw = data.get(HDR_ROUTE)
             log.debug("e2e_bridge_delivered", inner_incoming_mid=prev_inner, uid=uid, route_tail=e2e_route_wire_tail(rw if isinstance(rw, str) else None))
-        log.info("delivered", message_id=prev_inner)
+        log.info("delivered", message_id=prev_inner, uid=uid)
         notify_status(SystemdStatusBody.bridge_email_connected_idle_simple())
+
+    return session_high_uid
 
 
 def run_bridge(deliver: Callable[[EmailMessage], None], *, settings: ThreliumSettings) -> None:
@@ -414,10 +546,15 @@ def run_bridge(deliver: Callable[[EmailMessage], None], *, settings: ThreliumSet
         notify_status(
             SystemdStatusBody.bridge_email_connected_idle(host=host, port=port)
         )
-        process_unseen_emails(mailbox, deliver=deliver, settings=settings)
+        session_high_uid = process_inbox_tail(
+            mailbox, deliver=deliver, settings=settings, session_high_uid=0
+        )
 
         while True:
             responses = mailbox.idle.wait(timeout=idle_timeout)
             if responses:
                 log.info("idle_events", count=len(responses))
-            process_unseen_emails(mailbox, deliver=deliver, settings=settings)
+            session_high_uid = process_inbox_tail(
+                mailbox, deliver=deliver, settings=settings,
+                session_high_uid=session_high_uid,
+            )

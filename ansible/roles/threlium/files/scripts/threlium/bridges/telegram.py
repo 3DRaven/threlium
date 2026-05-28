@@ -218,10 +218,9 @@ def _max_update_id() -> int:
     )
     with nm.notmuch_database(write=False) as db:
         for nm_msg in db.messages(q, sort=notmuch2.Database.SORT.NEWEST_FIRST):
-            raw = nm.header_field_optional(nm_msg, MailHeaderName.ROUTE)
-            if raw is None:
-                continue
-            route_w = IngressRouteB62Wire.parse_present_optional(str(raw))
+            route_w = IngressRouteB62Wire.parse_present_from_nm_message(
+                nm_msg, MailHeaderName.ROUTE.value
+            )
             if route_w is None:
                 continue
             return int(_parse_telegram_routing(route_w).update_id)
