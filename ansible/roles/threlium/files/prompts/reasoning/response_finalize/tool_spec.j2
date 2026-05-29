@@ -5,7 +5,7 @@
   "type": "function",
   "function": {
     "name": "response_finalize",
-    "description": "Send final reply. Short answer: full text in content. Built via response_append: omit content or add closing fragment. For long responses built with response_append, prefer using response_observe first to verify completeness. subject required. Match user language; factual; Markdown when helpful; never fabricate. When NOT to use: not for a partial draft with sub-questions still open or a buffer not yet verified — keep appending / observe first; not while the hop budget still permits resolving an unverified assumption.",
+    "description": "Send final reply. Short answer: full text in content. Built via response_append: omit content or add closing fragment. For long responses built with response_append, prefer using response_observe first to verify completeness. subject required. Match user language; factual; Markdown when helpful; never fabricate. When NOT to use: not for a partial draft with sub-questions still open or a buffer not yet verified — keep appending / observe first; not while an unverified assumption can still be resolved — verify a non-trivial logical claim with logic_validate before finalizing it as fact.",
     "parameters": {
       "type": "object",
       "properties": {

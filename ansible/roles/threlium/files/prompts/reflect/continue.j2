@@ -5,10 +5,6 @@
 
 Subject: {{ subject or "(no subject)" }}
 
-Hop budget: {{ remaining_hops }} hop(s) remain on the current frame.
-One reflect cycle (reflect -> ingress -> enrich -> reasoning) costs {{ cycle_cost }} hops,
-so you can afford at least one more full cycle with refreshed LightRAG context.
-
 You requested another reasoning pass. Below is your previous reasoning output
 verbatim. The next message you will see in the reasoning stage is the result of
 this body being routed through ingress and enrich, so LightRAG context will be
@@ -21,14 +17,14 @@ Guidelines for the next reasoning step:
   only what is still relevant and add what LightRAG newly contributes.
 - If you are now confident, produce the response via response_finalize (or
   response_append → response_finalize for long answers); otherwise call reflect
-  again, but expect the budget to drop by {{ cycle_cost }} per cycle.
+  again.
 
 Strategy for this pass:
 - Focus on what was missing in the previous draft. Ask: what gap did clarification_request target?
 - If fresh context adds new facts — integrate them.
 - If fresh context adds nothing — do NOT reflect again. Finalize and note any remaining gaps.
 - Reformulate, do not regurgitate.
-- Target the unresolved root cause, not the symptom: if the previous draft glossed over WHY something holds (or an assumption it never verified), dig into that this pass — consider logic_validate to confirm a logical/consistency claim.
+- Target the unresolved root cause, not the symptom: if the previous draft glossed over WHY something holds (or an assumption it never verified), dig into that this pass. Route by the kind of gap: a logical/consistency/invariant claim → logic_validate to confirm it; a missing fact → memory_query (reflect is for a broad context rebuild, not for proving an inference).
 - If you discovered a problem in the material (a contradiction, gap, or error), pursue and resolve it this cycle rather than carrying it forward unaddressed.
 
 --- previous reasoning output ---

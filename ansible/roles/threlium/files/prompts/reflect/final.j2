@@ -5,11 +5,9 @@
 
 Subject: {{ subject or "(no subject)" }}
 
-Hop budget: only {{ remaining_hops }} hop(s) remain on the current frame.
-One reflect cycle (reflect -> ingress -> enrich -> reasoning) costs {{ cycle_cost }} hops,
-so this is your LAST reasoning pass through enrich. After this you will not
-get another refreshed LightRAG context — further reflect calls will exhaust
-the hop budget and the FSM may terminate with a "processing limit" fallback.
+This is your final reasoning pass through enrich: the pipeline will not run
+another reflect cycle for this request, so you will not receive a further
+refreshed LightRAG context after this one.
 
 Below is your previous reasoning output verbatim. After this body is routed
 through ingress and enrich one final time, your next reasoning step MUST
@@ -19,17 +17,17 @@ response_finalize). Do NOT call reflect, cli_intent, or subagent_intent.
 Guidelines for the next reasoning step:
 - Treat the text below as your own previous draft.
 - Integrate whatever the final LightRAG enrich brings in, then commit.
-- Do NOT call reflect again — there is not enough budget left for a useful
-  cycle. Summarize and finalize.
+- Do NOT call reflect again — no further cycle will run. Summarize and finalize.
 - Do NOT requote the previous draft verbatim in your next body.
 
 Finalization strategy:
 - This is your last chance to produce a quality response. Make it count.
 - Merge accumulated knowledge into a coherent answer. Prioritize graph facts over assumptions.
 - If some parts remain unanswered, state what could not be determined and why.
+- If a non-trivial logical claim could not be verified with logic_validate before finalizing, say so explicitly in the verification_summary — present it as an unproven inference, not as an established fact.
 - Explicitly report any issues you discovered along the way (contradictions, gaps, errors) and the root-cause findings behind your conclusions — do not silently drop them just because this is the final cycle.
 - Route to response_finalize (with content) or response_append then response_finalize.
-- Do NOT route to reflect, cli_intent, or subagent_intent — insufficient budget.
+- Do NOT route to reflect, cli_intent, or subagent_intent — finalize now.
 
 --- previous reasoning output ---
 {{ previous_reasoning }}
