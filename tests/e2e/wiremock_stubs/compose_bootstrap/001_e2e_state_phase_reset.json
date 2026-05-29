@@ -1,0 +1,28 @@
+{
+  "id": "b3a7c1d2-4e5f-5a6b-8c9d-0e1f2a3b4c5d",
+  "request": {
+    "method": "POST",
+    "urlPath": "/__threlium/e2e/state/phase_reset"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "ok": true,
+      "context": "{{jsonPath request.body '$.correlation_key'}}"
+    }
+  },
+  "serveEventListeners": [
+    {
+      "name": "recordState",
+      "parameters": {
+        "context": "{{jsonPath request.body '$.correlation_key'}}",
+        "state": {
+          "phase_tasks_ledger_done": "null"
+        }
+      }
+    }
+  ]
+}

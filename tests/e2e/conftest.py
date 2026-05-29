@@ -101,6 +101,7 @@ from .helpers import (
     e2e_controller_hint_write,
     e2e_flush_sut_fsm_maildirs,
     e2e_flush_greenmail_inboxes,
+    e2e_install_deterministic_knowledge_corpus,
     e2e_sut_threlium_user_journal_rotate_and_vacuum,
     e2e_start_threlium_user_pipeline_services,
     e2e_stop_threlium_user_pipeline_services,
@@ -125,6 +126,12 @@ from .wiremock_client import (
 _ACTIVE_E2E_PROJECT: str | None = None
 
 E2E_COMPOSE_DOWN_ENV = "THRELIUM_E2E_COMPOSE_DOWN"
+
+# Оставить SUT-pipeline (engine + bridges) поднятым после ``pytest_sessionfinish`` вместо штатной
+# остановки. Ставит ``wipe_sync.py``: после harness ``refresh`` (чистка Maildir/notmuch/lightrag +
+# рестарт user-units на уровне playbook) стек должен остаться чистым и работающим для отдельной
+# инвокации live-only тестов (они пропускают session-start cold reset и сами pipeline не поднимают).
+E2E_LEAVE_STACK_RUNNING_ENV = "THRELIUM_E2E_LEAVE_STACK_RUNNING"
 
 _E2E_TESTS_ROOT = Path(__file__).resolve().parent
 
@@ -215,6 +222,9 @@ def _e2e_wiremock_journal_reset_once(
             wiremock_state_reset_all_contexts(wm)
             e2e_flush_sut_fsm_maildirs(rt)
             e2e_flush_greenmail_inboxes(rt)
+            # Детерминированный bootstrap-корпус (один probe-док) — flush уже стёр lightrag,
+            # engine при старте проиндексирует ровно probe. Постоянно (тестовая среда, без бэкапа).
+            e2e_install_deterministic_knowledge_corpus(rt)
             upsert_wiremock_compose_bootstrap_stubs(wm)
         except Exception as e:
             log.warning(
@@ -336,6 +346,9 @@ _E2E_COMPOSE_AUTOUSE_SKIP_MODULES = frozenset({
     "test_formal_reason_query_e2e.py",
     "test_formal_reason_violation_e2e.py",
     "test_task_ledger_chain_e2e.py",
+    "test_task_ledger_empty_blocked_e2e.py",
+    "test_task_ledger_all_cancelled_e2e.py",
+    "test_task_ledger_upsert_error_e2e.py",
     "test_mailflow_live_only_e2e.py",
     "test_greenmail_delivery_e2e.py",
     "test_matrix_wiremock_live_e2e.py",
@@ -649,9 +662,21 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
                 drain_sec = float(os.environ.get("THRELIUM_E2E_SESSIONFINISH_DRAIN_SEC", "120"))
                 wait_for_sut_threlium_user_workers_idle(pn_fin, timeout=drain_sec)
                 assert_wiremock_zero_unmatched_requests(wm, wait_timeout_sec=drain_sec)
-                e2e_stop_threlium_user_pipeline_services(rt)
-                wiremock_state_reset_all_contexts(wm)
-                log.info("wiremock_sessionfinish_reset_done")
+                leave_running = os.environ.get(
+                    E2E_LEAVE_STACK_RUNNING_ENV, ""
+                ).strip().lower() in ("1", "true", "yes", "on")
+                if leave_running:
+                    # ``wipe_sync``: SUT уже почищен и pipeline рестартован harness ``refresh``
+                    # (playbook). Pipeline НЕ останавливаем — лишь чистим тестовый WireMock
+                    # (журнал запросов + State, bootstrap-маппинги остаются), чтобы отдельный
+                    # последующий live-only прогон стартовал на чистом работающем стеке.
+                    reset_request_journal(wm)
+                    wiremock_state_reset_all_contexts(wm)
+                    log.info("wiremock_sessionfinish_left_running")
+                else:
+                    e2e_stop_threlium_user_pipeline_services(rt)
+                    wiremock_state_reset_all_contexts(wm)
+                    log.info("wiremock_sessionfinish_reset_done")
             except Exception as e:  # pragma: no cover
                 log.warning("wiremock_sessionfinish_reset_skipped", error=repr(e))
 

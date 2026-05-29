@@ -634,6 +634,56 @@ echo "[e2e] SUT flushed: Maildir + lightrag + notmuch DB wiped, notmuch new done
         )
 
 
+# Детерминированный bootstrap-корпус для e2e: реальный knowledge/ — десятки .md разной длины,
+# у каждого свой chunks_count, поэтому число bootstrap chat/embedding-вызовов к WireMock плавает.
+# В e2e оставляем ровно один синтетический документ: фиксированное имя => фиксированный
+# doc_id (knowledge:bootstrap:md5(rel)[:16]) и стабильный (минимальный) набор вызовов индексации.
+E2E_KNOWLEDGE_PROBE_FILENAME = "e2e_bootstrap_probe.md"
+_E2E_KNOWLEDGE_PROBE_CONTENT = (
+    "# E2E Bootstrap Probe\n"
+    "\n"
+    "Deterministic single-document corpus for the knowledge bootstrap indexing e2e.\n"
+    "Threlium routes ingress mail through the FSM pipeline and indexes knowledge here.\n"
+)
+
+
+def e2e_install_deterministic_knowledge_corpus(rt: E2EComposeRuntime) -> None:
+    """Заменить knowledge/ на SUT одним детерминированным probe-документом (e2e-среда, навсегда).
+
+    Вызывать в cold-reset preflight **после** :func:`e2e_flush_sut_fsm_maildirs` (тот стирает
+    ``$TH/lightrag``) и **до** старта engine: при старте bootstrap проиндексирует ровно probe.
+    Бэкапа/возврата нет — это только тестовая среда; настоящий корпus возвращается lишь полным
+    rebake образа.
+    """
+    th = shlex.quote(E2E_REMOTE_THRELIUM_HOME)
+    script = f"""set -eu
+TH={th}
+KN="$TH/knowledge"
+rm -rf "$KN"
+mkdir -p "$KN"
+cat > "$KN/{E2E_KNOWLEDGE_PROBE_FILENAME}" <<'PROBE'
+{_E2E_KNOWLEDGE_PROBE_CONTENT}PROBE
+rm -f "$TH/lightrag/kv_store_doc_status.json" 2>/dev/null || true
+chown -R {E2E_THRELIUM_USER}:{E2E_THRELIUM_USER} "$KN"
+echo "[e2e] deterministic knowledge corpus: $(find "$KN" -name '*.md' | wc -l) doc(s)"
+"""
+    completed = service_exec(
+        rt.project_name,
+        "sut",
+        ["bash", "-lc", script],
+        repo_root=rt.repo_root,
+        timeout=int(TIMEOUT_POLL_SHORT),
+    )
+    if completed.returncode != 0:
+        log.warning(
+            "sut_knowledge_corpus_install_warning",
+            rc=completed.returncode,
+            stdout_snippet=(completed.stdout or "")[:600],
+        )
+    else:
+        log.info("sut_knowledge_corpus_deterministic", detail=(completed.stdout or "").strip())
+
+
 def e2e_stop_threlium_user_pipeline_services(rt: E2EComposeRuntime) -> None:
     """Остановить на SUT ``threlium-engine`` и активные ``threlium-work@*`` / ``threlium-sweep@*`` (user systemd).
 
@@ -3405,7 +3455,8 @@ class MailflowScenarioSpec:
     oversized_trim_body: bool = False
     summarize_overflow_body: bool = False
     min_chat_completion_posts: int = 1
-    min_embedding_posts: int = 7
+    # Cold-reset SUT: один probe в knowledge/ → меньше drain/bootstrap embeddings на тред.
+    min_embedding_posts: int = 5
     min_rerank_posts: int = 1
     warmup_body_extra: str = ""
     expect_notmuch_stage_folders: tuple[str, ...] | None = None
@@ -3514,9 +3565,11 @@ def mailflow_inject_and_wait(
     Teardown не чистит журнал WireMock (оставлен для ручной отладки).
     """
     from .wiremock_client import (  # noqa: PLC0415
+        composite_context_key,
         prepare_wiremock_scenario,
         teardown_wiremock_scenario,
         wiremock_public_base,
+        wiremock_state_reset_phase,
     )
 
     needs_prior_thread_turn = spec.summarize_overflow_body or spec.oversized_trim_body
@@ -3601,6 +3654,30 @@ def mailflow_inject_and_wait(
         )
         mailflow_log_phase(
             f"{spec.label}: prior-turn seed indexed mid={seed_id!r} (+{time.monotonic() - t0:.1f}s)"
+        )
+        wait_for_greenmail_user_reply(
+            deployed_stack,
+            raw_id=seed_id,
+            repo_root=REPO_ROOT,
+        )
+        assert_notmuch_thread_fully_in_stages(
+            deployed_stack,
+            anchor_message_id=seed_nm_inner,
+            repo_root=REPO_ROOT,
+        )
+        mailflow_log_phase(
+            f"{spec.label}: prior-turn seed pipeline settled mid={seed_id!r} "
+            f"(+{time.monotonic() - t0:.1f}s)"
+        )
+        # Seed reasoning sets ``phase_tasks_ledger_done``; main turn must run
+        # tasks_ledger_done → egress_tool again (fail-closed finalize per-hop ledger).
+        # NB: admin DELETE контекста — no-op для составных имён со спецсимволами, поэтому
+        # снимаем именно свойство-защёлку через phase_reset-стаб (контекст остаётся).
+        ctx_key = composite_context_key(spec.stub_tag, correlation_key)
+        wiremock_state_reset_phase(wm_base, ctx_key)
+        mailflow_log_phase(
+            f"{spec.label}: prior-turn WM state reset before main inject "
+            f"(+{time.monotonic() - t0:.1f}s)"
         )
 
     if spec.body_override is not None:
@@ -3816,6 +3893,49 @@ def assert_imap_inner_mid_not_in_inbox(
         )
 
 
+def _iter_notmuch_mbox_show_messages(mbox_text: str) -> Iterator[EmailMessage]:
+    """RFC822-письма из ``notmuch show --format=mbox`` (полные заголовки, в т.ч. ``X-Threlium-*``).
+
+    ``--format=json`` отдаёт урезанный ``headers`` без служебных полей Threlium; mbox — полный конверт.
+    """
+    for block in re.split(r"(?=^From )", mbox_text, flags=re.MULTILINE):
+        block = block.strip()
+        if not block:
+            continue
+        lines = block.splitlines(keepends=True)
+        if lines and lines[0].startswith("From "):
+            rfc822 = "".join(lines[1:])
+        else:
+            rfc822 = block
+        if rfc822.strip():
+            yield message_from_bytes(rfc822.encode("utf-8", errors="replace"))
+
+
+def _notmuch_mbox_show_route_b62_for_message(
+    mbox_text: str,
+    *,
+    message_id_inner: str,
+) -> str | None:
+    """``X-Threlium-Route`` (b62 wire) для письма с данным inner ``Message-ID`` в выводе mbox."""
+    from threlium.mail_header_names import MailHeaderName
+
+    needle = NotmuchMessageIdInner.parse(message_id_inner)
+    hdr = MailHeaderName.ROUTE.value
+    for msg in _iter_notmuch_mbox_show_messages(mbox_text):
+        mid_w = RfcMessageIdWire.parse_present_from_email(msg, MailHeaderName.MESSAGE_ID)
+        mid_inner = NotmuchMessageIdInner.from_optional_wire(mid_w)
+        if mid_inner is None or not mid_inner.equals_case_insensitive(needle):
+            continue
+        route = msg.get(hdr)
+        if route is None:
+            route = msg.get("X-Threlium-Route")
+        if route is None:
+            continue
+        s = str(route).strip()
+        return s if s else None
+    return None
+
+
 def email_ingress_imap_checkpoint_from_notmuch(
     project: str,
     *,
@@ -3823,32 +3943,22 @@ def email_ingress_imap_checkpoint_from_notmuch(
     repo_root: Path | None = None,
 ) -> tuple[int | None, int]:
     """``(imap_uidvalidity, imap_uid)`` из ``X-Threlium-Route`` ingress-письма в notmuch."""
-    import json
-
-    from threlium.mail_header_names import MailHeaderName
-    from threlium.types import EmailIngressRoute, IngressRouteB62Wire
-
     root = repo_root or REPO_ROOT
     id_term = notmuch_id_search_term(nm_inner)
     cmd = [
         "bash",
         "-lc",
-        f"{E2E_SUT_NOTMUCH_BASH_EXPORT}; notmuch show --format=json {shlex.quote(id_term)}",
+        f"{E2E_SUT_NOTMUCH_BASH_EXPORT}; notmuch show --format=mbox {shlex.quote(id_term)}",
     ]
     r = service_exec(project, "sut", cmd, repo_root=root, timeout=int(TIMEOUT_POLL_SHORT))
     text = (r.stdout or "").strip()
     if not text:
         return None, 0
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError:
+    route_b62 = _notmuch_mbox_show_route_b62_for_message(text, message_id_inner=nm_inner)
+    if not route_b62:
         return None, 0
-    headers: dict[str, str] = {}
-    if isinstance(payload, list) and payload:
-        headers = payload[0][0].get("headers", {}) if isinstance(payload[0], list) else {}
-    route_b62 = headers.get(MailHeaderName.ROUTE.value) or headers.get("X-Threlium-Route")
-    route_w = IngressRouteB62Wire.parse_route_from_optional_header(route_b62)
-    if route_w is None or not isinstance(route_w, EmailIngressRoute):
+    route_w = IngressRouteB62Wire.decode_b62_wire(route_b62)
+    if not isinstance(route_w, EmailIngressRoute):
         return None, 0
     uid = route_w.imap_uid
     uiv = route_w.imap_uidvalidity

@@ -52,7 +52,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator, Sequence
-from urllib.parse import parse_qs, quote
+from urllib.parse import parse_qs
 
 import requests
 from jinja2 import Environment, FileSystemLoader
@@ -301,11 +301,25 @@ def wiremock_e2e_state_setup_post_url(public_base: str) -> str:
     return f"{root}/__threlium/e2e/state/setup"
 
 
+def wiremock_e2e_state_phase_reset_post_url(public_base: str) -> str:
+    """Публичный URL служебного стаба сброса свойства ``phase_tasks_ledger_done``.
+
+    См. ``wiremock_stubs/compose_bootstrap/001_e2e_state_phase_reset.json``: ``recordState``
+    выставляет свойству строку ``"null"`` → расширение State удаляет именно это свойство,
+    оставляя контекст и прочие свойства (``active`` и т.п.) нетронутыми.
+    """
+    root = _normalize_wiremock_public_root(public_base)
+    return f"{root}/__threlium/e2e/state/phase_reset"
+
+
 def composite_context_key(stub_tag: str, correlation_key: str) -> str:
     """Составной ключ контекста WireMock State Extension: ``{stub_tag}::{correlation_key}``.
 
     Используется как имя контекста при seed и во всех ``hasContext`` шаблонах JSON-стабов.
     Обеспечивает изоляцию параллельных тестов на общем WireMock без ``live_lane``.
+
+    Admin ``DELETE /state-extension/contexts/{name}`` по такому имени — no-op (``204``, контекст
+    остаётся). Между ходами треда снимать ``phase_tasks_ledger_done`` — :func:`wiremock_state_reset_phase`.
     """
     return f"{stub_tag}::{correlation_key}"
 
@@ -319,6 +333,24 @@ def wiremock_state_seed_context(
     """
     with _wiremock_admin_api_exclusive(timeout=timeout):
         url = wiremock_e2e_state_setup_post_url(public_base)
+        r = _wm_session().post(url, json={"correlation_key": correlation_key}, timeout=timeout)
+        r.raise_for_status()
+
+
+def wiremock_state_reset_phase(
+    public_base: str, correlation_key: str, *, timeout: float = TIMEOUT_POLL_SHORT
+) -> None:
+    """POST на phase_reset-стаб: удалить свойство ``phase_tasks_ledger_done`` из контекста.
+
+    Точечный сброс защёлки reasoning между ходами одного треда (тот же составной контекст
+    ``stub_tag::thread_root``). В отличие от admin ``DELETE /state-extension/contexts/{name}``,
+    который для имён со спецсимволами (``::``/``<``/``>``/``@``) — no-op (всегда 204, контекст
+    остаётся), здесь имя контекста подставляется handlebars-шаблоном из тела (без URL-кодирования).
+
+    ``correlation_key`` должен быть составным (см. :func:`composite_context_key`).
+    """
+    with _wiremock_admin_api_exclusive(timeout=timeout):
+        url = wiremock_e2e_state_phase_reset_post_url(public_base)
         r = _wm_session().post(url, json={"correlation_key": correlation_key}, timeout=timeout)
         r.raise_for_status()
 
@@ -353,23 +385,6 @@ def wiremock_state_reasoning_gate_release(
 def wiremock_journal_request_body(entry: dict[str, Any]) -> str:
     """Тело входящего запроса из записи журнала WireMock (plain или base64)."""
     return _journal_request_body(entry)
-
-
-def wiremock_state_delete_context(
-    public_base: str, context: str, *, timeout: float = TIMEOUT_POLL_SHORT
-) -> None:
-    """DELETE ``/__admin/state-extension/contexts/{context}`` (имя контекста URL-encoded).
-
-    Не использовать в prepare/teardown сценариев и live e2e: см. ``docs/E2E_ISOLATION.md``.
-    Допустимо в точечных тестах Admin API и ручной отладке.
-    """
-    with _wiremock_admin_api_exclusive(timeout=timeout):
-        admin = wiremock_admin_base(public_base).rstrip("/")
-        enc = quote(context, safe="")
-        url = f"{admin}/state-extension/contexts/{enc}"
-        r = _wm_session().delete(url, timeout=timeout)
-        if r.status_code not in (200, 204, 404):
-            r.raise_for_status()
 
 
 def wiremock_state_reset_all_contexts(
