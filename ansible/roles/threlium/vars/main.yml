@@ -95,6 +95,26 @@ _threlium_knowledge_base:
   logic_report_max_chars: 4000
   observation_max_chars: 180000
 
+# bridges — base для combine(); host_vars задают только переопределяемые поля (IMAP creds и т.д.).
+_threlium_bridges_base:
+  email:
+    imap_host: ""
+    imap_user: ""
+    imap_pass: ""
+    imap_port: 0
+    imap_use_ssl: true
+    imap_ssl_verify: true
+    imap_idle_max_sec: 1740
+    imap_processed_folder: "Threlium/Processed"
+    imap_ensure_processed_folder: false
+  matrix:
+    homeserver: ""
+    user: ""
+    token: ""
+  telegram:
+    bot_token: ""
+    bot_api_base: ""
+
 _threlium_enrich_base:
   context_thread_n: 200
   context_thread_memory_n: 100
@@ -127,6 +147,7 @@ _threlium_enrich_base:
 # extra-vars (высший приоритет) — set_fact их НЕ перекрывает, поэтому merge нельзя писать обратно в то же
 # имя (ключи из *_base, отсутствующие в host_vars, терялись → в threlium.yaml попадал «сырой» host_vars).
 # Role-vars вычисляются лениво на момент использования в шаблоне: combine видит и base, и overrides.
+threlium_bridges_effective: "{{ _threlium_bridges_base | combine(threlium_bridges, recursive=True, list_merge='replace') }}"
 threlium_litellm_effective: "{{ _threlium_litellm_base | combine(threlium_litellm, recursive=True, list_merge='replace') }}"
 threlium_lightrag_effective: "{{ _threlium_lightrag_base | combine(threlium_lightrag, recursive=True, list_merge='replace') }}"
 threlium_enrich_effective: "{{ _threlium_enrich_base | combine(threlium_enrich, recursive=True, list_merge='replace') }}"

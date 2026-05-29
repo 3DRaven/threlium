@@ -32,9 +32,9 @@ lightrag:
 # =============================================================================
 bridges:
 {% for channel in threlium_channels %}
-{% if channel in threlium_bridges %}
+{% if channel in threlium_bridges_effective %}
   {{ channel }}:
-{{ threlium_bridges[channel] | to_nice_yaml(indent=2) | indent(4, first=true) }}
+{{ threlium_bridges_effective[channel] | to_nice_yaml(indent=2) | indent(4, first=true) }}
 {% endif %}
 {% endfor %}
 # =============================================================================

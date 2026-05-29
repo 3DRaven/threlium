@@ -49,8 +49,9 @@ threlium_bridges:
     imap_ssl_verify: true
     imap_idle_max_sec: 1740
     # Папка/label для переноса обработанных писем из INBOX (UID MOVE). Пусто — только \Seen.
-    imap_processed_folder: ""
-    imap_ensure_processed_folder: true
+    # Gmail: label «Threlium/Processed» в UI; CREATE по IMAP не поддержан → imap_ensure_processed_folder: false.
+    imap_processed_folder: "Threlium/Processed"
+    imap_ensure_processed_folder: false
 
 # =============================================================================
 # cli — песочница systemd-run для cli_exec.
