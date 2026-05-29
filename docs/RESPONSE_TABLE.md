@@ -68,4 +68,4 @@ class EditOp:
 | `<lightrag-context>` | `enrich` | RAG-контекст |
 | `<response-state>` | `enrich_fast` | Сводка буфера ответа |
 
-`enrich_fast` заменяет/добавляет `<response-state>` без пересборки остальных частей.
+`enrich_fast` пересобирает (**replace**) только `<response-state>`; relay-части (`<observation-note>` / `<plan-state>` / `<memory-note>`) дописываются **аддитивно** с уникальным `Content-ID` `<{family}@{inner-mid}>` — повторные хопы накапливаются, а не затирают друг друга. Остальные части `E_prev` не пересобираются.

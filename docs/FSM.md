@@ -415,10 +415,11 @@ def emit_transition_preserving_payload(
 
 #### После `enrich_fast` (без reflect): до 8 частей
 
-Все части из e_prev (от последнего `enrich`) + splice:
-- `<response-state>` — пересчёт из CRDT (`replace_or_add`).
-- `<plan-state>` — relay из `response_observe` (`replace_or_add`).
-- `<memory-note>` — relay из `thread/global_memory` (`replace_or_add`). Свежая заметка, которой ещё нет в stale контексте.
+Все части из e_prev (от последнего `enrich`) + splice (`splice_e_prev_with_incoming_relay`):
+- `<response-state>` — пересчёт из CRDT (**replace** единственной части).
+- Relay-семейства `<observation-note>` / `<plan-state>` / `<memory-note>` — **аддитивно**: каждый хоп вспомогательной стадии (`logic_validate`, `memory_query`, `response_observe`, `thread/global_memory`) приходит **отдельной** MIME-частью с уникальным `Content-ID` `<{family}@{inner-mid}>` (VO `EnrichContentId.from_relay`). enrich_fast (stage-agnostic) дописывает её в хвост, не затирая предыдущие. Повторные вызовы одной стадии (например 5× `logic_validate`) накапливаются, а не перезаписываются. Дедуп — только по полному совпадению `Content-ID`.
+
+`reasoning` группирует relay-части по семейству (`EnrichContentId.family`, префикс до первого `@`) и рендерит списком внутри тегов `<observation>` / `<plan_state>` / `<memory_note>`; бюджет на семейство — tail-keep новейших (`context_max_chars`). Бэк-компат: канонические `<observation-note>` без суффикса распознаются тем же семейством.
 
 `<memory-note>` **не дубль** в `enrich_fast` — unified/thread/global контексты stale.
 
