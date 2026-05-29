@@ -16,8 +16,10 @@ from threlium.prompts import render_prompt
 from threlium.response.collect import collect_ops
 from threlium.response.state_summary import build_state_data
 from threlium.settings import ThreliumSettings
+from threlium.task import collect_task_ops, reduce_task_ops
 from threlium.types import (
     FsmStage,
+    HopBudgetLine,
     LiteLlmChatMessage,
     LitellmRoutingSite,
     MailHeaderName,
@@ -54,6 +56,9 @@ def main(
     ops = collect_ops(inner)
     data = build_state_data(ops)
 
+    hop_line = HopBudgetLine.parse(msg.get(MailHeaderName.HOP_BUDGET.value))
+    ledger = reduce_task_ops(collect_task_ops(inner, hop_line))
+
     data_kw: dict[str, object] = {
         "is_empty": data.is_empty,
         "live_count": data.live_count,
@@ -63,12 +68,22 @@ def main(
             for c in data.chunks
         ],
         "deleted_positions": [c.position for c in data.chunks if c.deleted],
+        "task_is_empty": ledger.is_empty,
+        "subtasks": [
+            {"content_id": s.content_id.value, "text": s.text.value, "status": s.status.value}
+            for s in ledger.subtasks
+        ],
+        "task_open_count": len(ledger.open_subtasks()),
+        "task_done_count": len(ledger.done_subtasks()),
+        "task_cancelled_count": len(ledger.cancelled_subtasks()),
     }
 
     observation = _llm_observe(data_kw, config)
     log.info(
         "observed",
         ops_count=len(ops),
+        subtasks=len(ledger.subtasks),
+        open_subtasks=len(ledger.open_subtasks()),
         observation_chars=len(observation),
         message_id=mid_w.value if mid_w else None,
     )
@@ -77,6 +92,6 @@ def main(
         msg,
         to_addr=FsmStage.ENRICH_FAST,
         from_stage=stage,
-        parts=[(EnrichPartId.PLAN_STATE, observation)],
+        parts=[(EnrichPartId.RESPONSE_OBSERVATION, observation)],
         settings=config,
     )

@@ -4,6 +4,7 @@
     Variables: is_empty (bool), live_count (int), total_chars (int),
               chunks (list of {position: int, content: str|None, deleted: bool}),
               deleted_positions (list of int). -#}
+<response_buffer>
 {% if is_empty -%}
 The response buffer is empty. No chunks have been appended yet.
 {%- else -%}
@@ -18,3 +19,15 @@ Response buffer: {{ live_count }} live chunks, ~{{ total_chars }} chars total.
 {% endif -%}
 {% endfor -%}
 {%- endif %}
+</response_buffer>
+
+<task_ledger>
+{% if task_is_empty -%}
+No subtasks recorded yet (the plan is empty).
+{%- else -%}
+Plan: {{ subtasks | length }} subtasks ({{ task_open_count }} open, {{ task_done_count }} done, {{ task_cancelled_count }} cancelled).
+{% for s in subtasks -%}
+- [{{ s.status }}] ({{ s.content_id }}) {{ s.text }}
+{% endfor -%}
+{%- endif %}
+</task_ledger>

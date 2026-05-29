@@ -44,7 +44,9 @@ class EnrichPartId(StrEnum):
     THREAD_MEMORY = "<thread-memory>"
     GLOBAL_MEMORY = "<global-memory>"
     RESPONSE_STATE = "<response-state>"
-    PLAN_STATE = "<plan-state>"
+    TASK_INIT = "<task-init>"
+    TASK_STATE = "<task-state>"
+    RESPONSE_OBSERVATION = "<response-observation>"
     MEMORY_NOTE = "<memory-note>"
     OBSERVATION_NOTE = "<observation-note>"
 
@@ -52,14 +54,17 @@ class EnrichPartId(StrEnum):
 # Семейства relay-частей (источник: вспомогательные стадии → enrich_fast → reasoning).
 # Каждый хоп штампует уникальный CID ``<{family}@{inner-mid}>`` (EnrichContentId.from_relay),
 # поэтому повторные вызовы одной стадии не затирают друг друга, а накапливаются.
+# ``RESPONSE_OBSERVATION`` (бывш. ``PLAN_STATE``) — нарратив-обзор буфера ответа + задач
+# от ``response_observe``.
 RELAY_FAMILIES: Final[tuple[EnrichPartId, ...]] = (
     EnrichPartId.OBSERVATION_NOTE,
-    EnrichPartId.PLAN_STATE,
+    EnrichPartId.RESPONSE_OBSERVATION,
     EnrichPartId.MEMORY_NOTE,
 )
 
 # Фиксированные Content-ID полного ``enrich`` (build_enriched_multipart): не relay,
-# enrich_fast их не дописывает из входящего письма (``<response-state>`` он пересобирает сам).
+# enrich_fast их не дописывает из входящего письма (``<response-state>`` / ``<task-state>``
+# он пересобирает сам; ``<task-init>`` переносится как есть для durable-collect).
 _CORE_PART_IDS: Final[frozenset[EnrichPartId]] = frozenset(
     {
         EnrichPartId.USER_MESSAGE,
@@ -68,6 +73,8 @@ _CORE_PART_IDS: Final[frozenset[EnrichPartId]] = frozenset(
         EnrichPartId.THREAD_MEMORY,
         EnrichPartId.GLOBAL_MEMORY,
         EnrichPartId.RESPONSE_STATE,
+        EnrichPartId.TASK_INIT,
+        EnrichPartId.TASK_STATE,
     }
 )
 
@@ -372,13 +379,15 @@ def splice_e_prev_with_incoming_relay(
     incoming: EmailMessage,
     *,
     response_state_text: str,
+    task_state_text: str | None = None,
 ) -> RelaySpliceResult:
     """``E_prev`` + relay-части входящего письма → новый multipart для reasoning.
 
     Stage-agnostic быстрый цикл ``enrich_fast``:
 
     * копирует все части ``E_prev``;
-    * **пересобирает** только ``<response-state>`` из ``response_state_text`` (CRDT);
+    * **пересобирает** ``<response-state>`` из ``response_state_text`` (CRDT) и — если
+      передан ``task_state_text`` — ``<task-state>`` из него (детерминированный recompute);
     * **дописывает в хвост** relay-части ``incoming`` (не core, см.
       :meth:`EnrichContentId.is_core`) — как есть, с их оригинальным ``Content-ID``.
 
@@ -392,13 +401,18 @@ def splice_e_prev_with_incoming_relay(
     _copy_envelope_headers(e_prev, out)
 
     rs = EnrichContentId.from_part_id(EnrichPartId.RESPONSE_STATE)
+    ts = EnrichContentId.from_part_id(EnrichPartId.TASK_STATE)
     seen: set[EnrichContentId] = set()
     replaced_rs = False
+    replaced_ts = False
 
     for cid, part in _iter_relay_leaf_parts(e_prev):
         if cid == rs:
             out.attach(_make_inline_text_part(EnrichPartId.RESPONSE_STATE, response_state_text))
             replaced_rs = True
+        elif cid == ts and task_state_text is not None:
+            out.attach(_make_inline_text_part(EnrichPartId.TASK_STATE, task_state_text))
+            replaced_ts = True
         else:
             out.attach(part)
         seen.add(cid)
@@ -406,6 +420,10 @@ def splice_e_prev_with_incoming_relay(
     if not replaced_rs:
         out.attach(_make_inline_text_part(EnrichPartId.RESPONSE_STATE, response_state_text))
         seen.add(rs)
+
+    if task_state_text is not None and not replaced_ts:
+        out.attach(_make_inline_text_part(EnrichPartId.TASK_STATE, task_state_text))
+        seen.add(ts)
 
     appended: list[EnrichContentId] = []
     skipped: list[EnrichContentId] = []

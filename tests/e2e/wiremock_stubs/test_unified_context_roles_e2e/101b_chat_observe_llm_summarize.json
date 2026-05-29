@@ -1,0 +1,51 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
+    "headers": {
+      "X-Threlium-Call-Site": {
+        "equalTo": "fsm"
+      }
+    },
+    "bodyPatterns": [
+      {
+        "matches": "(?s).*(openai/threlium_e2e_l0|threlium_e2e_l0).*"
+      },
+      {
+        "contains": "response-buffer analyst"
+      },
+      {
+        "doesNotContain": "\"tools\""
+      }
+    ],
+    "customMatcher": {
+      "name": "state-matcher",
+      "parameters": {
+        "hasContext": "stub-unified-context-roles-01::{{request.headers.[x-threlium-thread-root]}}",
+        "hasProperty": "phase_observe"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "id": "chatcmpl-e2e-observe-llm-summarize",
+      "object": "chat.completion",
+      "created": 0,
+      "model": "gpt-4o-mini",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "stop",
+          "message": {
+            "role": "assistant",
+            "content": "**Buffer overview** — 1 live chunk, ~65 chars. The reply contains an e2e test content chunk.\n\n**Per-chunk summaries**\n- [0] E2E test chunk with observed content marker.\n\n**Structure & coherence** — Single chunk, coherent.\n\n**Completeness** — Appears complete for the test scenario.\n\n**Recommendations** — Ready to finalize."
+          }
+        }
+      ]
+    }
+  }
+}

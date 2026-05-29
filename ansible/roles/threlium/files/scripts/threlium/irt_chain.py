@@ -18,6 +18,7 @@ import notmuch2  # pyright: ignore[reportMissingImports]
 from threlium import nm
 from threlium.types import (
     FsmStage,
+    HopBudgetLine,
     IngressRouteB62Wire,
     MailHeaderName,
     NotmuchMessageIdInner,
@@ -44,6 +45,18 @@ class IrtAncestorSnapshot:
     header_references: RfcReferencesWire | None
     header_in_reply_to: RfcInReplyToWire | None
     header_subject: RfcSubjectWire | None
+    header_hop_budget: HopBudgetLine | None
+
+    def hop_stack_depth(self) -> int:
+        """Глубина hop-стека = число токенов ``X-Threlium-Hop-Budget`` (каждый subagent push добавляет токен).
+
+        Корневой фрейм треда — глубина 1; отсутствие/пустой заголовок трактуется как 1
+        (корень). Используется для изоляции task-ledger субагента по фрейму.
+        """
+        if self.header_hop_budget is None:
+            return 1
+        parts = self.header_hop_budget.value.split()
+        return len(parts) if parts else 1
 
     def is_sent_from_fsm_stage(self, stage: FsmStage) -> bool:
         """Аналог ``nm_addressed.notmuch_message_sent_from_fsm_stage`` на снимке."""
@@ -96,6 +109,9 @@ def _snapshot_from_nm_message(nm_msg: notmuch2.Message, mid: NotmuchMessageIdInn
         ),
         header_subject=RfcSubjectWire.parse_present_from_nm_message(
             nm_msg, MailHeaderName.SUBJECT.value
+        ),
+        header_hop_budget=HopBudgetLine.parse_present_from_nm_message(
+            nm_msg, MailHeaderName.HOP_BUDGET.value
         ),
     )
 
