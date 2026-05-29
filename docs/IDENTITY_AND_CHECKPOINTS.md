@@ -171,7 +171,7 @@ Email-мост, как Telegram/Matrix, хранит checkpoint в `X-Threlium-R
 1. Запрос notmuch: `tag:route AND from:email@localhost`, newest first → `EmailIngressRoute.imap_uid` / `imap_uidvalidity` первого письма с непустым uid (исходящие/legacy без uid пропускаются)
 2. `STATUS INBOX (UIDVALIDITY)`: если `imap_uidvalidity` не совпадает → watermark сбрасывается в `0` (полный хвост + notmuch-дедуп)
 3. `effective_start = max(checkpoint_uid, session_high_uid) + 1`; raw `UID SEARCH UID <effective_start>:*` (фильтр `>= effective_start` по возрастанию)
-4. Для каждого UID: canonical wire MID → lookup в notmuch → дубль → finalize + skip; новое → canonicalize (`imap_uid`/`imap_uidvalidity` в Route) → deliver (fdm) → finalize
+4. Один READ notmuch (`nm.notmuch_database`) на весь батч UID. Для каждого UID: canonical wire MID → lookup в notmuch → дубль → `duplicate_skip` + finalize; иначе есть `In-Reply-To` и непосредственного родителя нет в индексе → `orphan_skip` + finalize (та же проверка, что ingress Case 1, но до полного `UID FETCH` body и `fdm` — письмо в FSM **не** уходит); иначе новое → canonicalize (`imap_uid`/`imap_uidvalidity` в Route) → deliver (fdm) → finalize
 5. `idle.wait(timeout=1740s)` → при событии → снова `process_inbox_tail()` (переносит `session_high_uid`)
 
 **Finalize обработанного UID** (`_imap_finalize_message`): если задан `bridges.email.imap_processed_folder` → `UID MOVE` письма из INBOX в эту папку/label (`imap_tools.move`: серверный `UID MOVE` при capability, иначе `COPY`+`DELETE`+`EXPUNGE`); иначе (пусто) — legacy флаг `\Seen`. Перенос снимает письмо с выборки `UID SEARCH` **независимо** от watermark, поэтому редеплой с пустым notmuch не пересканирует старую почту INBOX. Для Gmail папка — заранее созданный label (`imap_ensure_processed_folder=false`, `CREATE` по IMAP не поддержан); для серверов с `CREATE` (GreenMail/Dovecot) папка заводится при старте моста.
@@ -179,12 +179,12 @@ Email-мост, как Telegram/Matrix, хранит checkpoint в `X-Threlium-R
 ```
 Реализация: bridges/email.py → process_inbox_tail(), run_bridge()
 
-    notmuch checkpoint        IMAP UID search          notmuch dedup        fdm
-    tag:route from:email  →  UID <wm+1>:*  →  UID  →  wire MID exists?  →  deliver + MOVE/\Seen (uid в Route)
-    .imap_uid = wm                                     yes → skip + MOVE/\Seen
+    notmuch checkpoint        IMAP UID search       notmuch (один READ на батч)      fdm
+    tag:route from:email  →  UID <wm+1>:*  →  UID → wire MID exists? ──no──→ IRT parent exists? ──yes/нет IRT──→ deliver + MOVE/\Seen (uid в Route)
+    .imap_uid = wm                          yes → duplicate_skip + MOVE/\Seen   no → orphan_skip + MOVE/\Seen
 ```
 
-`session_high_uid` (в рамках сессии) двигается на **каждом** обработанном UID, включая `duplicate_skip`: `UID SEARCH` не фильтрует по `\Seen`, иначе дубли в хвосте крутились бы на каждом IDLE.
+`session_high_uid` (в рамках сессии) двигается на **каждом** обработанном UID, включая `duplicate_skip` и `orphan_skip`: `UID SEARCH` не фильтрует по `\Seen`, иначе пропущенное письмо в хвосте крутилось бы на каждом IDLE.
 
 **Если проект был остановлен:** письма копятся на IMAP. При запуске watermark = последний `imap_uid` из notmuch → `UID <wm+1>:*` забирает весь backlog. Дедупликация по `Message-ID` через notmuch предотвращает повторную доставку; при включённом `imap_processed_folder` уже обработанная почта вообще не попадает в INBOX-выборку.
 
@@ -196,7 +196,9 @@ Email-мост, как Telegram/Matrix, хранит checkpoint в `X-Threlium-R
 
 1. Построить `<b62@localhost>` wire MID из `NativeId` (или `EmailNativeId` для email)
 2. `NotmuchMessageIdInner.from_present_wire(mid_wire)` → inner id
-3. `nm.notmuch_index_has_message_id(mid)` — lookup в notmuch
+3. `nm.notmuch_index_has_message_id_in_db(db, mid)` — lookup под одним READ `db`, открытым на весь батч (Matrix/Telegram/email одинаково)
 4. Если найден → skip (уже в FSM)
 
 Это гарантирует идемпотентность: даже при дублировании checkpoint (рестарт между deliver и commit offset) или при пересечении initial sync и incremental sync — одно и то же сообщение не войдёт в FSM дважды.
+
+Email-мост дополнительно делает `orphan_skip`: под тем же `db` каноничный родитель из `In-Reply-To` (как в `_build_canonical`) проверяется через `notmuch_index_has_message_id_in_db`; отсутствует → письмо не доставляется в FSM (та же семантика, что ingress Case 1, но раньше — чтобы reply на неизвестный тред не порождал enrich-retry по разорванной IRT-цепочке).

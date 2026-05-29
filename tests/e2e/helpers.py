@@ -558,11 +558,13 @@ class E2EComposeRuntime:
 def e2e_flush_greenmail_inboxes(rt: E2EComposeRuntime) -> None:
     """EXPUNGE all messages from GreenMail IMAP inboxes (``test@``, ``pytest@``).
 
-    Without this, ``threlium-bridge@email`` picks up stale UNSEEN messages from
-    previous runs after SUT Maildir/notmuch flush.  Those messages reference
-    ``In-Reply-To`` MIDs that no longer exist in the wiped notmuch index, causing
-    ``irt_chain.py`` to raise ``RuntimeError`` and the enrich worker to enter an
-    infinite restart loop.
+    Without this, ``threlium-bridge@email`` picks up stale messages from previous
+    runs after SUT Maildir/notmuch flush.  The bridge now drops replies whose
+    immediate ``In-Reply-To`` parent is missing from the wiped notmuch index
+    (``orphan_skip``), so stale replies no longer feed ``irt_chain.py`` and the
+    enrich worker no longer enters a restart loop.  Flushing is still required:
+    stale root messages would otherwise be re-delivered as duplicates and the
+    IMAP UID watermark must be reset between independent test sessions.
     """
     accounts = [
         (E2E_FETCHMAIL_USER, E2E_FETCHMAIL_PASS),
