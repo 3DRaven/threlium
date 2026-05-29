@@ -30,6 +30,9 @@ threlium_bridges:
     imap_use_ssl: true
     imap_ssl_verify: false
     imap_idle_max_sec: 1740
+    # GreenMail поддерживает CREATE и UID MOVE — переносим обработанные письма из INBOX.
+    imap_processed_folder: "Threlium.Processed"
+    imap_ensure_processed_folder: true
   matrix:
     homeserver: "http://wiremock:8080"
     user: "@e2e-bot:localhost"

@@ -48,6 +48,9 @@ threlium_bridges:
     imap_use_ssl: true
     imap_ssl_verify: true
     imap_idle_max_sec: 1740
+    # Папка/label для переноса обработанных писем из INBOX (UID MOVE). Пусто — только \Seen.
+    imap_processed_folder: ""
+    imap_ensure_processed_folder: true
 
 # =============================================================================
 # cli — песочница systemd-run для cli_exec.

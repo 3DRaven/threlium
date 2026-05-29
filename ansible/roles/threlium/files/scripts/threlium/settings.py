@@ -533,6 +533,21 @@ class EmailBridgeSettings(BaseModel):
         le=29 * 60,
         description="Интервал IDLE/опроса (сек); RFC 2177 — меньше 29 минут, у нас 60…1740.",
     )
+    imap_processed_folder: str = Field(
+        default="",
+        description=(
+            "IMAP-папка/label, куда мост переносит обработанные письма из INBOX (UID MOVE). "
+            "Пусто — legacy-поведение: только флаг \\Seen, без переноса. "
+            "Gmail: имя вложенного label через '/' (напр. 'Threlium/Processed'), завести вручную в UI."
+        ),
+    )
+    imap_ensure_processed_folder: bool = Field(
+        default=True,
+        description=(
+            "Создавать imap_processed_folder при старте моста, если её нет (CREATE). "
+            "Gmail: false — label создаётся вручную, CREATE по IMAP не поддержан."
+        ),
+    )
 
     @model_validator(mode="after")
     def _imap_host_requires_user(self) -> EmailBridgeSettings:

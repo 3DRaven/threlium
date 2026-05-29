@@ -29,6 +29,10 @@ threlium_bridges:
     imap_user: "agent@gmail.com"
     imap_pass: "{{ vault_imap_pass }}"
     imap_port: 993
+    # Куда переносить обработанные письма из INBOX (UID MOVE). Для Gmail — label,
+    # созданный заранее в UI (Settings → Labels); CREATE по IMAP Gmail не поддерживает.
+    imap_processed_folder: "Threlium/Processed"
+    imap_ensure_processed_folder: false
 
 # SMTP relay (tls/auth = on по умолчанию, не указывайте).
 threlium_msmtp:

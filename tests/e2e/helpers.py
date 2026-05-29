@@ -1217,6 +1217,10 @@ def wait_for_greenmail_inbox_message_seen_host(
 
     Письмо остаётся на сервере; бридж после FETCH обычно выставляет ``\\Seen`` —
     это подтверждает забор с control node (проброшенный IMAP), без гонки «UNSEEN до probe».
+
+    Не используйте при включённом ``bridges.email.imap_processed_folder`` (UID MOVE):
+    обработанное письмо уходит из INBOX и здесь никогда не найдётся — берите
+    :func:`wait_for_greenmail_inbox_message_gone_host`.
     """
     if timeout is None:
         timeout = TIMEOUT_POLL_SHORT
@@ -1343,7 +1347,7 @@ def run_greenmail_host_readiness_probe(
     забирает fetchmail Threlium — SUT/notmuch не трогаются, WireMock не сидится под probe.
 
     При **``through_agent_mailbox=True``** — прежнее поведение: ``To`` = ``E2E_FETCHMAIL_USER``
-    (``test@…``), ожидание ``\\Seen`` после FETCH бриджа; если задан ``wiremock_seed_base``, до SMTP
+    (``test@…``), ожидание забора бриджем (письмо ушло из INBOX через UID MOVE); если задан ``wiremock_seed_base``, до SMTP
     вызывается :func:`tests.e2e.wiremock_client.wiremock_state_seed_context` под ожидаемый
     ``X-Threlium-Thread-Root`` (см. ``docs/TESTING.md`` §4.4.x).
 
@@ -1378,16 +1382,16 @@ def run_greenmail_host_readiness_probe(
         smtp.send_message(msg)
 
     if through_agent_mailbox:
-        wait_for_greenmail_inbox_message_seen_host(
+        wait_for_greenmail_inbox_message_gone_host(
             rt.greenmail_imap_host,
             rt.greenmail_imap_port,
             user=imap_user,
             password=imap_pass,
             message_id=probe_msg_id,
             subject=probe_subject,
-            timeout=imap_timeout,
+            timeout=imap_timeout or TIMEOUT_POLL_SHORT,
         )
-        log_tail = "SMTP→IMAP \\Seen / bridge (test@)"
+        log_tail = "SMTP→IMAP bridge pickup (test@, gone from INBOX)"
     else:
         wait_for_greenmail_inbox_message_host(
             rt.greenmail_imap_host,
@@ -3329,12 +3333,12 @@ def _inject_rag_warmup(
     )
     mailflow_log_phase(f"{label}: rag warmup injected mid={warmup_id!r}")
 
-    wait_for_greenmail_inbox_message_seen_host(
+    wait_for_greenmail_inbox_message_gone_host(
         rt.greenmail_imap_host,
         rt.greenmail_imap_port,
         message_id=warmup_id,
     )
-    mailflow_log_phase(f"{label}: rag warmup Seen (pipeline complete)")
+    mailflow_log_phase(f"{label}: rag warmup picked up (gone from INBOX, pipeline complete)")
 
     poll_lightrag_indexed_positive(project_name, repo_root=REPO_ROOT)
     _wait_rag_drain_idle(project_name, label=label)
@@ -3346,7 +3350,7 @@ def mailflow_inject_and_wait(
     spec: MailflowScenarioSpec,
     deployed_stack: str,
 ) -> Iterator[tuple[str, str, str, str, str, str]]:
-    """Arrange phase: prepare WireMock → inject email → wait \\Seen + FSM activity.
+    """Arrange phase: prepare WireMock → inject email → wait bridge pickup (gone from INBOX) + FSM activity.
 
     Yields ``(project_name, raw_id, canonical_id, nm_inner, stub_tag, correlation_key)``.
     Teardown не чистит журнал WireMock (оставлен для ручной отладки).
@@ -3413,13 +3417,13 @@ def mailflow_inject_and_wait(
         body=inject_body,
     )
     mailflow_log_phase(f"{spec.label}: after smtp_inject_inbound (+{time.monotonic() - t0:.1f}s)")
-    wait_for_greenmail_inbox_message_seen_host(
+    wait_for_greenmail_inbox_message_gone_host(
         rt.greenmail_imap_host,
         rt.greenmail_imap_port,
         message_id=raw_id,
     )
     mailflow_log_phase(
-        f"{spec.label}: after wait_for_greenmail_inbox_message_seen_host (+{time.monotonic() - t0:.1f}s)"
+        f"{spec.label}: after wait_for_greenmail_inbox_message_gone_host (+{time.monotonic() - t0:.1f}s)"
     )
     snap = mailflow_fsm_maildir_systemd_snapshot(deployed_stack, repo_root=REPO_ROOT)
     mailflow_diag_block(

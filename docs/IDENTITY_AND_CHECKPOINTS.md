@@ -171,20 +171,22 @@ Email-мост, как Telegram/Matrix, хранит checkpoint в `X-Threlium-R
 1. Запрос notmuch: `tag:route AND from:email@localhost`, newest first → `EmailIngressRoute.imap_uid` / `imap_uidvalidity` первого письма с непустым uid (исходящие/legacy без uid пропускаются)
 2. `STATUS INBOX (UIDVALIDITY)`: если `imap_uidvalidity` не совпадает → watermark сбрасывается в `0` (полный хвост + notmuch-дедуп)
 3. `effective_start = max(checkpoint_uid, session_high_uid) + 1`; raw `UID SEARCH UID <effective_start>:*` (фильтр `>= effective_start` по возрастанию)
-4. Для каждого UID: canonical wire MID → lookup в notmuch → дубль → `\Seen` + skip; новое → canonicalize (`imap_uid`/`imap_uidvalidity` в Route) → deliver (fdm) → `\Seen`
+4. Для каждого UID: canonical wire MID → lookup в notmuch → дубль → finalize + skip; новое → canonicalize (`imap_uid`/`imap_uidvalidity` в Route) → deliver (fdm) → finalize
 5. `idle.wait(timeout=1740s)` → при событии → снова `process_inbox_tail()` (переносит `session_high_uid`)
+
+**Finalize обработанного UID** (`_imap_finalize_message`): если задан `bridges.email.imap_processed_folder` → `UID MOVE` письма из INBOX в эту папку/label (`imap_tools.move`: серверный `UID MOVE` при capability, иначе `COPY`+`DELETE`+`EXPUNGE`); иначе (пусто) — legacy флаг `\Seen`. Перенос снимает письмо с выборки `UID SEARCH` **независимо** от watermark, поэтому редеплой с пустым notmuch не пересканирует старую почту INBOX. Для Gmail папка — заранее созданный label (`imap_ensure_processed_folder=false`, `CREATE` по IMAP не поддержан); для серверов с `CREATE` (GreenMail/Dovecot) папка заводится при старте моста.
 
 ```
 Реализация: bridges/email.py → process_inbox_tail(), run_bridge()
 
     notmuch checkpoint        IMAP UID search          notmuch dedup        fdm
-    tag:route from:email  →  UID <wm+1>:*  →  UID  →  wire MID exists?  →  deliver + \Seen (uid в Route)
-    .imap_uid = wm                                     yes → skip + \Seen
+    tag:route from:email  →  UID <wm+1>:*  →  UID  →  wire MID exists?  →  deliver + MOVE/\Seen (uid в Route)
+    .imap_uid = wm                                     yes → skip + MOVE/\Seen
 ```
 
 `session_high_uid` (в рамках сессии) двигается на **каждом** обработанном UID, включая `duplicate_skip`: `UID SEARCH` не фильтрует по `\Seen`, иначе дубли в хвосте крутились бы на каждом IDLE.
 
-**Если проект был остановлен:** письма копятся на IMAP. При запуске watermark = последний `imap_uid` из notmuch → `UID <wm+1>:*` забирает весь backlog. Дедупликация по `Message-ID` через notmuch предотвращает повторную доставку.
+**Если проект был остановлен:** письма копятся на IMAP. При запуске watermark = последний `imap_uid` из notmuch → `UID <wm+1>:*` забирает весь backlog. Дедупликация по `Message-ID` через notmuch предотвращает повторную доставку; при включённом `imap_processed_folder` уже обработанная почта вообще не попадает в INBOX-выборку.
 
 ---
 

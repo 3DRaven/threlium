@@ -25,7 +25,7 @@ from .helpers import (
     mailflow_inject_and_wait,
     mailflow_wait_fsm_maildir_activity,
     smtp_inject_inbound,
-    wait_for_greenmail_inbox_message_seen_host,
+    wait_for_greenmail_inbox_message_gone_host,
     wait_for_greenmail_user_reply,
 )
 from .test_reasoning_litellm_mock_live import REASONING_E2E_BODY_MARKER
@@ -219,7 +219,7 @@ def test_summarize_idempotent_second_enrich(deployed_stack: str) -> None:
                 correlation_key=correlation_key,
             ),
         )
-        wait_for_greenmail_inbox_message_seen_host(
+        wait_for_greenmail_inbox_message_gone_host(
             rt.greenmail_imap_host,
             rt.greenmail_imap_port,
             message_id=raw_id2,

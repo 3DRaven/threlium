@@ -5,8 +5,11 @@
 обработка хвоста INBOX по IMAP UID-watermark (``imap_uid`` /
 ``imap_uidvalidity`` в ``X-Threlium-Route``, читается из notmuch при старте):
 ``UID SEARCH UID <wm+1>:*`` → дедупликация через notmuch → канонизация →
-доставка через ``fdm``. См. docs/ARCHITECTURE.md §2.3 и
-docs/IDENTITY_AND_CHECKPOINTS.md § Email.
+доставка через ``fdm`` → финализация UID: ``UID MOVE`` в
+``bridges.email.imap_processed_folder`` (если задан) либо флаг ``\\Seen`` (legacy).
+Перенос обработанных писем из INBOX снимает их с выборки ``UID SEARCH`` независимо от
+notmuch-watermark — редеплой с пустым notmuch не пересканирует старую почту.
+См. docs/ARCHITECTURE.md §2.3 и docs/IDENTITY_AND_CHECKPOINTS.md § Email.
 
 Запуск: инстанс ``threlium-bridge@email.service`` →
 ``python -m threlium.runners.bridge email`` (раннер передаёт ``deliver``).
@@ -416,6 +419,40 @@ def _incoming_inner_mid(head: EmailMessage, uid: str) -> str:
     return prev_inner
 
 
+def _processed_folder_exists(mailbox: BaseMailBox, folder: str) -> bool:
+    """Папка ``folder`` уже есть на сервере (``LIST``)."""
+    return any(fi.name == folder for fi in mailbox.folder.list())
+
+
+def _ensure_processed_folder(mailbox: BaseMailBox, folder: str) -> None:
+    """``CREATE folder``, если её нет (идемпотентно через предварительный ``LIST``).
+
+    Gmail не поддерживает ``CREATE`` произвольных папок по IMAP — там
+    ``imap_ensure_processed_folder=false`` и label создаётся вручную (вызов не делается).
+    """
+    if _processed_folder_exists(mailbox, folder):
+        return
+    mailbox.folder.create(folder)
+    log.info("imap_processed_folder_created", folder=folder)
+
+
+def _imap_finalize_message(
+    mailbox: BaseMailBox, uid: str, *, processed_folder: str
+) -> None:
+    """Финализация обработанного UID: ``UID MOVE`` в ``processed_folder`` либо флаг ``\\Seen``.
+
+    ``processed_folder`` непуст → письмо уходит из INBOX (``imap_tools.move``: серверный
+    ``UID MOVE`` при наличии capability, иначе ``COPY`` + ``DELETE`` + ``EXPUNGE``). Это снимает
+    письмо с выборки ``UID SEARCH`` независимо от ``\\Seen`` и notmuch-watermark — при редеплое
+    с пустым notmuch старая почта в INBOX больше не пересканируется. Пусто → legacy ``\\Seen``.
+    """
+    if processed_folder:
+        mailbox.move(uid, processed_folder)
+        log.info("imap_moved", uid=uid, folder=processed_folder)
+        return
+    mailbox.flag(uid, "\\Seen", True)
+
+
 def process_inbox_tail(
     mailbox: BaseMailBox,
     *,
@@ -423,14 +460,17 @@ def process_inbox_tail(
     settings: ThreliumSettings,
     session_high_uid: int,
 ) -> int:
-    """UID-watermark INBOX → dedup via notmuch → canonicalize (+imap_uid в Route) → deliver → ``\\Seen``.
+    """UID-watermark INBOX → dedup via notmuch → canonicalize (+imap_uid в Route) → deliver → finalize.
 
     Watermark = ``max(notmuch checkpoint, session_high_uid)``; выборка ``UID <watermark+1>:*``.
+    Финализация обработанного UID (включая ``duplicate_skip``) — :func:`_imap_finalize_message`:
+    ``UID MOVE`` в ``bridges.email.imap_processed_folder`` (если задан) или флаг ``\\Seen``.
     Возвращает обновлённый ``session_high_uid`` (двигается на каждом обработанном UID, включая
     ``duplicate_skip`` — иначе при ``UID SEARCH`` без ``\\Seen``-фильтра дубли крутятся вечно).
     Ошибка ``deliver`` / инварианта — исключение наружу (раннер моста не ловит); ``session_high_uid``
     для этого UID не двигается → повтор при рестарте.
     """
+    processed_folder = settings.bridges.email.imap_processed_folder
     _deliver = deliver if deliver is not None else (
         lambda m: run_fdm(fdm_bytes_from_message(m))
     )
@@ -462,7 +502,7 @@ def process_inbox_tail(
             log.info("duplicate_skip", message_id=prev_inner, uid=uid)
             if _e2e_litellm_route_correlation(settings):
                 log.debug("e2e_bridge_duplicate_skip", inner_incoming_mid=prev_inner, uid=uid)
-            mailbox.flag(uid, "\\Seen", True)
+            _imap_finalize_message(mailbox, uid, processed_folder=processed_folder)
             session_high_uid = max(session_high_uid, uid_int)
             continue
 
@@ -487,7 +527,7 @@ def process_inbox_tail(
             )
         _deliver(data)
 
-        mailbox.flag(uid, "\\Seen", True)
+        _imap_finalize_message(mailbox, uid, processed_folder=processed_folder)
         session_high_uid = max(session_high_uid, uid_int)
         if _e2e_litellm_route_correlation(settings):
             rw = data.get(HDR_ROUTE)
@@ -543,6 +583,18 @@ def run_bridge(deliver: Callable[[EmailMessage], None], *, settings: ThreliumSet
         user, password, initial_folder="INBOX"  # type: ignore[arg-type]
     ) as mailbox:
         log.info("connected", host=host, port=port)
+        processed_folder = email_cfg.imap_processed_folder
+        if processed_folder:
+            if email_cfg.imap_ensure_processed_folder:
+                _ensure_processed_folder(mailbox, processed_folder)
+            elif not _processed_folder_exists(mailbox, processed_folder):
+                log.error(
+                    "imap_processed_folder_missing",
+                    folder=processed_folder,
+                    hint="создайте папку/label вручную (Gmail) или включите imap_ensure_processed_folder",
+                )
+                sys.exit(1)
+            mailbox.folder.set("INBOX")
         notify_status(
             SystemdStatusBody.bridge_email_connected_idle(host=host, port=port)
         )
