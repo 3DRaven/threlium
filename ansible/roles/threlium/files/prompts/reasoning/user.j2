@@ -47,21 +47,33 @@ From: {{ from_hdr or "(none)" }}
 {{ response_state }}
 </response_buffer_state>
 {% endif %}
-{% if plan_state %}
+{% if plan_states %}
 
 <plan_state>
-{{ plan_state }}
+{% for note in plan_states %}{{ note }}{% if not loop.last %}
+
+---
+
+{% endif %}{% endfor %}
 </plan_state>
 {% endif %}
-{% if memory_note %}
+{% if memory_notes %}
 
 <memory_note>
-{{ memory_note }}
+{% for note in memory_notes %}{{ note }}{% if not loop.last %}
+
+---
+
+{% endif %}{% endfor %}
 </memory_note>
 {% endif %}
-{% if observation_note %}
+{% if observation_notes %}
 
 <observation>
-{{ observation_note }}
+{% for note in observation_notes %}{{ note }}{% if not loop.last %}
+
+---
+
+{% endif %}{% endfor %}
 </observation>
 {% endif %}

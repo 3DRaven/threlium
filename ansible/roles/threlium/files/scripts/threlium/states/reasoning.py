@@ -23,7 +23,12 @@ from threlium.fsm_emit import (
 )
 from threlium.logutil import logger
 from threlium.enrich_context import trim_context_text
-from threlium.mime_reform import EnrichPartId, canonicalize_mime, extract_part_by_content_id
+from threlium.mime_reform import (
+    EnrichPartId,
+    canonicalize_mime,
+    extract_part_by_content_id,
+    group_relay_notes_by_family,
+)
 from threlium.prompts import render_prompt
 from threlium.states.reasoning_tool_spec import (
     load_tools_for_routes,
@@ -106,6 +111,44 @@ def _extract_context_part(
     return trimmed or None
 
 
+# Семейства relay-частей в порядке их появления в reasoning-промпте.
+_RELAY_FAMILY_ORDER: tuple[EnrichPartId, ...] = (
+    EnrichPartId.PLAN_STATE,
+    EnrichPartId.MEMORY_NOTE,
+    EnrichPartId.OBSERVATION_NOTE,
+)
+
+
+def _budget_relay_notes(notes: list[str], max_chars: int) -> list[str]:
+    """Tail-keep новейшие записи семейства в пределах ``max_chars``.
+
+    Старые хопы (в начале списка) отбрасываются первыми при переполнении бюджета;
+    порядок оставшихся — oldest-first (как в MIME). ``max_chars <= 0`` — без обрезки.
+    """
+    if max_chars <= 0 or not notes:
+        return notes
+    kept: list[str] = []
+    total = 0
+    for note in reversed(notes):
+        if kept and total + len(note) > max_chars:
+            break
+        kept.append(note)
+        total += len(note)
+    kept.reverse()
+    return kept
+
+
+def _collect_relay_notes(
+    msg: EmailMessage, max_chars: int
+) -> dict[EnrichPartId, list[str]]:
+    """Сгруппировать relay-части по семейству (oldest-first), с бюджетом на семейство."""
+    grouped = group_relay_notes_by_family(msg)
+    return {
+        fam: _budget_relay_notes(grouped.get(fam, []), max_chars)
+        for fam in _RELAY_FAMILY_ORDER
+    }
+
+
 def _build_prompt(
     msg: EmailMessage, hop_budget: HopBudgetLine, max_chars: int,
 ) -> str:
@@ -123,9 +166,8 @@ def _build_prompt(
     thread_memory = _extract_context_part(msg, EnrichPartId.THREAD_MEMORY, max_chars)
     global_memory = _extract_context_part(msg, EnrichPartId.GLOBAL_MEMORY, max_chars)
     response_state = _extract_context_part(msg, EnrichPartId.RESPONSE_STATE, max_chars)
-    plan_state = _extract_context_part(msg, EnrichPartId.PLAN_STATE, max_chars)
-    memory_note = _extract_context_part(msg, EnrichPartId.MEMORY_NOTE, max_chars)
-    observation_note = _extract_context_part(msg, EnrichPartId.OBSERVATION_NOTE, max_chars)
+
+    relay = _collect_relay_notes(msg, max_chars)
 
     return render_prompt(
         PromptPath.REASONING_USER,
@@ -141,9 +183,9 @@ def _build_prompt(
         thread_memory=thread_memory,
         global_memory=global_memory,
         response_state=response_state,
-        plan_state=plan_state,
-        memory_note=memory_note,
-        observation_note=observation_note,
+        plan_states=relay[EnrichPartId.PLAN_STATE],
+        memory_notes=relay[EnrichPartId.MEMORY_NOTE],
+        observation_notes=relay[EnrichPartId.OBSERVATION_NOTE],
     )
 
 
