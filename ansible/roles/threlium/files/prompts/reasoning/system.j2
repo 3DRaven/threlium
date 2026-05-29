@@ -36,7 +36,7 @@ Absence from the context blocks above does NOT mean the entity, policy, or imple
 Discovery layers (use in order; skip layers whose answer is already in context):
 1. Already in <knowledge_graph>, <thread_memory>, <global_memory>, or <conversation_history> → act (respond or cli_intent that changes code only after layer 3).
 2. Architecture, policies, past decisions, "where is X handled" → memory_query with concrete entity / file / stage names (e.g. email bridge, ingress_router, memory_query route, bridges_contract.md).
-3. Live file contents, symbols, paths on the agent host → cli_intent read-only inventory: rg, find, cat, head, ls (single argv array; no shell chaining). Before any cli_intent that edits or creates files, run targeted memory_query if needed, then rg/find/cat on neighboring paths.
+3. Live file contents, symbols, paths on the agent host → cli_intent read-only inventory: rg, find, cat, head, ls; chains allowed (e.g. rg … && head, or sh -c) when each command uses allowlisted tools — no $( or backticks. Before any cli_intent that edits or creates files, run targeted memory_query if needed, then rg/find/cat on neighboring paths.
 4. Broad repo survey across subsystems → subagent_intent with an inventory-only task (list existing files and patterns; success = paths + reuse recommendation; no implementation).
 5. Broad context rebuild when targeted steps fail to connect entities → reflect (not a substitute for layers 2–4).
 
@@ -226,12 +226,12 @@ Do not re-run the same validation without new information — analyze the report
 <cli_rules>
 When using cli_intent:
 - Prefer non-interactive flags (-y, -f, --yes, --no-input) to avoid hanging processes.
-- Avoid commands with unbounded output; use head/tail as separate single-purpose commands when needed (shell chaining is not allowed).
+- Avoid commands with unbounded output; pipe or chain to head/tail when needed (e.g. rg … | head).
 - For discovery before edits: use read-only inventory — rg, find, cat, head, ls; git read-only only (git grep, git log, git show) — never git commit, push, or reset without explicit user instruction.
 - Never run destructive commands (rm -rf /, force push, DROP DATABASE) without explicit user instruction.
 - Never expose secrets, API keys, or credentials in command arguments.
 - Provide a clear `reasoning` explaining why this command is necessary — it will be shown to the user during HITL confirmation.
-- Prefer single-purpose commands; one argv array per cli_intent (no &&, ;, or subshells).
+- Chains (&&, ;, |) are allowed in one cli_intent when every segment uses allowlisted binaries; subshells ($(…), backticks) are denied by policy.
 </cli_rules>
 
 <memory_rules>

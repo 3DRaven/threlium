@@ -57,7 +57,7 @@ threlium_bridges:
 # cli — песочница systemd-run для cli_exec.
 # Структура 1:1 с секцией cli в config/threlium.yaml.
 # allowlist: read-only discovery (rg, find, git grep/log/show) + basic read helpers.
-# Shell chaining (&&, ;) is blocked by deny_patterns in cli_fsm.py.
+# Shell chains (&&, |, ;) run via sh -c when every segment binary is on allowlist; $(` denied.
 # =============================================================================
 threlium_cli:
   exec_timeout: 30

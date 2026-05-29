@@ -50,7 +50,7 @@
                 "type": "function",
                 "function": {
                   "name": "cli_intent",
-                  "arguments": "{\"argv\": [\"echo\", \"a;b\"], \"reasoning\": \"e2e cli_intent deny: semicolon in argv triggers local policy deny.\"}"
+                  "arguments": "{\"argv\": [\"echo\", \"$(whoami)\"], \"reasoning\": \"e2e cli_intent deny: command substitution in argv triggers local policy deny.\"}"
                 }
               }
             ]

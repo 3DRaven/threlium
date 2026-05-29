@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 
 import msgspec
 
@@ -12,6 +13,10 @@ from threlium.types import (
     CliIntentPayload,
     CliIntentPolicy,
 )
+
+_SHELL_OP_TOKENS = frozenset({"&&", "||", ";", "|"})
+_SHELL_BINARIES = frozenset({"sh", "bash"})
+_CHAIN_SPLIT_RE = re.compile(r"\s*(?:&&|\|\||;|\|)\s*")
 
 
 def parse_json_loose(text: str) -> object:
@@ -60,16 +65,61 @@ def cli_payload_as_json(cli: CliIntentPayload) -> str:
     return json.dumps({"cli": inner}, ensure_ascii=False)
 
 
-def _deny_substrings(settings: ThreliumSettings) -> tuple[str, ...]:
-    """Подстроки, запрещённые в строке ``" ".join(argv)`` (не в отдельных аргументах).
+def argv_to_shell_line(argv: list[str]) -> str:
+    """Склейка argv в строку для ``sh -c`` (операторы без кавычек)."""
+    parts: list[str] = []
+    for tok in argv:
+        if tok in _SHELL_OP_TOKENS:
+            parts.append(tok)
+        else:
+            parts.append(shlex.quote(tok))
+    return " ".join(parts)
 
-    Список задаётся ``settings.cli.deny_patterns`` (через запятую) или дефолтом ниже.
-    Проверка намеренно грубая — ради жёсткой безопасности.
+
+def argv_is_sh_c_wrapper(argv: list[str]) -> bool:
+    if len(argv) < 3:
+        return False
+    base = os.path.basename(argv[0].strip() or " ").lower()
+    return base in _SHELL_BINARIES and argv[1] == "-c"
+
+
+def argv_uses_shell_chaining(argv: list[str]) -> bool:
+    if any(t in _SHELL_OP_TOKENS for t in argv):
+        return True
+    joined = " ".join(argv)
+    return bool(re.search(r"\s(&&|\|\||\|)\s", joined))
+
+
+def shell_command_line_for_argv(argv: list[str]) -> str:
+    """Строка для ``sh -c`` (явная обёртка или склейка argv с операторами)."""
+    if argv_is_sh_c_wrapper(argv):
+        return argv[2]
+    if argv_uses_shell_chaining(argv):
+        return argv_to_shell_line(argv)
+    return shlex.join(argv)
+
+
+def resolve_cli_exec_argv(argv: list[str]) -> list[str]:
+    """Argv для ``systemd-run -- …`` (прямой exec или ``sh -c`` при цепочке)."""
+    if argv_is_sh_c_wrapper(argv):
+        base = os.path.basename(argv[0].strip() or " ").lower()
+        shell = base if base in _SHELL_BINARIES else "sh"
+        return [shell, "-c", argv[2]]
+    if argv_uses_shell_chaining(argv):
+        return ["sh", "-c", argv_to_shell_line(argv)]
+    return list(argv)
+
+
+def _deny_substrings(settings: ThreliumSettings) -> tuple[str, ...]:
+    """Подстроки, запрещённые в командной строке (subshell / command substitution).
+
+    Цепочки ``&&``, ``;``, ``|`` разрешены; блокируются ``$(``, backticks и переводы строк.
+    Дополнительные паттерны — ``settings.cli.deny_patterns`` (через запятую).
     """
     raw = settings.cli.deny_patterns.strip()
     if raw:
         return tuple(s.strip() for s in raw.split(",") if s.strip())
-    return (";", "|", "`", "$(", "${", "&&", "||", "\n", "\r")
+    return ("`", "$(", "${", "\n", "\r")
 
 
 def _allowlist_basenames(settings: ThreliumSettings) -> set[str]:
@@ -77,16 +127,46 @@ def _allowlist_basenames(settings: ThreliumSettings) -> set[str]:
     return {x.strip().lower() for x in raw.split(",") if x.strip()}
 
 
+def _binaries_in_shell_line(line: str) -> list[str]:
+    """Имена бинарников в каждом сегменте shell-цепочки."""
+    out: list[str] = []
+    for part in _CHAIN_SPLIT_RE.split(line.strip()):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            tokens = shlex.split(part)
+        except ValueError:
+            return []
+        if tokens:
+            out.append(os.path.basename(tokens[0]).lower())
+    return out
+
+
+def _policy_for_shell_line(line: str, settings: ThreliumSettings) -> CliIntentPolicy:
+    for sub in _deny_substrings(settings):
+        if sub in line:
+            return CliIntentPolicy.DENY
+    bins = _binaries_in_shell_line(line)
+    if not bins:
+        return CliIntentPolicy.HITL
+    allow = _allowlist_basenames(settings)
+    if all(b in allow for b in bins):
+        return CliIntentPolicy.ALLOW
+    return CliIntentPolicy.HITL
+
+
 def classify_cli_policy(cli: CliIntentPayload, settings: ThreliumSettings) -> CliIntentPolicy:
     """Политика исполнения CLI: ``allow`` | ``deny`` | ``hitl``.
 
-    Все элементы ``argv`` склеиваются в одну строку; если в ней встречается любая
-    подстрока из `_deny_substrings()` — ``deny``. Иначе, если basename ``argv[0]``
-    в allowlist (``THRELIUM_CLI_ALLOWLIST``) — ``allow``, иначе — ``hitl``.
-
-    Осознанно возможны ложные ``deny`` (например ``;`` внутри аргумента ``echo``).
+    Одиночная команда: ``argv[0]`` в allowlist → ``allow``, иначе ``hitl``.
+    Цепочка (``&&``, ``;``, ``|`` в argv или ``sh -c``): все сегменты в allowlist → ``allow``.
+    Subshell / ``$(`` / backticks → ``deny``.
     """
     argv = cli.argv
+    if argv_is_sh_c_wrapper(argv) or argv_uses_shell_chaining(argv):
+        return _policy_for_shell_line(shell_command_line_for_argv(argv), settings)
+
     joined = " ".join(argv)
     for sub in _deny_substrings(settings):
         if sub in joined:

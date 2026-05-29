@@ -8,7 +8,7 @@ Capability-профиль = хвост ``X-Threlium-Capabilities`` на вход
 import subprocess
 from email.message import EmailMessage
 
-from threlium.cli_fsm import parse_cli_intent_payload
+from threlium.cli_fsm import parse_cli_intent_payload, resolve_cli_exec_argv
 from threlium.fsm_emit import build_fsm_plain_to_stage
 from threlium.logutil import logger
 from threlium.mime_reform import extract_plain_body
@@ -60,7 +60,8 @@ def main(
     )
     cap_name = _peek_cap_top(cap_line) or "default"
 
-    cmd_line = " ".join(cli.argv)
+    exec_argv = resolve_cli_exec_argv(cli.argv)
+    cmd_line = " ".join(exec_argv)
     log.info("executing", cap=cap_name, cmd_line=cmd_line)
 
     # Build systemd-run --scope command with resource limits from Config
@@ -70,7 +71,7 @@ def main(
         f"--property=CPUQuota={config.cli.exec_cpu_quota}",
         f"--property=TasksMax={config.cli.exec_tasks_max}",
         "--",
-        *cli.argv,
+        *exec_argv,
     ]
 
     try:

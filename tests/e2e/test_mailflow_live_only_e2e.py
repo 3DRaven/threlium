@@ -1027,7 +1027,7 @@ def test_live_subagent_hitl_matrix_full_cycle_on_running_stack(live_mailflow_run
 @pytest.mark.e2e
 @pytest.mark.e2e_live
 def test_live_cli_intent_deny_on_running_stack(live_mailflow_runtime) -> None:
-    """``cli_intent`` → deny (опасный ``;`` в argv) → снова контур → ``egress_email``."""
+    """``cli_intent`` → deny (``$(`` subshell в argv) → снова контур → ``egress_email``."""
     rt = live_mailflow_runtime
     user_mid = f"e2e-cli-deny-{uuid.uuid4().hex}@localhost"
     correlation_key = e2e_thread_root_mid_for_message_id(user_mid)
