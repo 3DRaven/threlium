@@ -1,5 +1,8 @@
 """Bootstrap-индексация файлов из $THRELIUM_HOME/knowledge/ в LightRAG при старте engine.
 
+Корпус стримится батчами: метаданные файлов собираются лениво, содержимое читается
+по одному батчу за раз (память ограничена размером батча, а не всего корпуса).
+
 Дедупликация — ответственность LightRAG (``apipeline_enqueue_documents`` вызывает
 ``doc_status.filter_keys`` внутри ``ainsert``). Повторная загрузка при рестарте —
 no-op на стороне RAG, без лишних LLM/embed вызовов.
@@ -8,8 +11,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import itertools
 import logging
 import time
+from collections.abc import Iterator, Sequence
 from email import policy
 from email.message import EmailMessage
 from pathlib import Path
@@ -40,6 +45,37 @@ def _wrap_as_rfc822(content: str, *, doc_id: str, filename: str) -> str:
     return msg.as_string(policy=policy.default).strip() + "\n"
 
 
+def _iter_eligible_files(knowledge_dir: Path) -> Iterator[tuple[str, str]]:
+    """Lazily yield (rel_path, doc_id) для подходящих файлов — без чтения содержимого."""
+    for path in sorted(knowledge_dir.rglob("*")):
+        if not path.is_file() or path.suffix not in _ALLOWED_SUFFIXES:
+            continue
+        rel = str(path.relative_to(knowledge_dir))
+        yield rel, _doc_id_for_path(rel)
+
+
+def _read_batch_documents(
+    knowledge_dir: Path, batch: Sequence[tuple[str, str]]
+) -> tuple[list[str], list[str], list[str]]:
+    """(texts, ids, file_paths) для одного батча; пустые/нечитаемые файлы пропускаются."""
+    texts: list[str] = []
+    ids: list[str] = []
+    file_paths: list[str] = []
+    for rel, doc_id in batch:
+        path = knowledge_dir / rel
+        try:
+            content = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            log.warning("bootstrap_knowledge: cannot read %s: %s", path, e)
+            continue
+        if not content.strip():
+            continue
+        texts.append(_wrap_as_rfc822(content, doc_id=doc_id, filename=rel))
+        ids.append(doc_id)
+        file_paths.append(rel)
+    return texts, ids, file_paths
+
+
 async def bootstrap_knowledge_dir(
     rag: LightRAG,
     settings: ThreliumSettings,
@@ -48,9 +84,14 @@ async def bootstrap_knowledge_dir(
 ) -> int:
     """Index knowledge files батчами по ``lightrag.insert_batch`` (как drain).
 
-    Возвращает число файлов-кандидатов, переданных в ``ainsert`` (0 — если каталога
-    нет / нет подходящих файлов). Сам ``ainsert`` идемпотентен: уже проиндексированные
-    документы отфильтровываются ``doc_status``, новых LLM/embed-вызовов не будет.
+    Стримим корпус: ``_iter_eligible_files`` отдаёт только метаданные ``(rel, doc_id)``,
+    а содержимое читается и оборачивается в RFC822 (``_read_batch_documents``) уже внутри
+    одного батча — в памяти живёт максимум один батч контента, а не весь корпус.
+
+    Возвращает число документов, фактически переданных в ``ainsert`` (0 — если каталога
+    нет / нет подходящих или непустых файлов). Сам ``ainsert`` идемпотентен: уже
+    проиндексированные документы отфильтровываются ``doc_status``, новых LLM/embed-вызовов
+    не будет.
 
     Параллельность — на уровне инстанса ``rag`` (``build_rag``): в проде
     ``max_parallel_insert`` / ``*_max_async`` > 1 (LightRAG распараллеливает документы
@@ -68,44 +109,26 @@ async def bootstrap_knowledge_dir(
         log.info("bootstrap_knowledge: directory not found, skipping: %s", knowledge_dir)
         return 0
 
-    candidates: list[tuple[str, str, str]] = []
-    for path in sorted(knowledge_dir.rglob("*")):
-        if not path.is_file():
-            continue
-        if path.suffix not in _ALLOWED_SUFFIXES:
-            continue
-        rel = str(path.relative_to(knowledge_dir))
-        try:
-            content = path.read_text(encoding="utf-8", errors="replace")
-        except OSError as e:
-            log.warning("bootstrap_knowledge: cannot read %s: %s", path, e)
-            continue
-        if not content.strip():
-            continue
-        doc_id = _doc_id_for_path(rel)
-        rfc822 = _wrap_as_rfc822(content, doc_id=doc_id, filename=rel)
-        candidates.append((rel, doc_id, rfc822))
-
-    if not candidates:
+    candidate_files = list(_iter_eligible_files(knowledge_dir))
+    if not candidate_files:
         log.info("bootstrap_knowledge: no eligible files in %s", knowledge_dir)
         return 0
 
     batch_size = max(1, settings.lightrag.insert_batch)
-    total = len(candidates)
+    total = len(candidate_files)
     notify_status(SystemdStatusBody.lightrag_bootstrap_indexing(doc_count=total))
     done = 0
-    for start in range(0, total, batch_size):
-        chunk = candidates[start : start + batch_size]
-        texts = [rfc822 for _, _, rfc822 in chunk]
-        ids = [doc_id for _, doc_id, _ in chunk]
-        file_paths = [rel for rel, _, _ in chunk]
+    for batch in itertools.batched(candidate_files, batch_size):
+        texts, ids, file_paths = _read_batch_documents(knowledge_dir, batch)
+        if not texts:
+            continue
         t0 = time.monotonic()
         if lock is not None:
             async with lock:
                 await rag.ainsert(texts, ids=ids, file_paths=file_paths)
         else:
             await rag.ainsert(texts, ids=ids, file_paths=file_paths)
-        done += len(chunk)
+        done += len(texts)
         log.info(
             "bootstrap_knowledge: batch indexed (%d/%d, %.1fs) from %s",
             done,
@@ -113,4 +136,4 @@ async def bootstrap_knowledge_dir(
             time.monotonic() - t0,
             knowledge_dir,
         )
-    return total
+    return done
