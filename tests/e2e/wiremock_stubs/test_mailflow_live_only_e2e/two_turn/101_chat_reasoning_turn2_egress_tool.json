@@ -16,13 +16,16 @@
       },
       {
         "contains": "\"tools\""
+      },
+      {
+        "matches": "(?s).*partb.*"
       }
     ],
     "customMatcher": {
       "name": "state-matcher",
       "parameters": {
-        "hasContext": "stub-imap-checkpoint-resume-01::{{request.headers.[x-threlium-thread-root]}}",
-        "hasProperty": "phase_tasks_ledger_done"
+        "hasContext": "stub-mailflow-live-two-turn-01::{{request.headers.[x-threlium-thread-root]}}",
+        "hasProperty": "phase_turn2_tasks_ledger_done"
       }
     }
   },
@@ -32,7 +35,7 @@
       "Content-Type": "application/json"
     },
     "jsonBody": {
-      "id": "chatcmpl-e2e-wiremock-reasoning",
+      "id": "chatcmpl-e2e-wiremock-reasoning-turn2",
       "object": "chat.completion",
       "created": 0,
       "model": "gpt-4o-mini",
@@ -45,11 +48,11 @@
             "content": null,
             "tool_calls": [
               {
-                "id": "call_threlium_e2e_wiremock_reasoning",
+                "id": "call_threlium_e2e_wiremock_reasoning_turn2",
                 "type": "function",
                 "function": {
                   "name": "response_finalize",
-                  "arguments": "{\"reasoning\": \"e2e: finalizing response with verified content\", \"subject\": \"e2e reply\", \"verification_summary\": \"e2e: direct answer, content verified\", \"content\": \"ok from llm-mock\"}"
+                  "arguments": "{\"reasoning\": \"e2e turn2: finalizing response with verified content\", \"subject\": \"e2e reply turn2\", \"verification_summary\": \"e2e: direct answer, content verified\", \"content\": \"ok from llm-mock\"}"
                 }
               }
             ]

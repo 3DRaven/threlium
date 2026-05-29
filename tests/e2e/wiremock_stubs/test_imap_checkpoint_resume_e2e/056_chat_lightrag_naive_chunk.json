@@ -18,7 +18,7 @@
     "customMatcher": {
       "name": "state-matcher",
       "parameters": {
-        "hasContext": "stub-imap-checkpoint-01::{{request.headers.[x-threlium-thread-root]}}"
+        "hasContext": "stub-imap-checkpoint-resume-01::{{request.headers.[x-threlium-thread-root]}}"
       }
     }
   },

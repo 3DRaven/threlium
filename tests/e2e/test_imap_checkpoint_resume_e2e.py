@@ -6,14 +6,12 @@ Act 1: полный mailflow (минимальные стабы ``test_imap_chec
 Act 2: ``restart threlium-bridge@email`` → SMTP с тем же ``Message-ID`` (дубликат в INBOX) →
 ``duplicate_skip``; count ingress A не растёт.
 
-Act 3: новое письмо B → обрабатывается; watermark из notmuch не пересканирует старые UID.
-
-Без отдельного каталога стабов для act 2–3 (инфраструктурные проверки).
+Act 3: новое письмо B → полный mailflow с тем же каталогом стабов и **отдельным** сидом
+WireMock State (новый ``X-Threlium-Thread-Root``). Act 2 — только ``duplicate_skip`` (без LLM).
 """
 from __future__ import annotations
 
 import shlex
-import uuid
 from pathlib import Path
 
 import pytest
@@ -55,19 +53,40 @@ IMAP_CHECKPOINT_ACT1_SPEC = MailflowScenarioSpec(
     stub_dir=_WIREMOCK_STUBS_ROOT / "test_imap_checkpoint_resume_e2e",
     stub_tag="stub-imap-checkpoint-resume-01",
     body_head=f"{E2E_IMAP_CHECKPOINT_BODY}\ne2e imap checkpoint act1",
-    min_chat_completion_posts=1,
-    min_embedding_posts=7,
+    min_chat_completion_posts=2,
+    min_embedding_posts=5,
     min_rerank_posts=0,
     expect_notmuch_stage_folders=(
         FsmStage.INGRESS.value,
         FsmStage.ENRICH.value,
         FsmStage.REASONING.value,
+        FsmStage.TASKS_UPSERT.value,
         FsmStage.RESPONSE_FINALIZE.value,
         FsmStage.EGRESS_ROUTER.value,
         FsmStage.EGRESS_EMAIL.value,
         FsmStage.ARCHIVE.value,
     ),
-    reply_body_needle="e2e",
+)
+
+IMAP_CHECKPOINT_ACT3_SPEC = MailflowScenarioSpec(
+    label="imap_checkpoint_act3",
+    raw_id_prefix="e2e-imap-cp-b-",
+    stub_dir=_WIREMOCK_STUBS_ROOT / "test_imap_checkpoint_resume_e2e",
+    stub_tag="stub-imap-checkpoint-resume-01",
+    body_head=f"{E2E_IMAP_CHECKPOINT_BODY}\ne2e imap checkpoint act3 new mail",
+    min_chat_completion_posts=2,
+    min_embedding_posts=5,
+    min_rerank_posts=0,
+    expect_notmuch_stage_folders=(
+        FsmStage.INGRESS.value,
+        FsmStage.ENRICH.value,
+        FsmStage.REASONING.value,
+        FsmStage.TASKS_UPSERT.value,
+        FsmStage.RESPONSE_FINALIZE.value,
+        FsmStage.EGRESS_ROUTER.value,
+        FsmStage.EGRESS_EMAIL.value,
+        FsmStage.ARCHIVE.value,
+    ),
 )
 
 
@@ -176,25 +195,24 @@ def test_imap_checkpoint_resume_and_duplicate_skip(deployed_stack: str) -> None:
             f"duplicate reinject must not add notmuch copies: before={count_a_before} after={count_a_after}"
         )
 
-        raw_b = f"e2e-imap-cp-b-{uuid.uuid4().hex}@localhost"
-        nm_inner_b = email_ingress_notmuch_id_inner(raw_b)
-        smtp_inject_inbound(
-            project,
-            checkout="/unused",
-            repo_root=REPO_ROOT,
-            message_id=raw_b,
-            body=f"{E2E_IMAP_CHECKPOINT_BODY}\ne2e imap checkpoint act2 new mail",
-        )
-        wait_for_greenmail_inbox_message_gone_host(
-            imap_h, imap_p, message_id=raw_b, timeout=TIMEOUT_POLL_SHORT
-        )
+        with mailflow_inject_and_wait(IMAP_CHECKPOINT_ACT3_SPEC, project) as (
+            _proj_b,
+            raw_b,
+            _canon_b,
+            nm_inner_b,
+            stub_tag_b,
+            correlation_key_b,
+        ):
+            assert_full_mailflow_pipeline(
+                IMAP_CHECKPOINT_ACT3_SPEC,
+                project=project,
+                raw_id=raw_b,
+                nm_inner=nm_inner_b,
+                stub_tag=stub_tag_b,
+                correlation_key=correlation_key_b,
+            )
 
-        def _b_indexed() -> bool | None:
-            c = _notmuch_count(project, query=notmuch_id_search_term(nm_inner_b))
-            return True if c >= 1 else None
-
-        poll_until_backoff(_b_indexed, timeout=TIMEOUT_POLL_SHORT, desc=f"mail B indexed {raw_b!r}")
-        log.info("imap_checkpoint_resume_ok", uid_a=uid, count_a=count_a_after)
+        log.info("imap_checkpoint_resume_ok", uid_a=uid, count_a=count_a_after, raw_b=raw_b)
     except Exception:
         log.debug(
             "failure_artifacts",
