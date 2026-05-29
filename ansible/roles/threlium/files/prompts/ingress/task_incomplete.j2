@@ -1,14 +1,20 @@
 {#- LLM-facing text is English-only: Cyrillic uses roughly 2–3× more tokens per word.
     This Jinja comment is stripped and never sent to the model.
-    response_finalize hard gate: returned to ingress when the task ledger still has open work.
-    Variables: all_cancelled (bool); open_subtasks / done_subtasks / cancelled_subtasks
+    response_finalize hard gate (fail-closed): returned to ingress when the task ledger
+    is empty or still has open work.
+    Variables: ledger_empty (bool); all_cancelled (bool); blockers (str | None);
+               open_subtasks / done_subtasks / cancelled_subtasks
                (lists of {content_id, text[, status]}). -#}
-RESPONSE BLOCKED: the reply was NOT sent because the task ledger still has unfinished work.
-{% if all_cancelled %}
+RESPONSE BLOCKED: the reply was NOT sent because the task ledger does not show completed work.
+{% if ledger_empty %}
+The task ledger is empty — no subtasks are recorded. response_finalize is hard-gated on the ledger: lay out the plan first with tasks_upsert (new_subtasks), do the work, and mark subtasks done. For a genuinely trivial request, add ONE subtask describing the answer and mark it done in the same tasks_upsert call, then finalize.
+{% elif all_cancelled %}
 Every subtask is cancelled and none is done — that is not a completed task. Either complete real work (mark a subtask done) or, if the request genuinely needs no action, append a response chunk explaining that and add a done subtask recording it.
 {% else %}
 Finish or cancel the open subtasks below, then call response_finalize again. Use tasks_upsert (subtask_updates by content_id) to set each to done or cancelled.
-
+{% if blockers %}
+If an open subtask is genuinely blocked ({{ blockers }}), you may set allow_finalize_with_blocker=true in tasks_upsert to finalize anyway after closing the rest.
+{% endif %}
 Open subtasks:
 {% for s in open_subtasks -%}
 - [{{ s.status }}] ({{ s.content_id }}) {{ s.text }}

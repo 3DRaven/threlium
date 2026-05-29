@@ -17,10 +17,43 @@ its `content_id` and its `status`.
    into an initial set of subtasks (status `pending`). They appear in `<task_state>`.
 2. **You refine and progress it** with `tasks_upsert`: add concrete subtasks, mark the
    one you start as `in_progress`, mark finished ones `done`, drop dead ones `cancelled`.
-3. **`response_finalize` is hard-gated on it.** It will refuse to send the reply while
-   any subtask is `pending`/`in_progress`, or if every subtask is `cancelled` with none
-   `done`. The gate checks the reconstructed ledger, not your prose — you cannot finalize
-   by claiming you are done.
+3. **`response_finalize` is hard-gated on it (fail-closed).** It will refuse to send the
+   reply if the ledger is **empty**, while any subtask is `pending`/`in_progress`, or if
+   every subtask is `cancelled` with none `done`. The gate checks the reconstructed ledger,
+   not your prose — you cannot finalize by claiming you are done, nor by skipping the ledger.
+
+### Empty ledger blocks finalize (fail-closed)
+
+An empty `<task_state>` (enrich seeded nothing, or its seed LLM call failed) does **not**
+mean "no plan needed" — it blocks `response_finalize` outright. Lay out the plan with
+`tasks_upsert` first.
+
+**Trivial one-liner:** for a request that needs a single direct answer, add one subtask and
+mark it `done` in the *same* `tasks_upsert` call, then finalize:
+
+```json
+{
+  "reasoning": "trivial direct answer, recording completion",
+  "new_subtasks": [ { "text": "Answer the user's question about X", "status": "done" } ]
+}
+```
+
+### Blocker bypass
+
+If an open subtask genuinely cannot be completed (external dependency, missing access),
+record the blocker and finalize the rest deliberately:
+
+```json
+{
+  "reasoning": "API credentials unavailable; delivering partial answer",
+  "subtask_updates": [ { "content_id": "id_done_part", "status": "done" } ],
+  "blockers": "subtask id_blocked needs prod API credentials we do not have",
+  "allow_finalize_with_blocker": true
+}
+```
+
+The bypass applies **only** when the ledger already has subtasks and a non-empty `blockers`
+is set — it cannot unblock an empty ledger, and the all-cancelled guard still holds.
 
 ## Status lattice (monotonic, never moves backwards)
 

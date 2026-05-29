@@ -4,10 +4,19 @@
     Variables: is_empty (bool); subtasks (list of {content_id, text, status, terminal});
                open_count, done_count, cancelled_count (int). -#}
 {% if is_empty -%}
-No subtasks recorded yet. Use tasks_upsert to lay out the plan (response_finalize is gated on this ledger).
+No subtasks recorded yet. response_finalize is HARD-GATED on this ledger and will refuse to send a reply while it is empty: lay out the plan with tasks_upsert (new_subtasks) before finalizing. For a trivial answer, add one subtask and mark it done in the same call.
 {%- else -%}
 Task ledger: {{ subtasks | length }} subtasks ({{ open_count }} open, {{ done_count }} done, {{ cancelled_count }} cancelled).
 {% for s in subtasks -%}
 - [{{ s.status }}] ({{ s.content_id }}) {{ s.text | replace("\n", " ") }}
 {% endfor -%}
+{% if discovery_note %}
+Discovery: {{ discovery_note | replace("\n", " ") }}
+{% endif -%}
+{% if next_action %}
+Next action: {{ next_action | replace("\n", " ") }}
+{% endif -%}
+{% if blockers %}
+Blocker: {{ blockers | replace("\n", " ") }}{% if allow_finalize_with_blocker %} (allow_finalize_with_blocker set){% endif %}
+{% endif -%}
 {%- endif %}

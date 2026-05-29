@@ -114,19 +114,42 @@ class TaskLedger(msgspec.Struct, frozen=True):
     Иммутабелен; строится фабрикой :meth:`from_states` (инвариант уникальности
     ``content_id``). Это детерминированный результат ``reduce_task_ops`` —
     порядок подзадач стабилен (по ``content_id``).
+
+    Метаданные (``discovery_note`` / ``next_action`` / ``blockers`` /
+    ``allow_finalize_with_blocker``) — last-wins из последнего ``TasksUpsertOp``: текстовые
+    поля сохраняются между upsert'ами (``None`` не затирает), а флаг ``allow_finalize_with_blocker``
+    всегда отражает последний upsert. ``blockers`` + флаг — единственный путь к bypass gate.
     """
 
     subtasks: tuple[TaskSubtaskState, ...] = ()
+    discovery_note: TaskDiscoveryNoteText | None = None
+    next_action: TaskNextActionText | None = None
+    blockers: TaskBlockerText | None = None
+    allow_finalize_with_blocker: bool = False
 
     @classmethod
     def empty(cls) -> Self:
         return cls(subtasks=())
 
     @classmethod
-    def from_states(cls, states: dict[str, TaskSubtaskState]) -> Self:
+    def from_states(
+        cls,
+        states: dict[str, TaskSubtaskState],
+        *,
+        discovery_note: TaskDiscoveryNoteText | None = None,
+        next_action: TaskNextActionText | None = None,
+        blockers: TaskBlockerText | None = None,
+        allow_finalize_with_blocker: bool = False,
+    ) -> Self:
         """``content_id.value → state`` → ledger со стабильным порядком (sort по content_id)."""
         ordered = tuple(states[k] for k in sorted(states))
-        return cls(subtasks=ordered)
+        return cls(
+            subtasks=ordered,
+            discovery_note=discovery_note,
+            next_action=next_action,
+            blockers=blockers,
+            allow_finalize_with_blocker=allow_finalize_with_blocker,
+        )
 
     @property
     def is_empty(self) -> bool:

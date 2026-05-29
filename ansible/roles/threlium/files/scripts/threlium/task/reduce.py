@@ -6,7 +6,10 @@ from collections.abc import Iterable
 from threlium.logutil import logger
 from threlium.types import (
     SubtaskStatus,
+    TaskBlockerText,
+    TaskDiscoveryNoteText,
     TaskLedger,
+    TaskNextActionText,
     TaskSubtaskContentId,
     TaskSubtaskState,
     TaskSubtaskText,
@@ -52,10 +55,19 @@ def _apply_update(
 def reduce_task_ops(ops: Iterable[TaskOp]) -> TaskLedger:
     """Свести ops в ledger: init/additions = ensure-exists, updates = merge статуса.
 
-    Коммутативно/идемпотентно (``SubtaskStatus.merge`` = max ранга) → результат не зависит
-    от порядка писем в IRT.
+    Статусы — коммутативно/идемпотентно (``SubtaskStatus.merge`` = max ранга): результат не
+    зависит от порядка писем в IRT (при инварианте «init/addition подзадачи раньше её update»,
+    который гарантирует ``collect_task_ops`` хронологией root→leaf).
+
+    Метаданные upsert (``discovery_note`` / ``next_action`` / ``blockers`` /
+    ``allow_finalize_with_blocker``) — last-wins по порядку: текстовые поля сохраняются, если
+    очередной upsert их не задал (``None``); флаг берётся из последнего ``TasksUpsertOp``.
     """
     states: dict[str, TaskSubtaskState] = {}
+    discovery_note: TaskDiscoveryNoteText | None = None
+    next_action: TaskNextActionText | None = None
+    blockers: TaskBlockerText | None = None
+    allow_finalize_with_blocker = False
     for op in ops:
         if isinstance(op, TaskInitOp):
             for d in op.subtasks:
@@ -65,6 +77,13 @@ def reduce_task_ops(ops: Iterable[TaskOp]) -> TaskLedger:
                 _ensure_exists(states, a.content_id, a.text, a.status)
             for u in op.updates:
                 _apply_update(states, u.content_id, u.status)
+            if op.discovery_append is not None:
+                discovery_note = op.discovery_append
+            if op.next_action is not None:
+                next_action = op.next_action
+            if op.blockers is not None:
+                blockers = op.blockers
+            allow_finalize_with_blocker = op.allow_finalize_with_blocker
 
     in_progress = [s for s in states.values() if s.status is SubtaskStatus.IN_PROGRESS]
     if len(in_progress) > 1:
@@ -73,4 +92,10 @@ def reduce_task_ops(ops: Iterable[TaskOp]) -> TaskLedger:
             count=len(in_progress),
             content_ids=[s.content_id.value for s in in_progress],
         )
-    return TaskLedger.from_states(states)
+    return TaskLedger.from_states(
+        states,
+        discovery_note=discovery_note,
+        next_action=next_action,
+        blockers=blockers,
+        allow_finalize_with_blocker=allow_finalize_with_blocker,
+    )

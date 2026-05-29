@@ -184,9 +184,17 @@ def parse_task_init_op(
     for sub in wire.subtasks:
         try:
             text = TaskSubtaskText.require(name="task_init.text", raw=sub.text)
-            cid = TaskSubtaskContentId.require_value(sub.content_id)
         except ValueError:
             continue
+        # content_id всегда authoritative = hash от текста (content-addressed identity).
+        # Рассогласованный wire content_id (повреждённый MIME) логируем и игнорируем.
+        cid = TaskSubtaskContentId.from_text(text)
+        if (sub.content_id or "").strip() != cid.value:
+            log.warning(
+                "task_init_content_id_mismatch",
+                wire_content_id=sub.content_id,
+                expected=cid.value,
+            )
         defs.append(TaskSubtaskDef(content_id=cid, text=text))
     if not defs:
         return None

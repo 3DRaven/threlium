@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from email.message import EmailMessage
 
-from threlium.fsm_emit import build_fsm_plain_to_stage
+from threlium.fsm_emit import build_fsm_plain_to_stage, hop_budget_remaining
 from threlium.logutil import logger
 from threlium.mime_reform import extract_plain_body
 from threlium.prompts import render_prompt
@@ -54,12 +54,22 @@ def main(
     has_buffer = buffer_text is not None
     has_content = inline_content is not None
 
-    # Жёсткий gate (anti-drift): не отдаём ответ пользователю, пока в task-ledger есть
-    # незавершённая работа (проверка по IRT, независимо от текста LLM). Пустой ledger —
-    # fail-open. См. docs/RESPONSE_TABLE.md (Task CRDT) и threlium.task.gate.
+    # Жёсткий gate (anti-drift, fail-closed): не отдаём ответ пользователю, пока в task-ledger
+    # нет завершённой работы (проверка по IRT, независимо от текста LLM). Пустой ledger тоже
+    # блокирует — даже trivial-ответ фиксирует одну подзадачу done через tasks_upsert.
+    # См. docs/RESPONSE_TABLE.md (Task CRDT) и threlium.task.gate.
+    #
+    # Исключение — исчерпанный hop-budget (remaining == 0): reasoning форсирует
+    # сюда последний ответ, и он возвращается пользователю жёстко, минуя gate
+    # (иначе finalize↔ingress зациклится). См. states/reasoning.py (force_finalize).
     hop_line = HopBudgetLine.parse(msg.get(MailHeaderName.HOP_BUDGET.value))
+    budget_exhausted = hop_budget_remaining(hop_line, config) < 1
     ledger = reduce_task_ops(collect_task_ops(inner, hop_line))
-    if (has_buffer or has_content) and ledger_has_open_work(ledger):
+    if (
+        not budget_exhausted
+        and (has_buffer or has_content)
+        and ledger_has_open_work(ledger)
+    ):
         log.warning(
             "finalize_blocked_open_tasks",
             open_subtasks=len(ledger.open_subtasks()),
@@ -89,8 +99,23 @@ def main(
         ).strip()
     else:
         mode = 4
-        log.warning("empty_buffer_and_content", mode=4, message_id=mid_w.value if mid_w else None)
+        log.warning(
+            "empty_buffer_and_content",
+            mode=4,
+            budget_exhausted=budget_exhausted,
+            message_id=mid_w.value if mid_w else None,
+        )
         notice = render_prompt(PromptPath.INGRESS_RESPONSE_NOT_FORMED).strip()
+        # При исчерпанном бюджете отбивка в ingress зациклит — отдаём notice пользователю.
+        if budget_exhausted:
+            return build_fsm_plain_to_stage(
+                msg,
+                to_addr=FsmStage.EGRESS_ROUTER,
+                from_stage=stage,
+                body=FsmTransitionPlainBody.parse(notice),
+                subject_line=FsmTransitionPlainSubjectLine.parse(subject_raw),
+                settings=config,
+            )
         return build_fsm_plain_to_stage(
             msg,
             to_addr=FsmStage.INGRESS,
@@ -104,6 +129,7 @@ def main(
         mode=mode,
         has_buffer=has_buffer,
         has_content=has_content,
+        budget_exhausted=budget_exhausted,
         body_chars=len(final_body),
         message_id=mid_w.value if mid_w else None,
     )

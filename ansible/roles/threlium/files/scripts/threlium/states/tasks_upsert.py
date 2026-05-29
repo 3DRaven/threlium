@@ -69,11 +69,8 @@ def main(
 
     irt_w = RfcInReplyToWire.parse_present_from_email(msg, _HDR.IN_REPLY_TO.value)
     parent_inner = NotmuchMessageIdInner.from_optional_raw(irt_w.value if irt_w else None)
-    prior_ledger = (
-        reduce_task_ops(collect_task_ops(parent_inner, hop_line))
-        if parent_inner is not None
-        else TaskLedger.empty()
-    )
+    prior_ops = collect_task_ops(parent_inner, hop_line) if parent_inner is not None else []
+    prior_ledger = reduce_task_ops(prior_ops)
 
     body_raw = extract_plain_body(msg).strip()
     try:
@@ -85,7 +82,7 @@ def main(
         log.error("invalid_tasks_upsert", error=str(exc), message_id=mid_w.value if mid_w else None)
         return _ingress_error(msg, stage, config=config, error=str(exc), ledger=prior_ledger)
 
-    new_ledger = reduce_task_ops([*collect_task_ops(parent_inner, hop_line), op]) if parent_inner else reduce_task_ops([op])
+    new_ledger = reduce_task_ops([*prior_ops, op])
     log.info(
         "tasks_upserted",
         additions=len(op.additions),
