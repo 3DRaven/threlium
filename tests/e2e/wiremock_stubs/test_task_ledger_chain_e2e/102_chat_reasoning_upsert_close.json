@@ -1,0 +1,79 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
+    "headers": {
+      "X-Threlium-Call-Site": {
+        "equalTo": "fsm"
+      }
+    },
+    "bodyPatterns": [
+      {
+        "matches": "(?s).*(openai/threlium_e2e_l0|threlium_e2e_l0).*"
+      },
+      {
+        "contains": "<envelope>"
+      },
+      {
+        "contains": "\"tools\""
+      },
+      {
+        "contains": "E2E-TASK-LEDGER-CHAIN-BODY"
+      },
+      {
+        "doesNotMatch": "(?s).*\"enable_thinking\"\\s*:\\s*false.*"
+      }
+    ],
+    "customMatcher": {
+      "name": "state-matcher",
+      "parameters": {
+        "hasContext": "stub-task-ledger-chain-01::{{request.headers.[x-threlium-thread-root]}}",
+        "hasProperty": "phase_finalize_blocked_done",
+        "hasNotProperty": "phase_upsert_close_done"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "id": "chatcmpl-e2e-task-ledger-reasoning-3-upsert-close",
+      "object": "chat.completion",
+      "created": 0,
+      "model": "gpt-4o-mini",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "tool_calls",
+          "message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_e2e_tasks_upsert_close",
+                "type": "function",
+                "function": {
+                  "name": "tasks_upsert",
+                  "arguments": "{\"reasoning\": \"e2e: finished A and B, verification subtask C no longer needed\", \"subtask_updates\": [{\"content_id\": \"e4a7f48a17f1\", \"status\": \"done\"}, {\"content_id\": \"a7c257d6ea7c\", \"status\": \"done\"}, {\"content_id\": \"42aa15ee3c67\", \"status\": \"cancelled\"}]}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "serveEventListeners": [
+    {
+      "name": "recordState",
+      "parameters": {
+        "context": "stub-task-ledger-chain-01::{{request.headers.[x-threlium-thread-root]}}",
+        "state": {
+          "phase_upsert_close_done": "1"
+        }
+      }
+    }
+  ]
+}

@@ -24,8 +24,10 @@ from threlium.mime_reform import (
 from threlium.response.collect import collect_ops
 from threlium.response.state_summary import build_state_summary
 from threlium.settings import ThreliumSettings
+from threlium.task import build_task_state_summary, collect_task_ops, reduce_task_ops
 from threlium.types import (
     FsmStage,
+    HopBudgetLine,
     MailHeaderName,
     NotmuchMessageIdInner,
     RfcMessageIdWire,
@@ -64,8 +66,12 @@ def main(
     limit = config.enrich.context_max_chars
     trimmed_summary = trim_context_text(summary, limit)
 
+    hop_line = HopBudgetLine.parse(msg.get(MailHeaderName.HOP_BUDGET.value))
+    task_ledger = reduce_task_ops(collect_task_ops(inner, hop_line))
+    task_state_text = trim_context_text(build_task_state_summary(task_ledger), limit)
+
     spliced = splice_e_prev_with_incoming_relay(
-        e_prev, msg, response_state_text=trimmed_summary,
+        e_prev, msg, response_state_text=trimmed_summary, task_state_text=task_state_text,
     )
 
     log.info(

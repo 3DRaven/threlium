@@ -17,13 +17,14 @@ threlium_fsm_mailbox_stages:
   - { id: response_append }
   - { id: response_edit }
   - { id: response_observe }
+  - { id: tasks_upsert }
   - { id: enrich_fast }
   - { id: response_finalize }
   - { id: egress_router }
   - { id: egress_email }
   - { id: egress_telegram }
   - { id: egress_matrix }
-  - { id: logic_validate }
+  - { id: formal_reason }
   - { id: memory_query }
   - { id: summarize_context }
   - { id: summarize_memory }
@@ -92,7 +93,9 @@ _threlium_lightrag_base:
   llm_max_tokens: 0
 
 _threlium_knowledge_base:
-  logic_report_max_chars: 4000
+  formal_report_max_chars: 4000
+  formal_derived_max_chars: 6000
+  formal_query_max_chars: 4000
   observation_max_chars: 180000
 
 # bridges — base для combine(); host_vars задают только переопределяемые поля (IMAP creds и т.д.).
@@ -158,6 +161,7 @@ threlium_knowledge_effective: "{{ _threlium_knowledge_base | combine(threlium_kn
 threlium_required_prompts:
   - lightrag/ingest_body.j2
   - lightrag/enrich_query_plan.j2
+  - lightrag/enrich_task_plan.j2
   - lightrag/enrich_incoming_user_text.j2
   - lightrag/enrich_aquery_user.j2
   - lightrag/mail_context.j2
@@ -191,7 +195,7 @@ threlium_required_prompts:
   - cli_hitl_out/unparsable.j2
   - cli_hitl_out/subject.j2
   - cli_exec/observation.j2
-  - logic_validate/observation.j2
+  - formal_reason/observation.j2
   - memory_query/observation.j2
   - egress/self_archive_subject.j2
   - egress/self_archive_body.j2
@@ -226,16 +230,22 @@ threlium_required_prompts:
   - reasoning/response_observe/tool_spec.j2
   - reasoning/response_observe/email_body.j2
   - reasoning/response_observe/email_subject.j2
+  - reasoning/tasks_upsert/tool_spec.j2
+  - reasoning/tasks_upsert/email_body.j2
+  - reasoning/tasks_upsert/email_subject.j2
   - reasoning/response_finalize/tool_spec.j2
   - reasoning/response_finalize/email_body.j2
   - reasoning/response_finalize/email_subject.j2
-  - reasoning/logic_validate/tool_spec.j2
-  - reasoning/logic_validate/email_body.j2
-  - reasoning/logic_validate/email_subject.j2
+  - reasoning/formal_reason/tool_spec.j2
+  - reasoning/formal_reason/email_body.j2
+  - reasoning/formal_reason/email_subject.j2
   - reasoning/memory_query/tool_spec.j2
   - reasoning/memory_query/email_body.j2
   - reasoning/memory_query/email_subject.j2
   - ingress/response_not_formed.j2
+  - ingress/task_incomplete.j2
+  - ingress/tasks_upsert_error.j2
+  - task/state_summary.j2
   - response_observe/state_summary.j2
   - response_observe/observe_system.j2
   - response_observe/observe_user.j2

@@ -1,0 +1,49 @@
+{
+  "priority": 1,
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
+    "headers": {
+      "X-Threlium-Call-Site": {
+        "equalTo": "fsm"
+      }
+    },
+    "bodyPatterns": [
+      {
+        "comment": "enrich task-ledger seed prompt (lightrag/enrich_task_plan.j2) for THIS scenario: override the bootstrap empty-default and seed two subtasks. Re-served idempotently on each enrich (ensure-exists in reduce keeps statuses).",
+        "contains": "concrete, verifiable subtasks"
+      },
+      {
+        "contains": "E2E-TASK-LEDGER-CHAIN-BODY"
+      }
+    ],
+    "customMatcher": {
+      "name": "state-matcher",
+      "parameters": {
+        "hasContext": "stub-task-ledger-chain-01::{{request.headers.[x-threlium-thread-root]}}"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "id": "chatcmpl-e2e-task-ledger-enrich-task-plan",
+      "object": "chat.completion",
+      "created": 0,
+      "model": "gpt-4o-mini",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "stop",
+          "message": {
+            "role": "assistant",
+            "content": "[\"Locate the task ledger handler in states\", \"Draft the reply summarizing the ledger flow\"]"
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{#- LLM-facing text is English-only: Cyrillic uses roughly 2–3× more tokens per word.
+    This Jinja comment is stripped and never sent to the model.
+    response_finalize hard gate: returned to ingress when the task ledger still has open work.
+    Variables: all_cancelled (bool); open_subtasks / done_subtasks / cancelled_subtasks
+               (lists of {content_id, text[, status]}). -#}
+RESPONSE BLOCKED: the reply was NOT sent because the task ledger still has unfinished work.
+{% if all_cancelled %}
+Every subtask is cancelled and none is done — that is not a completed task. Either complete real work (mark a subtask done) or, if the request genuinely needs no action, append a response chunk explaining that and add a done subtask recording it.
+{% else %}
+Finish or cancel the open subtasks below, then call response_finalize again. Use tasks_upsert (subtask_updates by content_id) to set each to done or cancelled.
+
+Open subtasks:
+{% for s in open_subtasks -%}
+- [{{ s.status }}] ({{ s.content_id }}) {{ s.text }}
+{% endfor -%}
+{% endif %}
+{% if done_subtasks %}
+Already done: {{ done_subtasks | length }}. {% endif %}{% if cancelled_subtasks %}Cancelled: {{ cancelled_subtasks | length }}.{% endif %}

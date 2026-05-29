@@ -1,0 +1,85 @@
+{#- LLM-facing text is English-only: Cyrillic uses roughly 2–3× more tokens per word.
+    This Jinja comment is stripped and never sent to the model.
+    docs/ARCHITECTURE.md §6.2: tool-spec for route `tasks_upsert`. -#}
+{
+  "type": "function",
+  "function": {
+    "name": "tasks_upsert",
+    "description": "Maintain the durable task ledger — the agent's plan for the current thread. The ledger survives every reasoning cycle (it is reconstructed from the mail thread, not from prompt memory), so it is the anti-drift anchor: use it to record what must be done and to track progress. In ONE call you may both ADD new subtasks AND update the status of existing ones. The current ledger is shown in <task_state> with each subtask's content_id and status.\n\nStatuses form a monotonic lattice: pending → in_progress → done|cancelled. A status never moves backwards (merge keeps the highest). 'done' = finished. 'cancelled' = no longer needed (scope narrowed, duplicate, user dropped that part). Mark 'cancelled' instead of leaving stale pending work.\n\nWhen to use: right after enrich seeded the plan, to refine/decompose it into concrete subtasks; after a discovery hop (memory_query / cli_intent / formal_reason) to add follow-ups you uncovered AND close the ones you just resolved (batch several done in one call); before response_finalize, to make sure every subtask is done or cancelled.\n\nIMPORTANT: response_finalize is hard-gated on this ledger — it will refuse to send the reply while any subtask is pending/in_progress, or if every subtask is cancelled with none done. You cannot finalize by skipping the ledger.\n\nRules: add a subtask by its text (content_id is derived from the text, so reuse the EXACT existing text to avoid duplicates — do not paraphrase); update existing subtasks by the content_id shown in <task_state>; changing a subtask's wording means a NEW subtask (add it) plus cancelling the old one; keep at most one subtask in_progress.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "reasoning": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "description": "Why this ledger update — short text for logs (e.g. 'decomposed plan into 3 subtasks; closed discovery findings')."
+        },
+        "new_subtasks": {
+          "type": "array",
+          "description": "Subtasks to ADD. Reuse exact existing text to dedupe (content-addressed). Empty if only updating statuses.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 600,
+                "description": "Concrete, verifiable subtask description (one action/outcome)."
+              },
+              "status": {
+                "type": "string",
+                "enum": ["pending", "in_progress", "done", "cancelled"],
+                "description": "Initial status; usually 'pending', or 'in_progress' for the one you start now."
+              }
+            },
+            "required": ["text"],
+            "additionalProperties": false
+          }
+        },
+        "subtask_updates": {
+          "type": "array",
+          "description": "Status changes for EXISTING subtasks, by content_id from <task_state>. Batch several at once. Empty if only adding.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "content_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "content_id of an existing subtask as shown in <task_state> (NOT the text)."
+              },
+              "status": {
+                "type": "string",
+                "enum": ["pending", "in_progress", "done", "cancelled"],
+                "description": "New status (lattice: never moves backwards)."
+              }
+            },
+            "required": ["content_id", "status"],
+            "additionalProperties": false
+          }
+        },
+        "discovery_append": {
+          "type": "string",
+          "maxLength": 2000,
+          "description": "Optional: what you learned / where you looked this cycle (kept for context)."
+        },
+        "next_action": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "Optional: the immediate next step you intend to take."
+        },
+        "blockers": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "Optional: a blocker preventing completion of an open subtask."
+        },
+        "allow_finalize_with_blocker": {
+          "type": "boolean",
+          "description": "Set true only when a blocker genuinely prevents finishing and you intend to finalize anyway after closing the rest."
+        }
+      },
+      "required": ["reasoning"],
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{#- LLM-facing text is English-only: Cyrillic uses roughly 2–3× more tokens per word.
+    This Jinja comment is stripped and never sent to the model.
+    tasks_upsert rejected the upsert (bad JSON / unknown content_id / no actions).
+    Variables: error (str), task_state (rendered ledger). -#}
+TASKS_UPSERT REJECTED: {{ error }}
+
+Update existing subtasks only by a content_id that appears in the current ledger, and add new subtasks by their text. Current ledger:
+
+{{ task_state }}

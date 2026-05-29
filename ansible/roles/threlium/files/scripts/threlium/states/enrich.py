@@ -51,16 +51,25 @@ from threlium.mime_reform import (
     collect_relay_parts_of_families,
     email_message_from_path,
 )
+from threlium.litellm_client import litellm_site_completion_text
 from threlium.prompts import render_prompt
 from threlium.response.collect import collect_ops
 from threlium.response.state_summary import build_state_summary
 from threlium.runners.lightrag import daemon_lightrag, run_rag_coroutine
+from threlium.task import (
+    build_task_state_summary,
+    collect_task_ops,
+    reduce_task_ops,
+    serialize_task_init,
+)
+from threlium.task.ops import TaskInitOp, TaskSubtaskDef
 from threlium.types import (
     EnrichGlobalMemoryText,
     EnrichGraphAnswerText,
     EnrichThreadMemoryText,
     EnrichUnifiedMailContextText,
     FsmTransitionPlainBody,
+    HopBudgetLine,
     LightragPromptLibraryKey,
     LitellmCallSite,
     LiteLlmChatMessage,
@@ -71,6 +80,9 @@ from threlium.types import (
     NotmuchMessageIdInner,
     PromptPath,
     RfcMessageIdWire,
+    TaskLedger,
+    TaskSubtaskContentId,
+    TaskSubtaskText,
 )
 from threlium.types.litellm_correlation_header import LitellmCorrelationHeader
 
@@ -169,18 +181,19 @@ class EnrichResult:
 
 # Семейства relay-частей, переносимые из e_prev при полном enrich (carry-over).
 # observation/memory намеренно НЕ переносим — полный enrich обновляет контекст RAG,
-# их накопление живёт только в быстром цикле enrich_fast.
-_CARRY_OVER_FAMILIES = (EnrichPartId.PLAN_STATE,)
+# их накопление живёт только в быстром цикле enrich_fast. ``<task-state>`` НЕ carry-over —
+# enrich пересобирает его детерминированно (как ``<response-state>``).
+_CARRY_OVER_FAMILIES = (EnrichPartId.RESPONSE_OBSERVATION,)
 
 
 def _collect_extra_parts(
     inner: NotmuchMessageIdInner, limit: int
 ) -> list[tuple[EnrichContentId, str]]:
-    """Пересчёт ``<response-state>`` из CRDT + carry-over ``<plan-state>`` из e_prev.
+    """Пересчёт ``<response-state>`` из CRDT + carry-over ``<response-observation>`` из e_prev.
 
     Carry-over — CID-aware: relay-части переносятся **с их оригинальными** уникальными
-    Content-ID (``<plan-state@…>``), распознавание семейства через
-    :attr:`EnrichContentId.family` (бэк-компат с каноническим ``<plan-state>``).
+    Content-ID (``<response-observation@…>``), распознавание семейства через
+    :attr:`EnrichContentId.family` (бэк-компат с каноническим ``<response-observation>``).
     """
     parts: list[tuple[EnrichContentId, str]] = []
 
@@ -198,6 +211,97 @@ def _collect_extra_parts(
                 parts.append((cid, trim_context_text(text, limit)))
             break
 
+    return parts
+
+
+def _parse_task_plan(raw: str) -> list[str]:
+    """LLM-вывод (JSON-массив строк, толерантно) → тексты подзадач (≤8)."""
+    s = raw.strip()
+    if not s:
+        return []
+    start = s.find("[")
+    end = s.rfind("]")
+    if start != -1 and end != -1 and end > start:
+        try:
+            data = json.loads(s[start : end + 1])
+            if isinstance(data, list):
+                return [str(x).strip() for x in data if str(x).strip()][:8]
+        except (json.JSONDecodeError, ValueError):
+            pass
+    out: list[str] = []
+    for ln in raw.splitlines():
+        t = ln.strip().lstrip("-*0123456789.) \t").strip()
+        if t:
+            out.append(t)
+    return out[:8]
+
+
+def _build_task_parts(
+    *,
+    config: ThreliumSettings,
+    inner: NotmuchMessageIdInner,
+    hop_line: HopBudgetLine,
+    user_message_text: str,
+) -> list[tuple[EnrichContentId, str]]:
+    """Seed-набор подзадач (``<task-init>``) + детерминированный ``<task-state>``.
+
+    Fail-open: ошибка LLM / мусор → пустой seed, ledger как есть (gate не блокирует
+    пустой ledger). ensure-exists в reduce гарантирует, что повторный enrich не сбрасывает
+    статусы и не воскрешает ``cancelled`` задачи.
+    """
+    existing_ops = collect_task_ops(inner, hop_line)
+    existing_ledger = reduce_task_ops(existing_ops)
+
+    plan_prompt = render_prompt(
+        PromptPath.LIGHTRAG_ENRICH_TASK_PLAN,
+        incoming_user_message=user_message_text,
+        existing_subtasks=[
+            {"content_id": s.content_id.value, "text": s.text.value, "status": s.status.value}
+            for s in existing_ledger.subtasks
+        ],
+    )
+    try:
+        raw = litellm_site_completion_text(
+            config,
+            LitellmRoutingSite.ENRICH_PLAN,
+            [LiteLlmChatMessage(role="user", content=plan_prompt)],
+        )
+    except Exception as exc:  # noqa: BLE001 — fail-open: seed опционален, ledger не обязателен
+        log.warning("task_plan_llm_failed", error=str(exc))
+        raw = ""
+
+    seen: set[str] = set()
+    defs: list[TaskSubtaskDef] = []
+    for text_raw in _parse_task_plan(raw):
+        try:
+            text = TaskSubtaskText.require(name="enrich_task_plan.subtask", raw=text_raw)
+        except ValueError:
+            continue
+        cid = TaskSubtaskContentId.from_text(text)
+        if cid.value in seen:
+            continue
+        seen.add(cid.value)
+        defs.append(TaskSubtaskDef(content_id=cid, text=text))
+
+    parts: list[tuple[EnrichContentId, str]] = []
+    if defs:
+        init_op = TaskInitOp(subtasks=tuple(defs), message_id_inner=inner)
+        combined = reduce_task_ops([*existing_ops, init_op])
+        parts.append(
+            (EnrichContentId.from_part_id(EnrichPartId.TASK_INIT), serialize_task_init(tuple(defs)))
+        )
+    else:
+        combined = existing_ledger
+
+    parts.append(
+        (EnrichContentId.from_part_id(EnrichPartId.TASK_STATE), build_task_state_summary(combined))
+    )
+    log.info(
+        "task_seed",
+        seeded=len(defs),
+        existing=len(existing_ledger.subtasks),
+        total=len(combined.subtasks),
+    )
     return parts
 
 
@@ -682,6 +786,17 @@ def main(
     )
 
     extra_parts = _collect_extra_parts(inner, budget_extra) if inner is not None else []
+
+    if inner is not None:
+        hop_line = HopBudgetLine.parse(msg.get(_HDR.HOP_BUDGET))
+        extra_parts.extend(
+            _build_task_parts(
+                config=config,
+                inner=inner,
+                hop_line=hop_line,
+                user_message_text=user_message_text,
+            )
+        )
 
     enriched = build_enriched_multipart(
         msg,

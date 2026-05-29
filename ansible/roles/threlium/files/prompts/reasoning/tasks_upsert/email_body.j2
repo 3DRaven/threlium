@@ -1,0 +1,12 @@
+{#- LLM-facing text is English-only: Cyrillic uses roughly 2–3× more tokens per word.
+    This Jinja comment is stripped and never sent to the model.
+    tasks_upsert body: canonical JSON for TasksUpsertToolArgs (states/tasks_upsert.py). -#}
+{{ {
+  'reasoning': reasoning,
+  'new_subtasks': new_subtasks,
+  'subtask_updates': subtask_updates,
+  'discovery_append': discovery_append,
+  'next_action': next_action,
+  'blockers': blockers,
+  'allow_finalize_with_blocker': allow_finalize_with_blocker
+} | tojson }}

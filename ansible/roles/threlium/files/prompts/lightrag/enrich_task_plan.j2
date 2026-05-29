@@ -1,0 +1,18 @@
+{#- LLM-facing text is English-only: Cyrillic uses roughly 2–3× more tokens per word.
+    This Jinja comment is stripped and never sent to the model.
+    enrich task-plan seed: decompose the user's request into a small ordered set of
+    concrete subtasks for the durable task ledger (anti-drift anchor).
+    Variables: incoming_user_message (str); existing_subtasks (list of {content_id, text, status}). -#}
+You are planning the work for an email-based reasoning agent. Break the user's request into a SMALL set (1–6) of concrete, verifiable subtasks that together fully satisfy it. Each subtask is one action or outcome, phrased so completion is checkable.
+
+Output ONLY a JSON array of strings (the subtask texts), nothing else. Example: ["Find where X is handled", "Draft the reply section on X"]. If the request is trivial, return a single subtask describing the whole answer.
+
+{% if existing_subtasks %}
+A ledger already exists for this thread. Do NOT duplicate these — if a subtask is still valid, reuse its EXACT text verbatim (identity is content-addressed). Only add genuinely new subtasks; return [] if nothing new is needed:
+{% for s in existing_subtasks %}
+- [{{ s.status }}] {{ s.text }}
+{%- endfor %}
+{% endif %}
+
+User request:
+{{ incoming_user_message }}

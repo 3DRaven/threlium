@@ -1,0 +1,80 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
+    "headers": {
+      "X-Threlium-Call-Site": {
+        "equalTo": "fsm"
+      }
+    },
+    "bodyPatterns": [
+      {
+        "matches": "(?s).*(openai/threlium_e2e_l0|threlium_e2e_l0).*"
+      },
+      {
+        "contains": "<envelope>"
+      },
+      {
+        "contains": "\"tools\""
+      },
+      {
+        "comment": "Second reasoning: the task_state relayed by enrich_fast shows A in_progress + B/C pending. The LLM (wrongly) tries to finalize; the Python gate in response_finalize must refuse and bounce to ingress.",
+        "contains": "E2E-TASK-LEDGER-CHAIN-BODY"
+      },
+      {
+        "doesNotMatch": "(?s).*\"enable_thinking\"\\s*:\\s*false.*"
+      }
+    ],
+    "customMatcher": {
+      "name": "state-matcher",
+      "parameters": {
+        "hasContext": "stub-task-ledger-chain-01::{{request.headers.[x-threlium-thread-root]}}",
+        "hasProperty": "phase_upsert_start_done",
+        "hasNotProperty": "phase_finalize_blocked_done"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "id": "chatcmpl-e2e-task-ledger-reasoning-2-finalize-blocked",
+      "object": "chat.completion",
+      "created": 0,
+      "model": "gpt-4o-mini",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "tool_calls",
+          "message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_e2e_finalize_blocked",
+                "type": "function",
+                "function": {
+                  "name": "response_finalize",
+                  "arguments": "{\"reasoning\": \"e2e: premature finalize attempt while subtasks still open\", \"subject\": \"Re: e2e reply\", \"verification_summary\": \"e2e: should be blocked by the task gate\", \"content\": \"e2e-task-ledger-blocked-attempt\"}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "serveEventListeners": [
+    {
+      "name": "recordState",
+      "parameters": {
+        "context": "stub-task-ledger-chain-01::{{request.headers.[x-threlium-thread-root]}}",
+        "state": {
+          "phase_finalize_blocked_done": "1"
+        }
+      }
+    }
+  ]
+}

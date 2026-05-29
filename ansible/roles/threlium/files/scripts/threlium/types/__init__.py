@@ -119,6 +119,7 @@ from .litellm_completion_kwargs import (
 )
 from .lightrag_prompt_library_key import LightragPromptLibraryKey
 from .lightrag_document_header import LightragDocumentHeader
+from .lightrag_drain import LightragDrainSkipReason
 from .litellm_call_site import LitellmCallSite
 from .litellm_correlation_header import LitellmCorrelationHeader
 from .litellm_routing_site import LitellmRoutingSite
@@ -143,14 +144,17 @@ from .reasoning_tool_args import (
     EgressRouterToolArgs,
     GlobalMemoryToolArgs,
     MemoryQueryToolArgs,
+    NewSubtaskArg,
     ReasoningToolRouteArgs,
     ReflectToolArgs,
     ResponseAppendToolArgs,
     ResponseEditToolArgs,
-    LogicValidateToolArgs,
+    FormalReasonToolArgs,
     ResponseFinalizeToolArgs,
     ResponseObserveToolArgs,
     SubagentIntentToolArgs,
+    SubtaskStatusUpdateArg,
+    TasksUpsertToolArgs,
     ThreadMemoryToolArgs,
     reasoning_tool_struct_for_route,
 )
@@ -168,10 +172,26 @@ from .rfc import (
     truncate_rfc_references_wire,
 )
 from .systemd_status import SystemdStatusBody
+from .task_ledger import (
+    SubtaskStatus,
+    TaskBlockerText,
+    TaskDiscoveryNoteText,
+    TaskLedger,
+    TaskNextActionText,
+    TaskSubtaskContentId,
+    TaskSubtaskState,
+    TaskSubtaskText,
+)
 from .knowledge_stage import (
     LogicInferenceMode,
-    LogicValidateReportText,
-    LogicValidateStagePayload,
+    FormalReasonDerivedErrorText,
+    FormalReasonDerivedTtlText,
+    FormalReasonErrorKind,
+    FormalReasonFatalErrorText,
+    FormalReasonQueryErrorText,
+    FormalReasonQueryResultText,
+    FormalReasonReportText,
+    FormalReasonStagePayload,
     MemoryQueryStagePayload,
 )
 
@@ -209,6 +229,7 @@ __all__ = [
     "ingress_route_from_json_str",
     "LightragChunkRecord",
     "LightragDocumentHeader",
+    "LightragDrainSkipReason",
     "LightragLiteLlmCompletionBody",
     "LightragPromptLibraryKey",
     "LightragWorkerBatchThreadIdKey",
@@ -242,6 +263,9 @@ __all__ = [
     "MemoryQueryStagePayload",
     "MemoryQueryToolArgs",
     "MessageIdHeaderNormalizationInput",
+    "NewSubtaskArg",
+    "SubtaskStatusUpdateArg",
+    "TasksUpsertToolArgs",
     "EnrichGlobalMemoryText",
     "EnrichGraphAnswerText",
     "EnrichObservationNoteText",
@@ -285,10 +309,24 @@ __all__ = [
     "RfcSubjectWire",
     "RfcToWire",
     "SubagentIntentToolArgs",
+    "SubtaskStatus",
+    "TaskBlockerText",
+    "TaskDiscoveryNoteText",
+    "TaskLedger",
+    "TaskNextActionText",
+    "TaskSubtaskContentId",
+    "TaskSubtaskState",
+    "TaskSubtaskText",
     "LogicInferenceMode",
-    "LogicValidateReportText",
-    "LogicValidateStagePayload",
-    "LogicValidateToolArgs",
+    "FormalReasonDerivedErrorText",
+    "FormalReasonDerivedTtlText",
+    "FormalReasonErrorKind",
+    "FormalReasonFatalErrorText",
+    "FormalReasonQueryErrorText",
+    "FormalReasonQueryResultText",
+    "FormalReasonReportText",
+    "FormalReasonStagePayload",
+    "FormalReasonToolArgs",
     "SystemdStatusBody",
     "TelegramBridgeInboundCaptionOrText",
     "TelegramIngressRoute",

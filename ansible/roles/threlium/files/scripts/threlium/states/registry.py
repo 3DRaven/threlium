@@ -30,6 +30,7 @@ from threlium.states import (
     subagent_intent,
     summarize_context,
     summarize_memory,
+    tasks_upsert,
     thread_memory,
 )
 
@@ -49,13 +50,14 @@ STAGE_MAIN_HANDLERS: dict[FsmStage, StateHandler] = {
     FsmStage.RESPONSE_APPEND: response_append.main,
     FsmStage.RESPONSE_EDIT: response_edit.main,
     FsmStage.RESPONSE_OBSERVE: response_observe.main,
+    FsmStage.TASKS_UPSERT: tasks_upsert.main,
     FsmStage.ENRICH_FAST: enrich_fast.main,
     FsmStage.RESPONSE_FINALIZE: response_finalize.main,
     FsmStage.EGRESS_ROUTER: egress_router.main,
     FsmStage.EGRESS_EMAIL: egress_email.main,
     FsmStage.EGRESS_TELEGRAM: egress_telegram.main,
     FsmStage.EGRESS_MATRIX: egress_matrix.main,
-    FsmStage.LOGIC_VALIDATE: logic_validate.main,
+    FsmStage.FORMAL_REASON: formal_reason.main,
     FsmStage.MEMORY_QUERY: memory_query.main,
     FsmStage.SUMMARIZE_CONTEXT: summarize_context.main,
     FsmStage.SUMMARIZE_MEMORY: summarize_memory.main,

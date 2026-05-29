@@ -1,0 +1,79 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
+    "headers": {
+      "X-Threlium-Call-Site": {
+        "equalTo": "fsm"
+      }
+    },
+    "bodyPatterns": [
+      {
+        "matches": "(?s).*(openai/threlium_e2e_l0|threlium_e2e_l0).*"
+      },
+      {
+        "contains": "<envelope>"
+      },
+      {
+        "contains": "\"tools\""
+      },
+      {
+        "contains": "E2E-TASK-LEDGER-CHAIN-BODY"
+      },
+      {
+        "doesNotMatch": "(?s).*\"enable_thinking\"\\s*:\\s*false.*"
+      }
+    ],
+    "customMatcher": {
+      "name": "state-matcher",
+      "parameters": {
+        "hasContext": "stub-task-ledger-chain-01::{{request.headers.[x-threlium-thread-root]}}",
+        "hasProperty": "active",
+        "hasNotProperty": "phase_upsert_start_done"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "id": "chatcmpl-e2e-task-ledger-reasoning-1-upsert-start",
+      "object": "chat.completion",
+      "created": 0,
+      "model": "gpt-4o-mini",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "tool_calls",
+          "message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_e2e_tasks_upsert_start",
+                "type": "function",
+                "function": {
+                  "name": "tasks_upsert",
+                  "arguments": "{\"reasoning\": \"e2e: start subtask A, add verification subtask C\", \"new_subtasks\": [{\"text\": \"Verify the gate blocks while subtasks are open\", \"status\": \"pending\"}], \"subtask_updates\": [{\"content_id\": \"e4a7f48a17f1\", \"status\": \"in_progress\"}]}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "serveEventListeners": [
+    {
+      "name": "recordState",
+      "parameters": {
+        "context": "stub-task-ledger-chain-01::{{request.headers.[x-threlium-thread-root]}}",
+        "state": {
+          "phase_upsert_start_done": "1"
+        }
+      }
+    }
+  ]
+}

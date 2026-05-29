@@ -1,0 +1,13 @@
+{#- LLM-facing text is English-only: Cyrillic uses roughly 2–3× more tokens per word.
+    This Jinja comment is stripped and never sent to the model.
+    Deterministic <task-state> cache for the reasoning prompt and response_observe input.
+    Variables: is_empty (bool); subtasks (list of {content_id, text, status, terminal});
+               open_count, done_count, cancelled_count (int). -#}
+{% if is_empty -%}
+No subtasks recorded yet. Use tasks_upsert to lay out the plan (response_finalize is gated on this ledger).
+{%- else -%}
+Task ledger: {{ subtasks | length }} subtasks ({{ open_count }} open, {{ done_count }} done, {{ cancelled_count }} cancelled).
+{% for s in subtasks -%}
+- [{{ s.status }}] ({{ s.content_id }}) {{ s.text | replace("\n", " ") }}
+{% endfor -%}
+{%- endif %}

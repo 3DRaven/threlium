@@ -10,6 +10,7 @@ from typing import Union
 import msgspec
 
 from .knowledge_stage import LogicInferenceMode
+from .task_ledger import SubtaskStatus
 
 
 class EgressRouterToolArgs(msgspec.Struct, frozen=True):
@@ -66,17 +67,52 @@ class ResponseFinalizeToolArgs(msgspec.Struct, frozen=True):
     content: str | None = None
 
 
-class LogicValidateToolArgs(msgspec.Struct, frozen=True):
+class FormalReasonToolArgs(msgspec.Struct, frozen=True):
     reasoning: str
     shapes_ttl: str
     facts_ttl: str
     ontology_ttl: str | None = None
     inference: LogicInferenceMode | None = None
+    query: str | None = None
+    return_derived: bool = False
 
 
 class MemoryQueryToolArgs(msgspec.Struct, frozen=True):
     reasoning: str
     query: str
+
+
+class NewSubtaskArg(msgspec.Struct, frozen=True):
+    """Новая подзадача от ``tasks_upsert`` (примитивы на границе jsonschema).
+
+    ``content_id`` считается фабрикой из ``text`` (content-addressed), здесь не передаётся.
+    """
+
+    text: str
+    status: SubtaskStatus = SubtaskStatus.PENDING
+
+
+class SubtaskStatusUpdateArg(msgspec.Struct, frozen=True):
+    """Статус-изменение существующей подзадачи по видимому в ``<task-state>`` ``content_id``."""
+
+    content_id: str
+    status: SubtaskStatus
+
+
+class TasksUpsertToolArgs(msgspec.Struct, frozen=True):
+    """Аргументы tool ``tasks_upsert``: за один вызов add новых subtasks + status существующих.
+
+    Инвариант (проверяется в ``TasksUpsertOp.from_tool_args``): ``new_subtasks`` или
+    ``subtask_updates`` непусто.
+    """
+
+    reasoning: str
+    new_subtasks: list[NewSubtaskArg] = []
+    subtask_updates: list[SubtaskStatusUpdateArg] = []
+    discovery_append: str | None = None
+    next_action: str | None = None
+    blockers: str | None = None
+    allow_finalize_with_blocker: bool = False
 
 
 ReasoningToolRouteArgs = Union[
@@ -89,8 +125,9 @@ ReasoningToolRouteArgs = Union[
     ResponseEditToolArgs,
     ResponseObserveToolArgs,
     ResponseFinalizeToolArgs,
-    LogicValidateToolArgs,
+    FormalReasonToolArgs,
     MemoryQueryToolArgs,
+    TasksUpsertToolArgs,
 ]
 
 
@@ -104,8 +141,9 @@ _REASONING_ROUTE_STRUCTS: dict[str, type[msgspec.Struct]] = {
     "response_edit": ResponseEditToolArgs,
     "response_observe": ResponseObserveToolArgs,
     "response_finalize": ResponseFinalizeToolArgs,
-    "logic_validate": LogicValidateToolArgs,
+    "formal_reason": FormalReasonToolArgs,
     "memory_query": MemoryQueryToolArgs,
+    "tasks_upsert": TasksUpsertToolArgs,
 }
 
 
@@ -121,8 +159,9 @@ __all__ = [
     "CliIntentToolArgs",
     "EgressRouterToolArgs",
     "GlobalMemoryToolArgs",
-    "LogicValidateToolArgs",
+    "FormalReasonToolArgs",
     "MemoryQueryToolArgs",
+    "NewSubtaskArg",
     "ReasoningToolRouteArgs",
     "ReflectToolArgs",
     "ResponseAppendToolArgs",
@@ -130,6 +169,8 @@ __all__ = [
     "ResponseFinalizeToolArgs",
     "ResponseObserveToolArgs",
     "SubagentIntentToolArgs",
+    "SubtaskStatusUpdateArg",
+    "TasksUpsertToolArgs",
     "ThreadMemoryToolArgs",
     "reasoning_tool_struct_for_route",
 ]

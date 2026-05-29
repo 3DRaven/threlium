@@ -18,10 +18,17 @@ from threlium.prompts import render_prompt
 from threlium.response.collect import collect_ops
 from threlium.response.reduce import reduce_ops
 from threlium.settings import ThreliumSettings
+from threlium.task import (
+    build_task_incomplete_notice,
+    collect_task_ops,
+    ledger_has_open_work,
+    reduce_task_ops,
+)
 from threlium.types import (
     FsmStage,
     FsmTransitionPlainBody,
     FsmTransitionPlainSubjectLine,
+    HopBudgetLine,
     MailHeaderName,
     NotmuchMessageIdInner,
     PromptPath,
@@ -46,6 +53,27 @@ def main(
 
     has_buffer = buffer_text is not None
     has_content = inline_content is not None
+
+    # Жёсткий gate (anti-drift): не отдаём ответ пользователю, пока в task-ledger есть
+    # незавершённая работа (проверка по IRT, независимо от текста LLM). Пустой ledger —
+    # fail-open. См. docs/RESPONSE_TABLE.md (Task CRDT) и threlium.task.gate.
+    hop_line = HopBudgetLine.parse(msg.get(MailHeaderName.HOP_BUDGET.value))
+    ledger = reduce_task_ops(collect_task_ops(inner, hop_line))
+    if (has_buffer or has_content) and ledger_has_open_work(ledger):
+        log.warning(
+            "finalize_blocked_open_tasks",
+            open_subtasks=len(ledger.open_subtasks()),
+            done=len(ledger.done_subtasks()),
+            cancelled=len(ledger.cancelled_subtasks()),
+            message_id=mid_w.value if mid_w else None,
+        )
+        return build_fsm_plain_to_stage(
+            msg,
+            to_addr=FsmStage.INGRESS,
+            from_stage=stage,
+            body=FsmTransitionPlainBody.parse(build_task_incomplete_notice(ledger)),
+            settings=config,
+        )
 
     subject_raw = (
         msg.get(MailHeaderName.SUBJECT)

@@ -73,8 +73,9 @@ ROUTE_TO_ADDRESS: dict[RouteLiteral, FsmStage] = {
     "response_edit": FsmStage.RESPONSE_EDIT,
     "response_observe": FsmStage.RESPONSE_OBSERVE,
     "response_finalize": FsmStage.RESPONSE_FINALIZE,
-    "logic_validate": FsmStage.LOGIC_VALIDATE,
+    "formal_reason": FsmStage.FORMAL_REASON,
     "memory_query": FsmStage.MEMORY_QUERY,
+    "tasks_upsert": FsmStage.TASKS_UPSERT,
 }
 
 RouteLiteral = Literal[
@@ -87,8 +88,9 @@ RouteLiteral = Literal[
     "response_edit",
     "response_observe",
     "response_finalize",
-    "logic_validate",
+    "formal_reason",
     "memory_query",
+    "tasks_upsert",
 ]
 
 
@@ -113,7 +115,7 @@ def _extract_context_part(
 
 # Семейства relay-частей в порядке их появления в reasoning-промпте.
 _RELAY_FAMILY_ORDER: tuple[EnrichPartId, ...] = (
-    EnrichPartId.PLAN_STATE,
+    EnrichPartId.RESPONSE_OBSERVATION,
     EnrichPartId.MEMORY_NOTE,
     EnrichPartId.OBSERVATION_NOTE,
 )
@@ -166,6 +168,7 @@ def _build_prompt(
     thread_memory = _extract_context_part(msg, EnrichPartId.THREAD_MEMORY, max_chars)
     global_memory = _extract_context_part(msg, EnrichPartId.GLOBAL_MEMORY, max_chars)
     response_state = _extract_context_part(msg, EnrichPartId.RESPONSE_STATE, max_chars)
+    task_state = _extract_context_part(msg, EnrichPartId.TASK_STATE, max_chars)
 
     relay = _collect_relay_notes(msg, max_chars)
 
@@ -183,7 +186,8 @@ def _build_prompt(
         thread_memory=thread_memory,
         global_memory=global_memory,
         response_state=response_state,
-        plan_states=relay[EnrichPartId.PLAN_STATE],
+        task_state=task_state,
+        response_observations=relay[EnrichPartId.RESPONSE_OBSERVATION],
         memory_notes=relay[EnrichPartId.MEMORY_NOTE],
         observation_notes=relay[EnrichPartId.OBSERVATION_NOTE],
     )
