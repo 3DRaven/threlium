@@ -629,7 +629,7 @@ class EnrichSettings(BaseModel):
     priority_unified: float = Field(default=8.0, description="Вес conversation_history.")
     priority_thread_mem: float = Field(default=4.0, description="Вес thread_memory.")
     priority_global_mem: float = Field(default=3.0, description="Вес global_memory.")
-    priority_extra: float = Field(default=5.0, description="Вес response_state + plan_state.")
+    priority_extra: float = Field(default=5.0, description="Вес response_state + task_state + response_observation.")
 
     tool_observation_estimate_cap_chars: int = Field(
         default=500, ge=1,
@@ -720,10 +720,20 @@ class CliSettings(BaseModel):
 class KnowledgeSettings(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    logic_report_max_chars: int = Field(
+    formal_report_max_chars: int = Field(
         default=4000,
         ge=1,
-        description="Макс. символов pySHACL-отчёта / syntax error в observation logic_validate.",
+        description="Макс. символов pySHACL-отчёта / syntax error в observation formal_reason.",
+    )
+    formal_derived_max_chars: int = Field(
+        default=6000,
+        ge=1,
+        description="Макс. символов entailed-дельты (derived_triples) в observation formal_reason.",
+    )
+    formal_query_max_chars: int = Field(
+        default=4000,
+        ge=1,
+        description="Макс. символов SPARQL-результата (query_result) в observation formal_reason.",
     )
     observation_max_chars: int = Field(
         default=180_000,

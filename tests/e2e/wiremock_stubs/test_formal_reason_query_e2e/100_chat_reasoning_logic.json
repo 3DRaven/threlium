@@ -1,0 +1,79 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
+    "headers": {
+      "X-Threlium-Call-Site": {
+        "equalTo": "fsm"
+      }
+    },
+    "bodyPatterns": [
+      {
+        "matches": "(?s).*(openai/threlium_e2e_l0|threlium_e2e_l0).*"
+      },
+      {
+        "contains": "<envelope>"
+      },
+      {
+        "contains": "\"tools\""
+      },
+      {
+        "contains": "E2E-FORMAL-REASON-QUERY-BODY"
+      },
+      {
+        "doesNotMatch": "(?s).*\"enable_thinking\"\\s*:\\s*false.*"
+      }
+    ],
+    "customMatcher": {
+      "name": "state-matcher",
+      "parameters": {
+        "hasContext": "stub-formal-reason-query-01::{{request.headers.[x-threlium-thread-root]}}",
+        "hasProperty": "active",
+        "hasNotProperty": "phase_formal_reason_done"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "id": "chatcmpl-e2e-formal-reason-query-reasoning-1",
+      "object": "chat.completion",
+      "created": 0,
+      "model": "gpt-4o-mini",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "tool_calls",
+          "message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_e2e_formal_reason_query_1",
+                "type": "function",
+                "function": {
+                  "name": "formal_reason",
+                  "arguments": "{\"reasoning\": \"e2e: SPARQL SELECT over conforming facts — read query_result\", \"query\": \"PREFIX ex: <http://example.org/>\\nSELECT ?name WHERE { ?p ex:name ?name } ORDER BY ?name\", \"shapes_ttl\": \"@prefix sh: <http://www.w3.org/ns/shacl#> .\\n@prefix ex: <http://example.org/> .\\n\\nex:PersonShape a sh:NodeShape ;\\n  sh:targetClass ex:Person ;\\n  sh:property [ sh:path ex:name ; sh:minCount 1 ] .\", \"facts_ttl\": \"@prefix ex: <http://example.org/> .\\n\\nex:alice a ex:Person ;\\n  ex:name \\\"Alice\\\" .\\n\\nex:bob a ex:Person ;\\n  ex:name \\\"Bob\\\" .\\n\"}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "serveEventListeners": [
+    {
+      "name": "recordState",
+      "parameters": {
+        "context": "stub-formal-reason-query-01::{{request.headers.[x-threlium-thread-root]}}",
+        "state": {
+          "phase_formal_reason_done": "1"
+        }
+      }
+    }
+  ]
+}

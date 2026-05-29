@@ -1,0 +1,17 @@
+{#- LLM-facing text is English-only: Cyrillic uses roughly 2–3× more tokens per word.
+    This Jinja comment is stripped and never sent to the model.
+    formal_reason body: canonical JSON for knowledge_fsm.parse_formal_reason_payload. -#}
+{%- set _payload = {'reasoning': reasoning, 'shapes_ttl': shapes_ttl, 'facts_ttl': facts_ttl} -%}
+{%- if ontology_ttl is defined and ontology_ttl -%}
+{%-   set _ = _payload.update({'ontology_ttl': ontology_ttl}) -%}
+{%- endif -%}
+{%- if inference is defined and inference -%}
+{%-   set _ = _payload.update({'inference': inference}) -%}
+{%- endif -%}
+{%- if query is defined and query -%}
+{%-   set _ = _payload.update({'query': query}) -%}
+{%- endif -%}
+{%- if return_derived is defined and return_derived -%}
+{%-   set _ = _payload.update({'return_derived': return_derived}) -%}
+{%- endif -%}
+{{ _payload | tojson }}

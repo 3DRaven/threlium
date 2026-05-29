@@ -14,6 +14,7 @@ class NotmuchTag(StrEnum):
     UNREAD = "unread"
     ROUTE = "route"
     LIGHTRAG_INDEXED = "lightrag_indexed"
+    LIGHTRAG_SKIPPED = "lightrag_skipped"
     CONTEXT_SUMMARIZED = "context_summarized"
     ERROR = "error"
 

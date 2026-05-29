@@ -1,0 +1,79 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
+    "headers": {
+      "X-Threlium-Call-Site": {
+        "equalTo": "fsm"
+      }
+    },
+    "bodyPatterns": [
+      {
+        "matches": "(?s).*(openai/threlium_e2e_l0|threlium_e2e_l0).*"
+      },
+      {
+        "contains": "<envelope>"
+      },
+      {
+        "contains": "\"tools\""
+      },
+      {
+        "contains": "E2E-FORMAL-REASON-VIOLATION-BODY"
+      },
+      {
+        "doesNotMatch": "(?s).*\"enable_thinking\"\\s*:\\s*false.*"
+      }
+    ],
+    "customMatcher": {
+      "name": "state-matcher",
+      "parameters": {
+        "hasContext": "stub-formal-reason-violation-01::{{request.headers.[x-threlium-thread-root]}}",
+        "hasProperty": "active",
+        "hasNotProperty": "phase_logic_done"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "id": "chatcmpl-e2e-formal-reason-violation-reasoning-1",
+      "object": "chat.completion",
+      "created": 0,
+      "model": "gpt-4o-mini",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "tool_calls",
+          "message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_e2e_formal_reason_violation_1",
+                "type": "function",
+                "function": {
+                  "name": "formal_reason",
+                  "arguments": "{\"reasoning\": \"e2e: SHACL check with intentionally invalid age\", \"shapes_ttl\": \"@prefix sh: <http://www.w3.org/ns/shacl#> .\\n@prefix ex: <http://example.org/> .\\n\\nex:PositiveAgeShape a sh:NodeShape ;\\n  sh:targetClass ex:Person ;\\n  sh:property [\\n    sh:path ex:age ;\\n    sh:minInclusive 0 ;\\n    sh:message \\\"Age must be non-negative\\\" ;\\n  ] .\", \"facts_ttl\": \"@prefix ex: <http://example.org/> .\\n\\nex:alice a ex:Person ;\\n  ex:age -1 .\"}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "serveEventListeners": [
+    {
+      "name": "recordState",
+      "parameters": {
+        "context": "stub-formal-reason-violation-01::{{request.headers.[x-threlium-thread-root]}}",
+        "state": {
+          "phase_logic_done": "1"
+        }
+      }
+    }
+  ]
+}

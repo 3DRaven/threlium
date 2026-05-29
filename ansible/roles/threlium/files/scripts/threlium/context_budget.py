@@ -43,7 +43,7 @@ class ContextMessageType(StrEnum):
 #   cli_hitl_out (HITL bridge); одного блока достаточно, без egress_* и archive.
 # cli_exec — входящее задание на исполнение (payload после cli_intent); stdout/stderr
 #   смотри в следующем по IRT ``To: ingress`` от cli_exec.
-# logic_validate — payload от reasoning (SHACL/логика к проверке); отчёт уходит в
+# formal_reason — payload от reasoning (SHACL/RDF-рассуждение); отчёт уходит в
 #   enrich_fast и не дублируется здесь, но входное письмо нужно в треде («проверь логику»).
 # memory_query — формулировка запроса к графу от reasoning; ответ — observation в
 #   enrich_fast, в IRT остаётся исходная постановка на ``To: memory_query``.
@@ -77,7 +77,7 @@ CONTEXT_ROLE_BY_TO_STAGE: dict[FsmStage, ContextMessageType] = {
     FsmStage.INGRESS: ContextMessageType.USER_INPUT,
     FsmStage.EGRESS_ROUTER: ContextMessageType.AGENT_RESPONSE,
     FsmStage.CLI_EXEC: ContextMessageType.TOOL_OBSERVATION,
-    FsmStage.LOGIC_VALIDATE: ContextMessageType.AGENT_RESPONSE,
+    FsmStage.FORMAL_REASON: ContextMessageType.AGENT_RESPONSE,
     FsmStage.MEMORY_QUERY: ContextMessageType.AGENT_RESPONSE,
     FsmStage.SUMMARIZE_MEMORY: ContextMessageType.CONTEXT_SUMMARY,
     FsmStage.ENRICH: ContextMessageType.SERVICE,
@@ -85,6 +85,7 @@ CONTEXT_ROLE_BY_TO_STAGE: dict[FsmStage, ContextMessageType] = {
     FsmStage.RESPONSE_OBSERVE: ContextMessageType.SERVICE,
     FsmStage.RESPONSE_EDIT: ContextMessageType.SERVICE,
     FsmStage.RESPONSE_APPEND: ContextMessageType.SERVICE,
+    FsmStage.TASKS_UPSERT: ContextMessageType.SERVICE,
     FsmStage.REFLECT: ContextMessageType.SERVICE,
     FsmStage.SUMMARIZE_CONTEXT: ContextMessageType.SERVICE,
 }
@@ -179,7 +180,14 @@ def _normalize_type_weights(weights: ContextMessageTypeWeights) -> ContextMessag
 
 
 def to_stage_in_unified_role(stage: FsmStage | None) -> bool:
-    """``To``-стадия входит в unified: есть в :data:`CONTEXT_ROLE_BY_TO_STAGE` и роль не SERVICE."""
+    """``To``-стадия входит в unified: есть в :data:`CONTEXT_ROLE_BY_TO_STAGE` и роль не SERVICE.
+
+    Предикат **enrich**: фильтр IRT-хвоста треда (:func:`iter_irt_ancestors_filtered`).
+    ``thread_memory`` / ``global_memory`` сюда **не** входят — они собираются
+    отдельными бакетами :func:`build_unified_email_messages`, а не из IRT-цепочки.
+    Для drain (глобальный скан union-индекса) используется более широкий
+    :func:`content_indexable_to_stage`.
+    """
     if stage is None:
         return False
     role = CONTEXT_ROLE_BY_TO_STAGE.get(stage)
@@ -189,6 +197,37 @@ def to_stage_in_unified_role(stage: FsmStage | None) -> bool:
 def message_in_unified_mail_context(msg: EmailMessage) -> bool:
     """IRT-хвост: ``To:`` есть в :data:`CONTEXT_ROLE_BY_TO_STAGE` и роль не SERVICE."""
     return to_stage_in_unified_role(FsmStage.try_from_incoming_to(msg))
+
+
+# Стадии, чьё ``To:`` несёт содержательную нагрузку для графа LightRAG.
+#
+# База — те же не-SERVICE ключи :data:`CONTEXT_ROLE_BY_TO_STAGE`, что и unified
+# enrich-роль (:func:`to_stage_in_unified_role`), плюс выделенные memory-ящики
+# ``thread_memory`` / ``global_memory``.
+#
+# Фундаментальное отличие от enrich: enrich собирает контекст обходом IRT-цепочки
+# треда (:func:`iter_irt_ancestors_filtered`) — thread/subagent-локально, с дедупом
+# и отдельными memory-бакетами, которые в IRT-хвост не включаются. Drain же
+# сканирует весь union-индекс глобально (notmuch search), поэтому memory-письма
+# индексируются напрямую, а не как отдельные бакеты.
+CONTENT_INDEXABLE_STAGES: frozenset[FsmStage] = frozenset(
+    {
+        stage
+        for stage, role in CONTEXT_ROLE_BY_TO_STAGE.items()
+        if role is not ContextMessageType.SERVICE
+    }
+    | {FsmStage.THREAD_MEMORY, FsmStage.GLOBAL_MEMORY}
+)
+
+
+def content_indexable_stages() -> frozenset[FsmStage]:
+    """Whitelist стадий для LightRAG-drain (см. :data:`CONTENT_INDEXABLE_STAGES`)."""
+    return CONTENT_INDEXABLE_STAGES
+
+
+def content_indexable_to_stage(stage: FsmStage | None) -> bool:
+    """``To``-стадия письма несёт содержательную нагрузку для LightRAG-графа (drain)."""
+    return stage is not None and stage in CONTENT_INDEXABLE_STAGES
 
 
 def classify_message_type(msg: EmailMessage) -> ContextMessageType:

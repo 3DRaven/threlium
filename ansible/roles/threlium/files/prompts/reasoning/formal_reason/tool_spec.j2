@@ -1,0 +1,54 @@
+{#- LLM-facing text is English-only: Cyrillic uses roughly 2–3× more tokens per word.
+    This Jinja comment is stripped and never sent to the model.
+    docs/ARCHITECTURE.md §6.2: tool-spec for route `formal_reason`. -#}
+{
+  "type": "function",
+  "function": {
+    "name": "formal_reason",
+    "description": "Formal reasoning in RDF/SPARQL over a graph YOU author: model the domain (classes/properties in ontology_ttl), state facts (facts_ttl), encode rules/constraints (shapes_ttl), optionally run RDFS/OWL inference and read entailed triples (return_derived), optionally run SPARQL (query) against that graph, and get SHACL validation (conforms/violations). NOT for looking up project knowledge — use memory_query for the LightRAG graph.\n\nReasoning loop: (1) encode domain + facts as Turtle → (2) formal_reason with shapes and optional inference/query → (3) read observation (violations, derived triples, query bindings) → (4) refine → (5) finalize with proof cited.\n\nProof by refutation: to prove a claim, encode its NEGATION as a violating sh:sparql SELECT; conforms=true means the claim holds ONLY IF your sh:target* actually selected nodes. The tool does NOT warn about empty targets — verify coverage yourself, e.g. add a query 'SELECT (COUNT(?n) AS ?c) WHERE { ?n a <YourTargetClass> }' in the same call; zero focus nodes is not a proof.\n\nPitfalls. Turtle: @prefix only in TTL files (PREFIX only inside SPARQL strings); every statement ends with '.'; declare every prefix; 'a' only for rdf:type. A PARSE ERROR is prefixed with the failing field (facts_ttl/shapes_ttl/ontology_ttl) — fix exactly that field. SHACL-SPARQL: sh:select must match the VIOLATING case. query: declare every PREFIX inside the SPARQL string — rdflib auto-binds some prefixes, so a missing or mistyped PREFIX can silently return zero rows instead of erroring; query runs on facts+ontology after inference when inference is set; for project docs use memory_query, not query. return_derived needs inference set (rdfs/owlrl/both) — without it the flag is ignored. No remote endpoints (no SPARQL SERVICE) and no SPARQL UPDATE; use CONSTRUCT in query to derive a transformed view.\n\nOn errors, memory_query turtle_syntax.md / shacl_sparql.md / sparql_functions.md / formal_reason_workflows.md by name.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "shapes_ttl": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32000,
+          "description": "SHACL shapes graph in Turtle: your rules, invariants, and refutation shapes (sh:sparql SELECT must match VIOLATING nodes). Include @prefix sh: <http://www.w3.org/ns/shacl#> and xsd: when needed."
+        },
+        "facts_ttl": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32000,
+          "description": "Data graph in Turtle: the situation under reasoning — premises, candidate conclusions, and entities you are reasoning about."
+        },
+        "ontology_ttl": {
+          "type": "string",
+          "maxLength": 32000,
+          "description": "Optional ontology (rdfs:subClassOf, domains/ranges, owl:equivalentClass). Merged with facts. Use with inference when rules depend on entailment."
+        },
+        "inference": {
+          "type": "string",
+          "enum": ["none", "rdfs", "owlrl", "both"],
+          "description": "RDFS/OWL expansion before validation and before query/derived. Use rdfs/owlrl when subclass, domain/range, or equivalence matter. Set return_derived=true to read new triples in the observation."
+        },
+        "return_derived": {
+          "type": "boolean",
+          "description": "If true AND inference is not none, return entailed triples (delta) in the observation. Without inference the flag is ignored (the observation says so). Default false (saves tokens)."
+        },
+        "query": {
+          "type": "string",
+          "maxLength": 16000,
+          "description": "Optional SPARQL SELECT/ASK/CONSTRUCT against YOUR facts_ttl+ontology_ttl graph (after inference if set). Use to explore bindings or derive via CONSTRUCT. For the project's knowledge/memory graph use memory_query, not this field."
+        },
+        "reasoning": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "description": "What you are proving or deriving and why — for logs and the observation note."
+        }
+      },
+      "required": ["shapes_ttl", "facts_ttl", "reasoning"],
+      "additionalProperties": false
+    }
+  }
+}

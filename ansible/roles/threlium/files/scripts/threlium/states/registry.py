@@ -18,7 +18,7 @@ from threlium.states import (
     egress_telegram,
     global_memory,
     ingress,
-    logic_validate,
+    formal_reason,
     memory_query,
     reasoning,
     reflect,

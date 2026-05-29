@@ -11,24 +11,24 @@ import logging
 import msgspec
 
 from threlium.types.knowledge_stage import (
-    LogicValidateStagePayload,
+    FormalReasonStagePayload,
     MemoryQueryStagePayload,
 )
 
 log = logging.getLogger(__name__)
 
 
-def parse_logic_validate_payload(text: str) -> LogicValidateStagePayload | None:
-    """Parse JSON body → LogicValidateStagePayload or None on failure."""
+def parse_formal_reason_payload(text: str) -> FormalReasonStagePayload | None:
+    """Parse JSON body → FormalReasonStagePayload or None on failure."""
     try:
         raw = json.loads(text)
     except (json.JSONDecodeError, TypeError):
-        log.warning("logic_validate: payload is not valid JSON")
+        log.warning("formal_reason: payload is not valid JSON")
         return None
     try:
-        return msgspec.convert(raw, type=LogicValidateStagePayload)
+        return msgspec.convert(raw, type=FormalReasonStagePayload)
     except (msgspec.ValidationError, TypeError) as e:
-        log.warning("logic_validate: payload validation failed: %s", e)
+        log.warning("formal_reason: payload validation failed: %s", e)
         return None
 
 
@@ -47,6 +47,6 @@ def parse_memory_query_payload(text: str) -> MemoryQueryStagePayload | None:
 
 
 __all__ = [
-    "parse_logic_validate_payload",
+    "parse_formal_reason_payload",
     "parse_memory_query_payload",
 ]

@@ -67,4 +67,4 @@ class FsmTransitionPlainSubjectLine(_OptionalStripEmpty):
 
 
 class EnrichObservationNoteText(_OptionalStripEmpty):
-    """Текст MIME-части <observation-note> (logic_validate / memory_query → enrich_fast)."""
+    """Текст MIME-части <observation-note> (formal_reason / memory_query → enrich_fast)."""

@@ -1,0 +1,31 @@
+{#- LLM-facing text is English-only: Cyrillic uses roughly 2–3× more tokens per word.
+    This Jinja comment is stripped and never sent to the model.
+    formal_reason → enrich_fast observation-note. -#}
+reasoning: {{ reasoning }}
+---
+{% if error_kind == "parse" %}PARSE ERROR (Turtle): {{ error_message }}
+Fix the Turtle syntax of facts_ttl/shapes_ttl/ontology_ttl and retry. If unsure of the syntax, memory_query the unified knowledge/memory graph for turtle_syntax.md / shacl_sparql.md before retrying.
+{% elif error_kind == "shape" %}SHAPE LOAD ERROR (SHACL): {{ error_message }}
+A shape/constraint is malformed (e.g. bad sh:declare, sh:select, or sh:path). Fix the shape definition and retry. If unsure of the syntax, memory_query the unified knowledge/memory graph for shacl_sparql.md / turtle_syntax.md before retrying.
+{% elif error_kind == "runtime" %}RUNTIME ERROR (validation): {{ error_message }}
+Often an undeclared prefix in sh:select (declare via sh:prefixes/sh:declare) or a malformed shape. Fix and retry. memory_query shacl_sparql.md / sparql_functions.md if needed.
+{% else %}conforms: {{ conforms }}
+violations: {{ violations }}
+{% if conforms and violations | int == 0 %}conforms=true means no targeted node violated the shapes. This is only a proof if your sh:targetClass/targetNode/targetSubjectsOf/targetObjectsOf actually matched nodes — confirm coverage yourself (e.g. add a query SELECT (COUNT(?n) AS ?c) WHERE { ?n a <YourTargetClass> } in the same call, or check the facts contain the targeted nodes). Mind prefixes and enable inference if you rely on subclass/equivalence.
+{% endif %}{% if return_derived_ignored %}NOTE: return_derived was ignored because inference is none — set inference to rdfs/owlrl/both to read entailed triples.
+{% endif %}{{ report_text }}
+{% if derived_ttl %}---
+derived_triples (inference delta):
+{{ derived_ttl }}
+{% endif %}{% if query_result %}---
+query_result:
+{{ query_result }}
+{% endif %}{% if has_derived_error %}---
+DERIVED ERROR (inference): {{ derived_error }}
+Inference (return_derived) failed but validation above still holds. Check the ontology_ttl / inference mode and retry if you need the entailed triples.
+{% endif %}{% if has_query_error %}---
+QUERY ERROR (SPARQL): {{ query_error }}
+The query field failed but validation above still holds. Fix the SPARQL (PREFIX declarations, syntax). If unsure, memory_query sparql_functions.md / shacl_sparql.md before retrying.
+{% endif %}{% if violations and violations | int > 0 %}
+Each violation is a problem to resolve: trace root cause, correct facts or shapes, and call formal_reason again. Do not finalize while an invariant you set out to prove is still violated.
+{% endif %}{% endif %}
