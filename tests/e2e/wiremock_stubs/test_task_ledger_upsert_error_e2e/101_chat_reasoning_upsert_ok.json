@@ -1,0 +1,80 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
+    "headers": {
+      "X-Threlium-Call-Site": {
+        "equalTo": "fsm"
+      }
+    },
+    "bodyPatterns": [
+      {
+        "matches": "(?s).*(openai/threlium_e2e_l0|threlium_e2e_l0).*"
+      },
+      {
+        "contains": "<envelope>"
+      },
+      {
+        "contains": "\"tools\""
+      },
+      {
+        "comment": "After the rejection bounced to ingress, the LLM reads the real content_id from <task_state> and updates it correctly. content_id 9d9d077ccc56 = 'Reproduce the tasks_upsert validation error'.",
+        "contains": "E2E-TASK-LEDGER-UPSERTERR-BODY"
+      },
+      {
+        "doesNotMatch": "(?s).*\"enable_thinking\"\\s*:\\s*false.*"
+      }
+    ],
+    "customMatcher": {
+      "name": "state-matcher",
+      "parameters": {
+        "hasContext": "stub-task-ledger-upserterr-01::{{request.headers.[x-threlium-thread-root]}}",
+        "hasProperty": "phase_upsert_error_done",
+        "hasNotProperty": "phase_upsert_ok_done"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "id": "chatcmpl-e2e-task-ledger-upserterr-reasoning-2-upsert-ok",
+      "object": "chat.completion",
+      "created": 0,
+      "model": "gpt-4o-mini",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "tool_calls",
+          "message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_e2e_upsert_ok",
+                "type": "function",
+                "function": {
+                  "name": "tasks_upsert",
+                  "arguments": "{\"reasoning\": \"e2e: update the real seeded subtask to done\", \"subtask_updates\": [{\"content_id\": \"9d9d077ccc56\", \"status\": \"done\"}]}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "serveEventListeners": [
+    {
+      "name": "recordState",
+      "parameters": {
+        "context": "stub-task-ledger-upserterr-01::{{request.headers.[x-threlium-thread-root]}}",
+        "state": {
+          "phase_upsert_ok_done": "1"
+        }
+      }
+    }
+  ]
+}

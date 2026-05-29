@@ -1,0 +1,47 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
+    "headers": {
+      "X-Threlium-Call-Site": {
+        "equalTo": "lightrag_query_keywords"
+      }
+    },
+    "bodyPatterns": [
+      {
+        "matches": "(?s).*(openai/threlium_e2e_l0|threlium_e2e_l0).*"
+      }
+    ],
+    "customMatcher": {
+      "name": "state-matcher",
+      "parameters": {
+        "hasContext": "stub-task-ledger-allcancel-01::{{request.headers.[x-threlium-thread-root]}}"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "transformers": [
+      "response-template"
+    ],
+    "jsonBody": {
+      "id": "chatcmpl-e2e-formal-reason-keywords",
+      "object": "chat.completion",
+      "created": 0,
+      "model": "gpt-4o-mini",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "stop",
+          "message": {
+            "role": "assistant",
+            "content": "{\"high_level_keywords\": [\"e2e_{{randomValue length=8 type='ALPHANUMERIC'}}\"], \"low_level_keywords\": [\"stub_{{randomValue length=8 type='ALPHANUMERIC'}}\"]}"
+          }
+        }
+      ]
+    }
+  }
+}

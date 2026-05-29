@@ -1,0 +1,49 @@
+{
+  "priority": 1,
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
+    "headers": {
+      "X-Threlium-Call-Site": {
+        "equalTo": "fsm"
+      }
+    },
+    "bodyPatterns": [
+      {
+        "comment": "enrich task-ledger seed for THIS scenario: override the bootstrap empty-default and seed two subtasks. Re-served idempotently on each enrich (ensure-exists in reduce keeps cancelled statuses).",
+        "contains": "concrete, verifiable subtasks"
+      },
+      {
+        "contains": "E2E-TASK-LEDGER-ALLCANCEL-BODY"
+      }
+    ],
+    "customMatcher": {
+      "name": "state-matcher",
+      "parameters": {
+        "hasContext": "stub-task-ledger-allcancel-01::{{request.headers.[x-threlium-thread-root]}}"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "id": "chatcmpl-e2e-task-ledger-allcancel-enrich-task-plan",
+      "object": "chat.completion",
+      "created": 0,
+      "model": "gpt-4o-mini",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "stop",
+          "message": {
+            "role": "assistant",
+            "content": "[\"Investigate the all-cancelled guard behavior\", \"Summarize the all-cancelled guard for the user\"]"
+          }
+        }
+      ]
+    }
+  }
+}

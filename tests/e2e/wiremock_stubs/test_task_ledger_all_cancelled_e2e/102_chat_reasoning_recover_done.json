@@ -1,0 +1,80 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
+    "headers": {
+      "X-Threlium-Call-Site": {
+        "equalTo": "fsm"
+      }
+    },
+    "bodyPatterns": [
+      {
+        "matches": "(?s).*(openai/threlium_e2e_l0|threlium_e2e_l0).*"
+      },
+      {
+        "contains": "<envelope>"
+      },
+      {
+        "contains": "\"tools\""
+      },
+      {
+        "comment": "Third reasoning: recover from the all-cancelled block by recording real completed work as a NEW done subtask (cancelled is terminal and cannot be downgraded). content_id 262b71525451 = 'Answer the user question about the task ledger'.",
+        "contains": "E2E-TASK-LEDGER-ALLCANCEL-BODY"
+      },
+      {
+        "doesNotMatch": "(?s).*\"enable_thinking\"\\s*:\\s*false.*"
+      }
+    ],
+    "customMatcher": {
+      "name": "state-matcher",
+      "parameters": {
+        "hasContext": "stub-task-ledger-allcancel-01::{{request.headers.[x-threlium-thread-root]}}",
+        "hasProperty": "phase_finalize_blocked_done",
+        "hasNotProperty": "phase_recover_done"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "id": "chatcmpl-e2e-task-ledger-allcancel-reasoning-3-recover-done",
+      "object": "chat.completion",
+      "created": 0,
+      "model": "gpt-4o-mini",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "tool_calls",
+          "message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_e2e_allcancel_recover",
+                "type": "function",
+                "function": {
+                  "name": "tasks_upsert",
+                  "arguments": "{\"reasoning\": \"e2e: record the real completed answer as a done subtask\", \"new_subtasks\": [{\"text\": \"Answer the user question about the task ledger\", \"status\": \"done\"}]}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "serveEventListeners": [
+    {
+      "name": "recordState",
+      "parameters": {
+        "context": "stub-task-ledger-allcancel-01::{{request.headers.[x-threlium-thread-root]}}",
+        "state": {
+          "phase_recover_done": "1"
+        }
+      }
+    }
+  ]
+}

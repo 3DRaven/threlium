@@ -1,0 +1,80 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
+    "headers": {
+      "X-Threlium-Call-Site": {
+        "equalTo": "fsm"
+      }
+    },
+    "bodyPatterns": [
+      {
+        "matches": "(?s).*(openai/threlium_e2e_l0|threlium_e2e_l0).*"
+      },
+      {
+        "contains": "<envelope>"
+      },
+      {
+        "contains": "\"tools\""
+      },
+      {
+        "comment": "Second reasoning: both subtasks cancelled, none done. The LLM tries to finalize; the Python all-cancelled guard must refuse (no escape hatch) and bounce to ingress.",
+        "contains": "E2E-TASK-LEDGER-ALLCANCEL-BODY"
+      },
+      {
+        "doesNotMatch": "(?s).*\"enable_thinking\"\\s*:\\s*false.*"
+      }
+    ],
+    "customMatcher": {
+      "name": "state-matcher",
+      "parameters": {
+        "hasContext": "stub-task-ledger-allcancel-01::{{request.headers.[x-threlium-thread-root]}}",
+        "hasProperty": "phase_cancel_all_done",
+        "hasNotProperty": "phase_finalize_blocked_done"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "id": "chatcmpl-e2e-task-ledger-allcancel-reasoning-2-finalize-blocked",
+      "object": "chat.completion",
+      "created": 0,
+      "model": "gpt-4o-mini",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "tool_calls",
+          "message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_e2e_allcancel_finalize_blocked",
+                "type": "function",
+                "function": {
+                  "name": "response_finalize",
+                  "arguments": "{\"reasoning\": \"e2e: finalize attempt with everything cancelled and nothing done\", \"subject\": \"Re: e2e reply\", \"verification_summary\": \"e2e: should be blocked by the all-cancelled guard\", \"content\": \"e2e-allcancel-blocked-attempt\"}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "serveEventListeners": [
+    {
+      "name": "recordState",
+      "parameters": {
+        "context": "stub-task-ledger-allcancel-01::{{request.headers.[x-threlium-thread-root]}}",
+        "state": {
+          "phase_finalize_blocked_done": "1"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
+    "headers": {
+      "X-Threlium-Call-Site": {
+        "equalTo": "fsm"
+      }
+    },
+    "bodyPatterns": [
+      {
+        "matches": "(?s).*(openai/threlium_e2e_l0|threlium_e2e_l0).*"
+      },
+      {
+        "contains": "<envelope>"
+      },
+      {
+        "contains": "\"tools\""
+      },
+      {
+        "contains": "E2E-TASK-LEDGER-UPSERTERR-BODY"
+      },
+      {
+        "doesNotMatch": "(?s).*\"enable_thinking\"\\s*:\\s*false.*"
+      }
+    ],
+    "customMatcher": {
+      "name": "state-matcher",
+      "parameters": {
+        "hasContext": "stub-task-ledger-upserterr-01::{{request.headers.[x-threlium-thread-root]}}",
+        "hasProperty": "phase_upsert_ok_done"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "id": "chatcmpl-e2e-task-ledger-upserterr-reasoning-3-finalize-ok",
+      "object": "chat.completion",
+      "created": 0,
+      "model": "gpt-4o-mini",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "tool_calls",
+          "message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_e2e_upserterr_finalize_ok",
+                "type": "function",
+                "function": {
+                  "name": "response_finalize",
+                  "arguments": "{\"reasoning\": \"e2e: seeded subtask done, gate passes\", \"subject\": \"Re: e2e reply\", \"verification_summary\": \"e2e: ledger closed after correcting the content_id\", \"content\": \"e2e-task-ledger-upsert-error-verified\"}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

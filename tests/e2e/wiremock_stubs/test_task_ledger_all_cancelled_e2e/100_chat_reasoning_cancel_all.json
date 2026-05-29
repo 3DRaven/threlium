@@ -1,0 +1,80 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
+    "headers": {
+      "X-Threlium-Call-Site": {
+        "equalTo": "fsm"
+      }
+    },
+    "bodyPatterns": [
+      {
+        "matches": "(?s).*(openai/threlium_e2e_l0|threlium_e2e_l0).*"
+      },
+      {
+        "contains": "<envelope>"
+      },
+      {
+        "contains": "\"tools\""
+      },
+      {
+        "comment": "First reasoning: cancel BOTH seeded subtasks. content_id 8a1ea957bf2b = 'Investigate the all-cancelled guard behavior', a132885eea74 = 'Summarize the all-cancelled guard for the user'.",
+        "contains": "E2E-TASK-LEDGER-ALLCANCEL-BODY"
+      },
+      {
+        "doesNotMatch": "(?s).*\"enable_thinking\"\\s*:\\s*false.*"
+      }
+    ],
+    "customMatcher": {
+      "name": "state-matcher",
+      "parameters": {
+        "hasContext": "stub-task-ledger-allcancel-01::{{request.headers.[x-threlium-thread-root]}}",
+        "hasProperty": "active",
+        "hasNotProperty": "phase_cancel_all_done"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "id": "chatcmpl-e2e-task-ledger-allcancel-reasoning-1-cancel-all",
+      "object": "chat.completion",
+      "created": 0,
+      "model": "gpt-4o-mini",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "tool_calls",
+          "message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_e2e_cancel_all",
+                "type": "function",
+                "function": {
+                  "name": "tasks_upsert",
+                  "arguments": "{\"reasoning\": \"e2e: cancel both subtasks (scope dropped)\", \"subtask_updates\": [{\"content_id\": \"8a1ea957bf2b\", \"status\": \"cancelled\"}, {\"content_id\": \"a132885eea74\", \"status\": \"cancelled\"}]}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "serveEventListeners": [
+    {
+      "name": "recordState",
+      "parameters": {
+        "context": "stub-task-ledger-allcancel-01::{{request.headers.[x-threlium-thread-root]}}",
+        "state": {
+          "phase_cancel_all_done": "1"
+        }
+      }
+    }
+  ]
+}
