@@ -72,6 +72,7 @@
 |---|---|---|---|---|
 | `+route` | Маркер **только** первичной доставки bridge→ingress (Telegram/Matrix/email → `ingress@localhost` с `From: <channel>@localhost` и непустым `X-Threlium-Route`). Обычные FSM-переходы на тот же `ingress@` тег **не** получают. | ставится `notmuch insert` только с **`+route`** (без тега имени стадии); worker его не снимает (`nm_settle` трогает только `unread`) | fdm.conf: `+route` только при `match` по **строке From** (`^From:…`), не по произвольному заголовку — иначе подстрока `*@localhost` в Message-ID давала бы ложный `tag:route`; шаблон [`fdm.conf.j2`](../ansible/roles/threlium/templates/config/fdm.conf.j2) | long-running мосты (`tag:route AND from:telegram@localhost`, зеркально matrix/email); при egress FSM-резолве — ``resolve_route_for_egress_fsm_from_email`` → ``resolve_route_from_in_reply_to_ancestors`` (старт с якоря RA или листа), обход ``In-Reply-To``, на каждом предке ``tag:route`` и чтение wire через ``nm.header_field_optional`` |
 | `+lightrag_indexed` | State-marker. `rag.ainsert(...)` для письма успешно завершён; граф LightRAG содержит сущности и связи из этого сообщения. | mutable, **только добавляется** | `threlium-engine` / RAG-loop (после успеха `ainsert`) | следующий RAG-drain (селектор исключает проиндексированные); диагностика |
+| `+lightrag_skipped` | State-marker. Письмо **осознанно не** индексируется (render-fail / selector-drift, причина — `LightragDrainSkipReason`); терминальный, взаимоисключающий с `+lightrag_indexed`. | mutable, **только добавляется** | `threlium-engine` / RAG-loop (defensive-слой `_ainsert_batch`) | следующий RAG-drain (селектор исключает пропущенные); диагностика |
 
 **Почему нет origin-маркера** (`+threlium`-подобного тега). Notmuch-база Threlium **выделенная** (`database.path = ~/threlium/stages`) и содержит исключительно письма, попавшие через FSM-bridges и **fdm**-контур. Внешних источников, замусоривающих DB, нет. Поэтому ставить тег «это наше» бессмысленно — это тавтология, а каждый лишний тег при `notmuch insert` = лишняя write-lock операция в hot path доставки. Все запросы оперируют отрицанием state-тегов без origin-якоря.
 
@@ -369,13 +370,19 @@ notmuch search id:<message-id>
 
 ### 5b.2 Селектор pending-сообщений
 
+Селектор собирается **только** через доменные VO в [`lightrag_drain_query.lightrag_drain_pending_search()`](../ansible/roles/threlium/files/scripts/threlium/lightrag_drain_query.py) (`NotmuchQueryConnective` / `NotmuchQueryField` / `NotmuchTag`, см. [`TYPES.md`](TYPES.md)); та же строка используется и в e2e-helpers для idle-wait/count:
+
 ```
-* AND NOT tag:unread AND NOT tag:lightrag_indexed
+* AND NOT tag:unread AND NOT tag:lightrag_indexed AND NOT tag:lightrag_skipped
+  AND NOT tag:context_summarized AND (to:ingress@localhost OR to:egress_router@localhost OR …)
 ```
 
 - `*` — все письма union index'а; `database.path` уже ограничивает область деревом `stages/`.
 - `NOT tag:unread` — **«settled»-критерий**. После `nm_settle()` тег `unread` снят атомарно (см. [§5.5.4](#554-maildir-flag-sync-unread--seen)). Это эквивалентно «лежит в `cur/`» по построению — никакая post-фильтрация в Python по `"/Maildir/cur/" in filename` не нужна. Префикс-glob по `folder` в notmuch **невалиден** (см. [§11.2](#112-notmuch-query-syntax--glob-ограничения)).
 - `NOT tag:lightrag_indexed` — pending для индексации.
+- `NOT tag:lightrag_skipped` — осознанно пропущенные drain'ом (render-fail / selector-drift, см. [§5b.3](#5b3-цикл-индексации)); не вечный retry.
+- `NOT tag:context_summarized` — оригиналы, схлопнутые `summarize_context`, в граф не идут (их смысл уже в `summarize_memory@`).
+- `(to:<indexable> OR …)` — **whitelist content-indexable стадий**, симметрично enrich. Источник — общий с enrich базис `CONTEXT_ROLE_BY_TO_STAGE` (роль ≠ SERVICE) плюс memory-ящики `thread_memory` / `global_memory`: [`context_budget.content_indexable_stages()`](../ansible/roles/threlium/files/scripts/threlium/context_budget.py). SERVICE-переходы (`reflect`, `enrich`, `enrich_fast`, `summarize_context`, …), `reasoning`, egress-каналы и subagent-границы в граф **не** попадают. Принципиальное отличие потребителей: enrich собирает контекст обходом IRT-цепочки треда (`to_stage_in_unified_role`, memory — отдельные бакеты), drain сканирует union-индекс глобально (memory индексируется напрямую), см. [§7](#7-enrich-notmuch-context--query--lightrag).
 
 ### 5b.3 Цикл индексации
 
@@ -402,6 +409,7 @@ loop iteration in 1..MAX_ITERATIONS:
 
 - **Стабильные `file_paths` в графе**: к моменту `ainsert` файл уже в `cur/<id>:2,S` (это и есть «settled»-критерий в селекторе). LightRAG хранит `file_paths` в `entity.file_paths` / `relation.file_paths` (для citation) — теперь эти ссылки указывают на финальное стабильное расположение.
 - **Защита от индексации полу-обработанных сообщений**: если stage worker упал между `notmuch insert` (из fdm) и `nm_settle()`, недо-обработанное письмо в `new/<id>+unread` НЕ попадает в граф — селектор `NOT tag:unread` его отсекает. Settle-cycle защищает граф как side-effect.
+- **Defensive skip + `lightrag_skipped`**: основной отбор делает notmuch-селектор ([§5b.2](#5b2-селектор-pending-сообщений)). После парсинга drain дополнительно проверяет `content_indexable_to_stage(to)`; если письмо всё же дошло не-индексируемым (рассинхрон селектора и политики — `selector_drift`) либо рендер упал (`render_failed`), письмо помечается `+lightrag_skipped` (`LightragDrainSkipReason` в логах) и `ainsert` не вызывается. Тег исключает повторный pending — нет вечного retry. `lightrag_indexed` и `lightrag_skipped` взаимоисключающие.
 - **Не трогает Maildir-файлы вообще**: никаких `to_maildir_flags()`/`from_maildir_flags()` — это монополия stage worker'ов на их собственные Maildir'ы ([I3](#2-invariants)). Индексатор работает только с notmuch-query + `rag.ainsert` + tag commit `+lightrag_indexed`.
 - **Один writer в OS-процессе**: все `ainsert` идут на одном asyncio-loop внутри `threlium-engine` (см. [I2](#2-invariants)); параллельных **процессов**-писателей в `working_dir/` нет.
 - **Амортизация**: внутри `INSERT_BATCH` LightRAG делает dedup-on-insert в RAM до flush'а на диск — повторяющиеся сущности из разных писем сливаются за один проход без дополнительного round-trip.

@@ -73,6 +73,7 @@ stateDiagram-v2
   state "response_append＠localhost" as RA
   state "response_edit＠localhost" as RE
   state "response_observe＠localhost" as RO
+  state "tasks_upsert＠localhost" as TU
   state "enrich_fast＠localhost" as EF
   state "response_finalize＠localhost" as RF
   state "egress_router＠localhost" as EGR
@@ -93,17 +94,20 @@ stateDiagram-v2
   REA --> REF : Продолжить рассуждение (свежий enrich)
   REA --> RA : Добавить чанк ответа
   REA --> RE : Правка/удаление чанка
-  REA --> RO : Просмотр буфера
+  REA --> RO : Просмотр буфера + задач
+  REA --> TU : Upsert задач (add + статусы)
   REA --> RF : Финализация ответа
 
   RA --> EF
   RE --> EF : ok
   RE --> ING : invalid position
   RO --> EF
-  EF --> REA : E_prev + response_state
+  TU --> EF : ok
+  TU --> ING : invalid content_id
+  EF --> REA : E_prev + response_state + task_state
 
-  RF --> EGR : modes 1-3
-  RF --> ING : mode 4 (empty buffer+content)
+  RF --> EGR : modes 1-3 (task-gate passed)
+  RF --> ING : mode 4 / открытые задачи (task-gate)
 
   SUB --> ING : Старт фрейма или Ошибка
 
@@ -136,6 +140,7 @@ stateDiagram-v2
 - **`reflect@localhost` — структурно тот же одностадийный паттерн «`X → ingress`», что и у memory-стадий, но семантика принципиально иная: продолжение рассуждения с обновлённым LightRAG-контекстом, а не запись факта в память.** Стадия читает остаток `X-Threlium-Hop-Budget` (внутренняя FSM-механика выбора шаблона, в тело модели бюджет не пробрасывается), выбирает Jinja2-шаблон (`reflect/continue.j2` — обычное продолжение, либо `reflect/final.j2` — финальный проход без следующего reflect-цикла, из подкаталога стадии в `$THRELIUM_HOME/prompts/`) и инжектирует соответствующую инструкцию продолжения в тело перед `ingress → enrich → reasoning`. Self-route `reasoning → reasoning` отсутствует сознательно: он минует `enrich` (а вместе с ним — сбор `unified_messages`, `rag.aquery(...)` и шаблонный payload для `reasoning`, [`INDEX.md` §7](INDEX.md#7-enrich-notmuch-context--query--lightrag)) и нарушает SoT-инвариант [§5](#5-контракт-тела-между-стадиями) («в `stages/reasoning` почта попадает только с ребра `enrich → reasoning`»). Подробности — [MEMORY_TABLE.md §3](MEMORY_TABLE.md#3-reflect-продолжение-рассуждения).
 - **CLI-ветка — строгое трёхстадийное разделение.** `reasoning` формирует намерение (tool call) → `cli_intent` реализует **только политику** (allow/deny/HITL) → `cli_exec` реализует **только исполнение** разрешённой команды в transient systemd-scope. HITL-контур замыкается через `cli_hitl_out` → `egress_router` → внешний канал → ответ пользователя → `ingress_router` (детекция по RA tail + `From: cli_hitl_out@localhost` родителя в union notmuch index) → `cli_resume`. Полная 31-шаговая матрица — [SUBAGENT_TABLE.md](SUBAGENT_TABLE.md), контекст по capability-профилям — [ARCHITECTURE.md §6](ARCHITECTURE.md#6-слой-cli-и-безопасность-исполнения).
 - **Response buffer — CRDT-подобная инкрементальная сборка ответа.** `reasoning` **никогда** не вызывает `egress_router` напрямую. Все ответы пользователю проходят через `response_finalize`. Длинные ответы собираются итеративно: `response_append` × N → `response_finalize`. `enrich_fast` обеспечивает быстрый цикл обратной связи без повторного RAG (берёт предыдущий enriched-контекст `E_prev` и добавляет MIME-part `<response-state>`). Полная матрица переходов — [RESPONSE_TABLE.md](RESPONSE_TABLE.md).
+- **Task-ledger — content-addressed CRDT против дрифта задач.** Параллельно буферу ответа `reasoning` ведёт durable-план: `enrich` сеет стартовые подзадачи (`<task-init>`), стадия `tasks_upsert` за один вызов добавляет новые и меняет статусы существующих (решётка `pending→in_progress→done|cancelled`, identity = hash текста). `response_finalize` **жёстко** блокирует ответ, пока в ledger есть открытая работа (или все `cancelled` без `done`) — проверка по IRT, не по тексту LLM. `response_observe` обозревает буфер **и** задачи. Полностью — [RESPONSE_TABLE.md §8](RESPONSE_TABLE.md).
 - **Ошибки handler'а.** Исключения в `runners/engine` логируются (traceback в ответе submit → `exit 1`), оригинал при ошибке до `nm_settle` остаётся с `+unread` ([`INDEX.md` §5.6](INDEX.md#56-universal-error-handling-в-runnersworkerpy)). Мосты — лог + **`exit 1`** и `Restart=on-failure` у `threlium-bridge@`. Отдельной стадии `errors` и error-mail в FSM нет.
 - **Внешние каналы не имеют собственных очередей-входов в FSM.** Все мосты (`threlium.bridges.{email,telegram,matrix}`) — long-running services, **отдают байты в `run_fdm` из Python** (`threlium.delivery.run_fdm`, см. [ARCHITECTURE.md §2.6](ARCHITECTURE.md#26-каналы-единая-маршрутизация-ingress-egress)). Каноническое письмо: **`From: <channel>@localhost`**, **`X-Threlium-Route`** = b62(JSON) `*IngressRoute`, `To: ingress@localhost` — **`fdm`** по `~/.fdm.conf` после `match` делает одно терминирующее **`pipe`** → `notmuch insert --folder=stages/ingress/Maildir … && …/threlium-dispatch.sh` (атомарная запись + индексация одной транзакцией notmuch, затем dispatch). Писать в `stages/ingress/Maildir/new/` напрямую мосты **не имеют права**: `notmuch insert` выполняет атомарную запись + индексацию одной транзакцией, а dispatch-скрипт (`threlium-dispatch.sh`, вызываемый в том же пайпе после insert, `[ORCHESTRATION.md §3](ORCHESTRATION.md#3-механизм-post-insert-hook--dispatch-script)`) подхватил бы полузаписанный файл; единственная корректная точка доставки — **`fdm`**, он же единый источник уникальных Maildir-имён и единая транзакция файл+notmuch index. У выхода — очереди `egress_<chan>@localhost` и отдельная **`archive@localhost`** (`stages/archive/Maildir`): после внешней доставки `egress_*` эмитят MIME на `archive@`, **`fdm`** кладёт его в `archive/` (см. **fdm** `ins_stage_archive` в [`MESSAGES.md` §3](MESSAGES.md#3-mailfilter-snippet)); `egress_*` повторно читают wire маршрута с предка `tag:route` по inner id.
 
@@ -158,8 +163,9 @@ stateDiagram-v2
 | `cli_exec` | Исполнение разрешённой команды в transient `systemd-run --scope` с capability-лимитами; observation возвращается в `ingress@`. |
 | `response_append` | Приём чанка ответа от reasoning, forward в `enrich_fast`. Content сохраняется в Maildir (durable). |
 | `response_edit` | Правка/удаление чанка по 0-based position; валидация через `collect_ops`; ошибка → `ingress`, ok → `enrich_fast`. |
-| `response_observe` | Сводка буфера ответа (чанки с позициями + полный текст) → `enrich_fast`. |
-| `enrich_fast` | Быстрый цикл: берёт `E_prev` (multipart/mixed от enrich), добавляет `<response-state>` MIME-part → `reasoning`. |
+| `response_observe` | Обзор буфера ответа **+ task-ledger** (план) → нарратив `<response-observation>` → `enrich_fast`. |
+| `tasks_upsert` | Ведение task-ledger (anti-drift): add новых подзадач + смена статусов существующих (`done`/`in_progress`/`cancelled` по `content_id`); валидация против ledger, ошибка → `ingress`, ok → `enrich_fast` ([RESPONSE_TABLE.md §8](RESPONSE_TABLE.md)). |
+| `enrich_fast` | Быстрый цикл: берёт `E_prev` (multipart/mixed от enrich), пересобирает `<response-state>` / `<task-state>` MIME-part → `reasoning`. |
 | `response_finalize` | Финализация ответа: 4 режима (см. [RESPONSE_TABLE.md](RESPONSE_TABLE.md)). Modes 1-3 → `egress_router`, mode 4 → `ingress`. |
 | `egress_router` | Depth-классификатор по IRT; `depth > 0` → `subagent_end`, `depth == 0` → внешний ответ через `egress_<chan>`. |
 | `egress_email` | Доставка через `msmtp -t`, затем emit записи в `archive@localhost` (`build_fsm_plain_to_stage`). |
@@ -417,7 +423,7 @@ def emit_transition_preserving_payload(
 
 Все части из e_prev (от последнего `enrich`) + splice (`splice_e_prev_with_incoming_relay`):
 - `<response-state>` — пересчёт из CRDT (**replace** единственной части).
-- Relay-семейства `<observation-note>` / `<plan-state>` / `<memory-note>` — **аддитивно**: каждый хоп вспомогательной стадии (`logic_validate`, `memory_query`, `response_observe`, `thread/global_memory`) приходит **отдельной** MIME-частью с уникальным `Content-ID` `<{family}@{inner-mid}>` (VO `EnrichContentId.from_relay`). enrich_fast (stage-agnostic) дописывает её в хвост, не затирая предыдущие. Повторные вызовы одной стадии (например 5× `logic_validate`) накапливаются, а не перезаписываются. Дедуп — только по полному совпадению `Content-ID`.
+- Relay-семейства `<observation-note>` / `<plan-state>` / `<memory-note>` — **аддитивно**: каждый хоп вспомогательной стадии (`formal_reason`, `memory_query`, `response_observe`, `thread/global_memory`) приходит **отдельной** MIME-частью с уникальным `Content-ID` `<{family}@{inner-mid}>` (VO `EnrichContentId.from_relay`). enrich_fast (stage-agnostic) дописывает её в хвост, не затирая предыдущие. Повторные вызовы одной стадии (например 5× `formal_reason`) накапливаются, а не перезаписываются. Дедуп — только по полному совпадению `Content-ID`.
 
 `reasoning` группирует relay-части по семейству (`EnrichContentId.family`, префикс до первого `@`) и рендерит списком внутри тегов `<observation>` / `<plan_state>` / `<memory_note>`; бюджет на семейство — tail-keep новейших (`context_max_chars`). Бэк-компат: канонические `<observation-note>` без суффикса распознаются тем же семейством.
 
