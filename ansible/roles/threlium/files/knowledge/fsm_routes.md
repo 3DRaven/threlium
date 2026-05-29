@@ -26,15 +26,21 @@ Discovery order: in-context → `memory_query` → `cli_intent` (files) → `sub
 
 | Route | Notes |
 |-------|--------|
-| `response_append` / `response_edit` / `response_observe` | Build long replies incrementally; `enrich_fast` relays buffer state. |
-| `response_finalize` | Required to deliver reply; never call `egress_router` directly from reasoning. |
+| `response_append` / `response_edit` / `response_observe` | Build long replies incrementally; `enrich_fast` relays buffer state. `response_observe` also reviews the task ledger. |
+| `tasks_upsert` | `tasks_upsert@` → `enrich_fast@` → `reasoning@` | Maintain the durable task ledger (plan): add new subtasks and/or change statuses of existing ones in one call. See `agent_task_ledger.md`. |
+| `response_finalize` | Required to deliver reply; never call `egress_router` directly from reasoning. **Hard-gated** on the task ledger: refused while any subtask is `pending`/`in_progress`, or if all are `cancelled` with none `done`. |
 
 ## Verification
 
 | Route | Use |
 |-------|-----|
-| `logic_validate` | SHACL/pySHACL proof of derivations — not for fetching facts (`memory_query`). |
+| `formal_reason` | RDF/SPARQL reasoning: SHACL validation, optional inference (derived triples), optional SPARQL query on your graph — not for fetching project facts (`memory_query`). |
 
 ## Related bootstrap docs
 
-- `knowledge/turtle_syntax.md`, `shacl_sparql.md`, `sparql_functions.md` — SHACL/Turtle reference for `logic_validate`.
+- **Core:** `turtle_syntax.md`, `shacl_sparql.md`, `sparql_functions.md` — SHACL/Turtle/SPARQL for `formal_reason`.
+- **Workflows:** `formal_reason_workflows.md` — tool-call JSON examples and observation patterns.
+- **Task ledger:** `agent_task_ledger.md` — `tasks_upsert` tool contract, content-addressed dedupe, monotonic status lattice, the `response_finalize` gate, batch patches.
+- **RDFLib:** `rdflib_overview.md`, `rdflib_getting_started.md`, `rdflib_graphs.md`, `rdflib_sparql.md`, `rdflib_parsing.md`, … — API reference; `rdflib_examples_*.md` — scenarios as `formal_reason` payloads.
+- **pySHACL:** `pyshacl_overview.md`, `pyshacl_examples.md`.
+- **Patterns:** `patterns_sparql_query.md`, `patterns_shacl_validate.md` (derwen ex4/ex5 adapted).

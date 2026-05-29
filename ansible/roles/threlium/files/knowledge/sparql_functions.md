@@ -29,6 +29,8 @@ WHERE { ?person ex:firstName ?fn ; ex:lastName ?ln .
         BIND(CONCAT(?fn, " ", ?ln) AS ?name) }
 ```
 
+In `formal_reason`, pass CONSTRUCT (or SELECT) in the `query` field to derive or inspect triples on the graph you built in `facts_ttl` — the observation returns the constructed graph or bindings.
+
 ### ASK
 ```sparql
 ASK { ex:Alice ex:knows ex:Bob }

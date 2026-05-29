@@ -135,34 +135,37 @@ Recommended for a clean pySHACL report (not strictly enforced ordering):
 - Ontology graph (owl:imports, rdfs:subClassOf) can be passed separately for inference
 - Advanced: `sh:deactivated true` to skip a shape during validation
 
-## End-to-End Validation (Python)
+## End-to-End Validation (formal_reason tool)
 
-Parse the data and shapes graphs separately, then call `validate(...)`. It returns a
-triple `(conforms, results_graph, results_text)` — a boolean, the report as an RDF
-graph, and a human-readable text report:
+You do not run pySHACL yourself — the `formal_reason` tool parses `facts_ttl` and
+`shapes_ttl`, validates them (`advanced=True` is always on, so SHACL Advanced
+Features are available), and reports `conforms`, `violations: N`, and the
+human-readable report. Put the `sh:sparql` shape above into `shapes_ttl` and the
+data into `facts_ttl`. A negative age matches the violating SELECT, so the focus
+node `ex:alice` is reported once:
 
-```python
-from rdflib import Graph
-from pyshacl import validate
+<!-- expect: conforms=false violations=1 -->
 
-data_graph = Graph().parse(data=data_ttl, format="turtle")
-shapes_graph = Graph().parse(data=shapes_ttl, format="turtle")
+```json
+{
+  "reasoning": "Reject any ex:Person whose ex:age is negative (sh:sparql constraint)",
+  "facts_ttl": "@prefix ex: <http://example.org/> .\n\nex:alice a ex:Person ; ex:age -5 .\nex:bob a ex:Person ; ex:age 30 .",
+  "shapes_ttl": "@prefix sh: <http://www.w3.org/ns/shacl#> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n@prefix ex: <http://example.org/> .\n\nex:PersonAgeConstraint a sh:NodeShape ;\n  sh:targetClass ex:Person ;\n  sh:sparql [\n    sh:prefixes [\n      sh:declare [ sh:prefix \"ex\" ; sh:namespace \"http://example.org/\"^^xsd:anyURI ]\n    ] ;\n    sh:select \"\"\"\n      SELECT $this (ex:age AS ?path) (?age AS ?value)\n      WHERE {\n        $this ex:age ?age .\n        FILTER (?age < 0)\n      }\n    \"\"\" ;\n    sh:message \"Age must be non-negative (found {?value})\" ;\n  ] .",
+  "inference": "none"
+}
+```
 
-conforms, results_graph, results_text = validate(
-    data_graph,
-    shacl_graph=shapes_graph,
-    advanced=True,   # for SHACL Advanced Features (sh:rule, custom targets, functions)
-)
+Expected observation:
 
-print(conforms)
-print(results_text)
+```
+conforms: False
+violations: 1
 ```
 
 > Verified with pyshacl 0.31.0 / rdflib 7.6.0: plain `sh:sparql` constraint
-> components work **without** `advanced=True` (it returned the same 2 violations in
-> both modes). `advanced=True` only enables SHACL Advanced Features — SPARQL-based
-> rules (`sh:rule`), custom targets (`sh:target` + `sh:select`), and
-> `sh:SPARQLFunction`. Keep it on if you mix those in.
+> components work even without SHACL Advanced Features; the engine keeps
+> `advanced=True` on so SPARQL-based rules (`sh:rule`), custom targets
+> (`sh:target` + `sh:select`), and `sh:SPARQLFunction` are also available.
 
 ## Worked Example: Wolf, Goat & Cabbage
 
@@ -247,3 +250,19 @@ Breaking the first move (carry the wolf instead of the goat at `ex:s1`) yields
 `ex:LegalMoveShape` (the wolf moved while it was not on the farmer's side) and
 `ex:SafeStateShape` (goat + cabbage left alone). Both `sh:sparql` constraints fire
 without `advanced=True`.
+
+## Reasoning patterns (formal_reason)
+
+Use these with the `formal_reason` FSM route (pySHACL + optional inference + optional SPARQL `query`).
+
+### Proof by refutation
+
+To prove a claim holds, encode its **negation** as a violating `sh:sparql` shape (the SELECT must match nodes where the claim fails). `conforms: true` with non-zero focus nodes means the claim is consistent with the facts. `conforms: false` means the refutation shape found a counterexample.
+
+### Reading entailed triples
+
+Set `inference` to `rdfs` or `owlrl` and `return_derived: true`. The observation returns a `derived_triples` Turtle delta — triples added by the reasoner beyond your `facts_ttl` + `ontology_ttl`. Use this to see what follows from your ontology before asserting it in the user reply.
+
+### SPARQL on your graph
+
+Set `query` to a SELECT/ASK/CONSTRUCT against the graph you authored in `facts_ttl`/`ontology_ttl` (expanded after inference when `inference` is set). Use `memory_query` for the project's LightRAG knowledge graph, not `query`.
