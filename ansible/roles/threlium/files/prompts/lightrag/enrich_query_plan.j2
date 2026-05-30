@@ -36,5 +36,12 @@ Subject: {{ msg.get('Subject', '') }}
 
 Incoming message (canonical):
 {{ incoming_user_message }}
+{% if subtasks %}
+--- planned subtasks (the agent will work through these) ---
+{%- for st in subtasks %}
+- {{ st }}
+{%- endfor %}
 
+Formulate the query so it also surfaces context useful for these subtasks.
+{% endif %}
 Reply with ONLY the question text to send to the graph.

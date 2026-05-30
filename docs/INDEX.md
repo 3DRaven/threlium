@@ -509,7 +509,7 @@ finally:
 
 Шаблоны под `prompts/lightrag/` — единственное место, где оператор правит тексты внутренних промптов LightRAG: код Threlium их не сшивает, лишь подменяет.
 
-**Enrich → LightRAG**: один вызов LLM формулирует запрос к графу (`lightrag/enrich_query_plan.j2` → LiteLLM), затем `lightrag/enrich_aquery_user.j2` собирает **user**-вопрос для `rag.aquery`, `system_prompt` = `lightrag/rag_response.j2` (soft-приоритет текущего треда и `From:` memory-mailbox'ов). Ответ графа оборачивается в JSON envelope и становится отдельной MIME-частью `<graph-answer>` в `multipart/mixed` сообщении (см. [`states/enrich.py`](../ansible/roles/threlium/files/scripts/threlium/states/enrich.py), [§7.5](#75-query-call-always-on), [§7.6](#76-per-thread-scoping-soft-через-маркеры)). Контекст треда и memory-записи рендерятся через `lightrag/mail_context.j2` в отдельные части (`<unified-mail-context>`, `<thread-memory>`, `<global-memory>`). Подсказки к обвязке `aquery` — ENV `THRELIUM_LIGHTRAG_AQUERY_HINTS` в шаблоне `enrich_aquery_user.j2`.
+**Enrich → LightRAG**: сначала формируется seed-план задач (`lightrag/enrich_task_plan.j2` → LiteLLM → `<task-init>`/`<task-state>`) — **до** обращения к графу; тексты всех подзадач ledger подмешиваются в графовый запрос. Затем один вызов LLM формулирует запрос к графу (`lightrag/enrich_query_plan.j2` → LiteLLM), затем `lightrag/enrich_aquery_user.j2` собирает **user**-вопрос для `rag.aquery` (= сформулированный вопрос + перечень подзадач), `system_prompt` = `lightrag/rag_response.j2` (soft-приоритет текущего треда и `From:` memory-mailbox'ов). Ответ графа оборачивается в JSON envelope и становится отдельной MIME-частью `<graph-answer>` в `multipart/mixed` сообщении (см. [`states/enrich.py`](../ansible/roles/threlium/files/scripts/threlium/states/enrich.py), [§7.5](#75-query-call-always-on), [§7.6](#76-per-thread-scoping-soft-через-маркеры)). Контекст треда и memory-записи рендерятся через `lightrag/mail_context.j2` в отдельные части (`<unified-mail-context>`, `<thread-memory>`, `<global-memory>`). Подсказки к обвязке `aquery` — ENV `THRELIUM_LIGHTRAG_AQUERY_HINTS` в шаблоне `enrich_aquery_user.j2`.
 
 ---
 
@@ -602,17 +602,22 @@ Mailfilter делает `notmuch insert` → файл в `stages/<stage>/Maildir
 ```python
 ctx = build_unified_email_messages(settings=config, leaf_inner=inner, thread_id=tid)
 user_message_text = render_prompt("lightrag/enrich_incoming_user_text.j2", incoming=msg).strip()
+# План задач формируется ДО графа; его подзадачи подмешиваются в запрос.
+task_parts, combined_ledger = _build_task_parts(config=config, inner=inner, user_message_text=user_message_text)
+subtask_texts = [s.text.value for s in combined_ledger.subtasks]
 plan_prompt = render_prompt(
     "lightrag/enrich_query_plan.j2",
     incoming_user_message=user_message_text,
     scope=f"thread:{tid}",
     unified_messages=ctx.all_messages,
+    subtasks=subtask_texts,
 )
 formulated = (await enrich_llm_plan(cfg, plan_prompt)).strip()
 aquery_question = render_prompt(
     "lightrag/enrich_aquery_user.j2",
     formulated_query=formulated,
     extra_instructions=cfg.lightrag.aquery_hints,
+    subtasks=subtask_texts,
 ).strip()
 raw_result = await rag.aquery(aquery_question, param=QueryParam(...), system_prompt=...)
 envelope = _build_lightrag_envelope(raw_result=raw_result, ...)
@@ -648,7 +653,7 @@ enriched = build_enriched_multipart(msg, user_message_text=..., graph_answer=res
 
 1. **Insert** ([§5b.3](#5b3-цикл-индексации)): в строку для `ainsert` попадает синтетический RFC822: **оболочка** — `EmailMessage` + `policy.default` (копия выбранных заголовков из settled письма + `X-Threlium-Thread-Id`); **тело** — `render_prompt("lightrag/ingest_body.j2", …)`. Кастомный `chunking_func` повторяет thread id и заголовки в префиксе каждого чанка — стабильный сигнал для entity extraction **без** маркеров в wire-теле memory→ingress.
 
-2. **Query** (`enrich`): один LLM формулирует retrieval-вопрос; `lightrag/rag_response.j2` задаёт `system_prompt` для `aquery` и **мягко** приоритизирует текущий `thread:{tid}` и письма с `From:` на `thread_memory@` / `global_memory@` (см. текст шаблона), не отключая cross-thread ассоциации shared-графа.
+2. **Query** (`enrich`): один LLM формулирует retrieval-вопрос (с учётом seed-плана задач, сформированного ранее); итоговый `aquery_question` = вопрос + перечень подзадач ledger; `lightrag/rag_response.j2` задаёт `system_prompt` для `aquery` и **мягко** приоритизирует текущий `thread:{tid}` и письма с `From:` на `thread_memory@` / `global_memory@` (см. текст шаблона), не отключая cross-thread ассоциации shared-графа.
 
 ```python
 system_prompt = render_prompt("lightrag/rag_response.j2", scope=f"thread:{tid}")

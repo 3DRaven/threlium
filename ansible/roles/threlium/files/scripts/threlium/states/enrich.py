@@ -239,8 +239,11 @@ def _build_task_parts(
     config: ThreliumSettings,
     inner: NotmuchMessageIdInner,
     user_message_text: str,
-) -> list[tuple[EnrichContentId, str]]:
+) -> tuple[list[tuple[EnrichContentId, str]], TaskLedger]:
     """Seed-набор подзадач (``<task-init>``) + детерминированный ``<task-state>``.
+
+    Возвращает MIME-части и итоговый (``combined``) ledger: его тексты подзадач
+    подмешиваются в графовый запрос LightRAG (формируются ДО сбора контекста).
 
     Fail-open: ошибка LLM / мусор → пустой seed, ledger как есть (gate не блокирует
     пустой ledger). ensure-exists в reduce гарантирует, что повторный enrich не сбрасывает
@@ -299,7 +302,7 @@ def _build_task_parts(
         existing=len(existing_ledger.subtasks),
         total=len(combined.subtasks),
     )
-    return parts
+    return parts, combined
 
 
 def _render_mail_context(
@@ -381,6 +384,7 @@ async def _enrich_async(
     rag_correlation: dict[str, str] | None,
     mckp_capacity: int,
     mckp_priorities: dict[EnrichPartId, float],
+    subtask_texts: list[str],
 ) -> EnrichResult:
     _plan_recent_n = cfg.enrich.plan_recent_n
     _recent_msgs = ctx.all_messages[-_plan_recent_n:] if ctx.all_messages else []
@@ -399,6 +403,7 @@ async def _enrich_async(
         scope=scope,
         recent_messages=_recent_msgs,
         subject_skeleton=_subject_skeleton,
+        subtasks=subtask_texts,
     )
     plan_prompt = trim_context_text(plan_prompt, mckp_capacity)
     formulated = (await _enrich_llm_plan(cfg, plan_prompt)).strip()
@@ -410,6 +415,7 @@ async def _enrich_async(
         PromptPath.LIGHTRAG_ENRICH_AQUERY_USER,
         formulated_query=formulated,
         extra_instructions=extra_instructions,
+        subtasks=subtask_texts,
     ).strip()
     if not aquery_question:
         raise RuntimeError("enrich: empty aquery question after template render")
@@ -770,6 +776,19 @@ def main(
         EnrichPartId.THREAD_MEMORY: config.enrich.priority_thread_mem,
         EnrichPartId.GLOBAL_MEMORY: config.enrich.priority_global_mem,
     }
+
+    # План задач формируется ДО сбора контекста LightRAG: тексты всех подзадач ledger
+    # подмешиваются в графовый запрос (помимо сформулированного LLM вопроса).
+    task_parts: list[tuple[EnrichContentId, str]] = []
+    subtask_texts: list[str] = []
+    if inner is not None:
+        task_parts, combined_ledger = _build_task_parts(
+            config=config,
+            inner=inner,
+            user_message_text=user_message_text,
+        )
+        subtask_texts = [s.text.value for s in combined_ledger.subtasks]
+
     result = asyncio.run(
         _enrich_async(
             cfg=config,
@@ -779,19 +798,12 @@ def main(
             rag_correlation=rag_correlation,
             mckp_capacity=mckp_capacity,
             mckp_priorities=mckp_priorities,
+            subtask_texts=subtask_texts,
         )
     )
 
     extra_parts = _collect_extra_parts(inner, budget_extra) if inner is not None else []
-
-    if inner is not None:
-        extra_parts.extend(
-            _build_task_parts(
-                config=config,
-                inner=inner,
-                user_message_text=user_message_text,
-            )
-        )
+    extra_parts.extend(task_parts)
 
     enriched = build_enriched_multipart(
         msg,

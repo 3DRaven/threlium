@@ -14,7 +14,10 @@ its `content_id` and its `status`.
 ## Lifecycle
 
 1. **enrich seeds it.** When a thread starts, `enrich` decomposes the user request
-   into an initial set of subtasks (status `pending`). They appear in `<task_state>`.
+   into an initial set of subtasks (status `pending`) **before** it queries the
+   knowledge graph — the subtask texts are folded into the LightRAG retrieval query so
+   the gathered context covers the whole plan, not just the question. They appear in
+   `<task_state>`.
 2. **You refine and progress it** with `tasks_upsert`: add concrete subtasks, mark the
    one you start as `in_progress`, mark finished ones `done`, drop dead ones `cancelled`.
 3. **`response_finalize` is hard-gated on it (fail-closed).** It will refuse to send the

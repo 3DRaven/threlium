@@ -2,6 +2,13 @@
     This Jinja comment is stripped and never sent to the model.
     ADR 0001: question text for rag.aquery after planning LLM step. -#}
 {{ formulated_query }}
+{%- if subtasks %}
+
+--- planned subtasks (retrieve context for each) ---
+{%- for st in subtasks %}
+- {{ st }}
+{%- endfor %}
+{%- endif %}
 {%- if extra_instructions %}
 
 --- additional retrieval hints ---
