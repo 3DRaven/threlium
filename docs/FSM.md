@@ -415,20 +415,16 @@ def emit_transition_preserving_payload(
 | `<thread-memory>` | `lightrag/mail_context.j2` по `ctx.thread_memory_msgs` | Только `to:thread_memory@localhost` текущего треда. |
 | `<global-memory>` | `lightrag/mail_context.j2` по `ctx.global_memory_msgs` | `to:global_memory@localhost` из ВСЕХ тредов. |
 | `<response-state>` | Пересчёт из CRDT (`_collect_extra_parts`) | Если буфер не пуст. |
-| `<plan-state>` | Carry-over из e_prev (`_collect_extra_parts`) | Если был `response_observe`. |
 
 Дублирование `<thread-memory>` / `<global-memory>` с содержимым `<unified-mail-context>` — **намеренное**: явные маркеры повышают усвоение LLM при рассуждениях; `<global-memory>` содержит записи из **всех** тредов, не только текущего.
 
 #### После `enrich_fast` (без reflect): до 9 частей
 
-Все части из e_prev (от последнего `enrich`) + splice (`splice_e_prev_with_incoming_relay`):
-- `<response-state>` — пересчёт из CRDT (**replace** единственной части).
-- Relay-семейства `<observation-note>` / `<plan-state>` / `<memory-note>` / `<unified-delta>` — **аддитивно**: каждый хоп вспомогательной стадии (`formal_reason`, `memory_query`, `response_observe`, `thread/global_memory`) приходит **отдельной** MIME-частью с уникальным `Content-ID` `<{family}@{inner-mid}>` (VO `EnrichContentId.from_relay`). enrich_fast (stage-agnostic) дописывает её в хвост, не затирая предыдущие. Повторные вызовы одной стадии (например 5× `formal_reason`) накапливаются, а не перезаписываются. Дедуп — только по полному совпадению `Content-ID`.
-- `<unified-delta>` — собирается **самим** `enrich_fast` (не приходит во входящем письме): хронология unified-role писем (`lightrag/mail_context.j2`), появившихся с прошлого `To: reasoning` (E_prev) до текущего листа. Граница обхода IRT — ближайший `To: reasoning` (в multi-cycle = выход прошлого `enrich_fast`), поэтому каждый быстрый цикл несёт только новые хопы (например вход `reasoning → formal_reason` с полным `facts_ttl`), MID-дедуп не нужен, прошлые дельты переносятся как части E_prev. Stage-agnostic: фильтр по роли (`to_stage_in_unified_role`), а не по списку стадий — устойчив к числу/набору стадий перед `enrich_fast`. Сбор — `collect_unified_delta_msgs` / `render_unified_delta_text` в `threlium/enrich_context.py`.
+Все части из e_prev (от последнего `enrich`) + splice (`splice_e_prev_with_history`):
+- `<response-state>` / `<task-state>` — пересчёт из CRDT (**replace** единственной части).
+- `<history>`-части окна-дельты — **аддитивно**: всё содержательное (`message_has_history`), появившееся с прошлого `To: reasoning` (E_prev) до текущего листа, едет **сырыми** `<history>`-частями с контент-адресным `Content-ID` `<{sha256(body)}@history>`. `enrich_fast` (stage-agnostic) собирает их по окну IRT (`collect_unified_delta_msgs`), штампует `X-Threlium-Origin` из конвертного `From:` и дописывает в хвост. Дедуп — по равенству `EnrichContentId` (= по телу): relay-копия схлопывается с оригиналом, без `To:`-логики. Граница окна — ближайший `To: reasoning` (в multi-cycle = выход прошлого `enrich_fast`), прошлые дельты уже лежат частями E_prev.
 
-`reasoning` группирует relay-части по семейству (`EnrichContentId.family`, префикс до первого `@`) и рендерит списком внутри тегов `<observation>` / `<plan_state>` / `<memory_note>` / `<conversation_delta>`; бюджет на семейство — tail-keep новейших (`context_max_chars`). Бэк-компат: канонические `<observation-note>` без суффикса распознаются тем же семейством.
-
-`<memory-note>` **не дубль** в `enrich_fast` — `thread/global` memory-контексты stale; `<unified-mail-context>` (baseline от полного `enrich`) дополняется свежими хопами через `<unified-delta>`.
+`reasoning` рендерит `<history>`-части единым хронологическим потоком в `<conversation_delta>`, каждая запись подписана `[from: origin]` (`X-Threlium-Origin`); семантику стадии модель знает из tool spec. Видов-таксономии по стадии (`<observation>`/`<memory_note>`/`<plan_state>`) больше нет. Бюджет — tail-keep новейших (`context_max_chars`).
 
 #### Секционные маркеры
 
@@ -464,15 +460,18 @@ To: global_memory@localhost
 Response buffer (3 chunks, ~1200 chars):
 ...
 
-<plan-state>
-Assessment: response is 60% complete...
+<conversation_delta>
+[from: response_observe] Assessment: response is 60% complete...
+[from: formal_reason] SHACL validation passed; inferred ...
 ```
+
+Полная архитектура наполнения контекста (CID `history`/`system`, score/origin, дедуп, модель «callee владеет историей», LightRAG-индексация) — [`CONTEXT_CONTRACT.md`](CONTEXT_CONTRACT.md).
 
 Связанная модель: асинхронный **индексатор** на выделенном asyncio-loop внутри `threlium-engine` (`schedule_index_pending` после settle) и **enrich** с `rag.aquery` на том же инстансе — [`ARCHITECTURE.md` §5.1](ARCHITECTURE.md#51-разделение-lightrag-на-два-контура) + [`INDEX.md` §5b](INDEX.md#5b-lightrag-worker) / [§7](INDEX.md#7-enrich-notmuch-context--query--lightrag).
 
 ### 5.3. Контракт тела при HITL-ветке (краткий)
 
-В ветке `cli_intent → cli_hitl_out → egress_router → egress_<chan>` тело — пользователе-ориентированный вопрос (plain text с нормализованными спецсимволами канала); в ветке `cli_resume → cli_exec → ingress` — `observation` (stdout/stderr/exit-code исполненной команды, обрезанные до лимита) в виде plain-body. Управление фреймами, правила `ingress_router`-детекции HITL-возвратов (IRT-обход до `From: cli_hitl_out`) — [SUBAGENT_TABLE.md](SUBAGENT_TABLE.md).
+В ветке `cli_intent → cli_hitl_out → egress_router → egress_<chan>` тело едет как `<system>` (вопрос пользователю; `cli_hitl_out` дополнительно кладёт `<history>`-копию «что спросили»); в ветке `cli_resume → cli_exec → ingress` — `observation` (stdout/stderr/exit-code, обрезанные до лимита) как `<system>` (payload для ingress) **и** `<history>` (результат tool в память, origin=`cli_exec`). Управление фреймами, правила `ingress_router`-детекции HITL-возвратов (IRT-обход до `From: cli_hitl_out`) — [SUBAGENT_TABLE.md](SUBAGENT_TABLE.md).
 
 ---
 

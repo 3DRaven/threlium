@@ -382,7 +382,7 @@ notmuch search id:<message-id>
 - `NOT tag:lightrag_indexed` — pending для индексации.
 - `NOT tag:lightrag_skipped` — осознанно пропущенные drain'ом (render-fail / selector-drift, см. [§5b.3](#5b3-цикл-индексации)); не вечный retry.
 - `NOT tag:context_summarized` — оригиналы, схлопнутые `summarize_context`, в граф не идут (их смысл уже в `summarize_memory@`).
-- `(to:<indexable> OR …)` — **whitelist content-indexable стадий**, симметрично enrich. Источник — общий с enrich базис `CONTEXT_ROLE_BY_TO_STAGE` (роль ≠ SERVICE) плюс memory-ящики `thread_memory` / `global_memory`: [`context_budget.content_indexable_stages()`](../ansible/roles/threlium/files/scripts/threlium/context_budget.py). SERVICE-переходы (`reflect`, `enrich`, `enrich_fast`, `summarize_context`, …), `reasoning`, egress-каналы и subagent-границы в граф **не** попадают. Принципиальное отличие потребителей: enrich собирает контекст обходом IRT-цепочки треда (`to_stage_in_unified_role`, memory — отдельные бакеты), drain сканирует union-индекс глобально (memory индексируется напрямую), см. [§7](#7-enrich-notmuch-context--query--lightrag).
+- **Содержательность = наличие `<history>`-части** (`message_has_history`), а не `To:`-стадия. notmuch не индексирует MIME-части по Content-ID, поэтому селектор даёт лишь tag-негативы (дешёвый pre-filter), а финальный предикат `message_has_history` применяется load-time в [`runners/lightrag/_drain.py`](../ansible/roles/threlium/files/scripts/threlium/runners/lightrag/_drain.py) (письма без history — только `<system>`/control — помечаются `+lightrag_skipped`). Это тот же предикат, что у enrich/enrich_fast: единый контракт, без `CONTEXT_ROLE_BY_TO_STAGE`/SERVICE-таблицы. Отличие потребителей: enrich собирает `<history>` обходом IRT-цепочки треда (memory — отдельные бакеты), drain сканирует union-индекс глобально, см. [§7](#7-enrich-notmuch-context--query--lightrag).
 
 ### 5b.3 Цикл индексации
 
@@ -409,7 +409,7 @@ loop iteration in 1..MAX_ITERATIONS:
 
 - **Стабильные `file_paths` в графе**: к моменту `ainsert` файл уже в `cur/<id>:2,S` (это и есть «settled»-критерий в селекторе). LightRAG хранит `file_paths` в `entity.file_paths` / `relation.file_paths` (для citation) — теперь эти ссылки указывают на финальное стабильное расположение.
 - **Защита от индексации полу-обработанных сообщений**: если stage worker упал между `notmuch insert` (из fdm) и `nm_settle()`, недо-обработанное письмо в `new/<id>+unread` НЕ попадает в граф — селектор `NOT tag:unread` его отсекает. Settle-cycle защищает граф как side-effect.
-- **Defensive skip + `lightrag_skipped`**: основной отбор делает notmuch-селектор ([§5b.2](#5b2-селектор-pending-сообщений)). После парсинга drain дополнительно проверяет `content_indexable_to_stage(to)`; если письмо всё же дошло не-индексируемым (рассинхрон селектора и политики — `selector_drift`) либо рендер упал (`render_failed`), письмо помечается `+lightrag_skipped` (`LightragDrainSkipReason` в логах) и `ainsert` не вызывается. Тег исключает повторный pending — нет вечного retry. `lightrag_indexed` и `lightrag_skipped` взаимоисключающие.
+- **Load-time предикат + `lightrag_skipped`**: notmuch-селектор ([§5b.2](#5b2-селектор-pending-сообщений)) даёт лишь tag-негативы. После парсинга drain применяет `message_has_history(msg)`; письма без `<history>`-части (только `<system>`/control) либо с упавшим рендером (`render_failed`) помечаются `+lightrag_skipped` (`LightragDrainSkipReason` в логах) и `ainsert` не вызывается. Тег исключает повторный pending — нет вечного retry. `lightrag_indexed` и `lightrag_skipped` взаимоисключающие.
 - **Не трогает Maildir-файлы вообще**: никаких `to_maildir_flags()`/`from_maildir_flags()` — это монополия stage worker'ов на их собственные Maildir'ы ([I3](#2-invariants)). Индексатор работает только с notmuch-query + `rag.ainsert` + tag commit `+lightrag_indexed`.
 - **Один writer в OS-процессе**: все `ainsert` идут на одном asyncio-loop внутри `threlium-engine` (см. [I2](#2-invariants)); параллельных **процессов**-писателей в `working_dir/` нет.
 - **Амортизация**: внутри `INSERT_BATCH` LightRAG делает dedup-on-insert в RAM до flush'а на диск — повторяющиеся сущности из разных писем сливаются за один проход без дополнительного round-trip.
@@ -971,6 +971,7 @@ python -c "import lightrag; from importlib.metadata import version; print(versio
 ### 12.2 Кросс-ссылки
 
 - [`FSM.md`](FSM.md) — граф состояний и стадий FSM, контракты переходов, инвариант «стадия не индексирует архив».
+- [`CONTEXT_CONTRACT.md`](CONTEXT_CONTRACT.md) — **источник истины** по наполнению контекста: CID `<hash@history>` / `<hash@system>`, score/origin, дедуп, сбор `enrich`/`enrich_fast`, презентация reasoning, LightRAG-индексация, модель «callee владеет историей».
 - [`MESSAGES.md`](MESSAGES.md) — wire-формат писем, заголовки `X-Threlium-*`, тегирование как state-маркер индексации.
 - [`ORCHESTRATION.md`](ORCHESTRATION.md) — systemd-обвязка, оркестрация stage worker'ов и долгоживущего `threlium-engine` (включая RAG-loop).
 - [`SUBAGENT_TABLE.md`](SUBAGENT_TABLE.md) — матрица делегирования и роутинг ingress, контракт HITL и маркеры `subagent_intent` / `subagent_end`.
