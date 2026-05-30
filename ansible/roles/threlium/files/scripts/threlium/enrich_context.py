@@ -8,13 +8,14 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 from threlium import nm
-from threlium.context_budget import SERVICE_TRANSITION_STAGES, to_stage_in_unified_role
-from threlium.irt_chain import IrtAncestorSnapshot
 from threlium.logutil import logger
-from threlium.prompts import render_prompt
 from threlium.settings import ThreliumSettings
 from threlium.thread_context_filter import iter_irt_ancestors_filtered
-from threlium.mime_reform import email_message_from_path
+from threlium.mime_reform import (
+    email_message_from_path,
+    iter_history_parts,
+    message_has_history,
+)
 from threlium.types import (
     FsmStage,
     MailHeaderName,
@@ -22,7 +23,6 @@ from threlium.types import (
     NotmuchQueryConnective,
     NotmuchQueryField,
     NotmuchTag,
-    PromptPath,
 )
 
 log = logger.bind(stage="enrich_context")
@@ -113,97 +113,82 @@ def build_unified_email_messages(
         str(p.resolve()) for p in itertools.chain(tm_paths, gm_paths)
     }
 
-    # Один проход лист→корень по снимкам IRT: роль и дедуп считаются на снимках
-    # (есть To и inner Message-ID), summarized — по тегам снимка, поэтому
-    # email_message_from_path вызывается только для писем, реально уходящих в
-    # unified (а не для всего хвоста с последующим отбросом). Порядок неважен —
-    # итог пересортируется по дате ниже.
+    # Проход по снимкам IRT **старые→новые** (tail_snaps идёт лист→корень = новые→старые,
+    # поэтому reversed). После унификации роль письма — наличие ``<history>``-части
+    # (:func:`message_has_history`), а не To-стадия. summarized отбрасываем по тегам снимка;
+    # memory-письма исключаем (отдельные бакеты).
     #
-    # Ближайший к листу To: ingress — текущий ход пользователя, дублирующий
-    # <user-message> (релей ingress→enrich рендерится в user-message-часть);
-    # пропускаем его ровно один раз, прошлые ходы (старшие To: ingress) остаются.
+    # Дедуп по контенту (``EnrichContentId`` ``<{hash}@history>``), а не по Message-ID: письмо
+    # берётся, только если несёт хотя бы одну **новую** history-часть. Так relay-блоб
+    # ``enrich_fast → reasoning`` (копии уже собранных оригиналов) схлопывается — все его CID
+    # уже видены, письмо отбрасывается, а каноничные оригиналы (с корректным From: origin)
+    # остаются. Старые-первыми ⇒ предпочитаем оригинал его более поздней relay-копии.
+    #
+    # Лист (``leaf_inner``) — текущий ход enrich; его ``<history>`` дублирует <user-message>,
+    # поэтому пропускаем ровно его. Прошлые ходы (старшие ingress→enrich с history) остаются.
     _summarized_tag = NotmuchTag.CONTEXT_SUMMARIZED.value
-    by_mid: dict[str, IrtAncestorSnapshot] = {}
-    current_user_skipped = False
-    for snap in tail_snaps:
+    seen_cids: set[str] = set()
+    seen_mids: set[str] = set()
+    kept: list[EmailMessage] = []
+    for snap in reversed(tail_snaps):
         if _summarized_tag in snap.tags:
             continue
-        stage = snap.to_fsm_stage()
-        if not to_stage_in_unified_role(stage):
-            continue
-        if not current_user_skipped and stage is FsmStage.INGRESS:
-            current_user_skipped = True
+        if snap.message_id_inner.value == leaf_inner.value:
             continue
         if str(snap.path.resolve()) in memory_path_keys:
             continue
-        by_mid.setdefault(snap.message_id_inner.value, snap)
-
-    loaded: list[EmailMessage] = []
-    for snap in by_mid.values():
+        if snap.message_id_inner.value in seen_mids:
+            continue
+        seen_mids.add(snap.message_id_inner.value)
         try:
-            loaded.append(email_message_from_path(snap.path))
+            m = email_message_from_path(snap.path)
         except OSError as exc:
             log.warning("unified_load_path_skipped", path=str(snap.path), exc_msg=str(exc))
             continue
+        cids = {cid.value for cid, _part in iter_history_parts(m)}
+        if not cids:
+            continue
+        if cids <= seen_cids:
+            continue
+        seen_cids |= cids
+        kept.append(m)
 
     return UnifiedEmailContext(
-        all_messages=_sort_email_messages_oldest_first(loaded),
+        all_messages=_sort_email_messages_oldest_first(kept),
         thread_memory_msgs=_sort_email_messages_oldest_first(_load_paths(tm_paths)),
         global_memory_msgs=_sort_email_messages_oldest_first(_load_paths(gm_paths)),
     )
 
 
 def collect_unified_delta_msgs(leaf_inner: NotmuchMessageIdInner) -> list[EmailMessage]:
-    """unified-role письма, появившиеся с прошлого ``To: reasoning`` (E_prev) до листа.
+    """Содержательные письма, появившиеся с прошлого ``To: reasoning`` (E_prev) до листа.
 
     Обход IRT лист→корень (с изоляцией субагентов через
     :func:`iter_irt_ancestors_filtered`) обрывается на ближайшем ``To: reasoning`` —
     это E_prev (в multi-cycle — выход прошлого ``enrich_fast``). Всё строго новее этой
-    границы и в unified-роли (:func:`to_stage_in_unified_role`, без
-    ``tag:context_summarized``) идёт в дельту. По структуре IRT там нет «старых»
+    границы, несущее ``<history>``-часть (:func:`message_has_history`, без
+    ``tag:context_summarized``), идёт в дельту. По структуре IRT там нет «старых»
     писем, поэтому MID-дедуп не нужен; прошлые циклы отрезаны watermark'ом.
 
-    Stage-agnostic: не зависит от того, сколько и какие стадии стоят перед
-    ``enrich_fast`` — фильтр по роли, а не по конкретным стадиям. Current-user-skip
-    из :func:`build_unified_email_messages` здесь намеренно не применяется: дельта не
-    пересобирает ``<user-message>``, поэтому ``ingress`` (USER_INPUT) уместен в ней.
+    Stage-agnostic: роль письма — наличие ``<history>``, а не его To-стадия; не зависит
+    от того, сколько и какие стадии стоят перед ``enrich_fast``. Возвращает письма;
+    извлечение и дедуп ``<history>``-частей выполняет сам ``enrich_fast``.
     """
     summarized = NotmuchTag.CONTEXT_SUMMARIZED.value
-    snaps: list[IrtAncestorSnapshot] = []
+    loaded: list[EmailMessage] = []
     for snap in iter_irt_ancestors_filtered(leaf_inner):
         if snap.is_addressed_to_fsm_stage(FsmStage.REASONING):
             break
         if summarized in snap.tags:
             continue
-        if not to_stage_in_unified_role(snap.to_fsm_stage()):
-            continue
-        snaps.append(snap)
-
-    loaded: list[EmailMessage] = []
-    for snap in snaps:
         try:
-            loaded.append(email_message_from_path(snap.path))
+            m = email_message_from_path(snap.path)
         except OSError as exc:
             log.warning(
                 "unified_delta_load_path_skipped", path=str(snap.path), exc_msg=str(exc)
             )
             continue
+        if not message_has_history(m):
+            continue
+        loaded.append(m)
     return _sort_email_messages_oldest_first(loaded)
-
-
-def render_unified_delta_text(
-    msgs: list[EmailMessage], *, settings: ThreliumSettings
-) -> str:
-    """Рендер дельты через ``lightrag/mail_context.j2`` (полное тело), тримминг по лимиту."""
-    if not msgs:
-        return ""
-    raw = render_prompt(
-        PromptPath.LIGHTRAG_MAIL_CONTEXT,
-        messages=msgs,
-        tier_assignments={},
-        tier_assignments_types={},
-        preview_chars=settings.enrich.tier_preview_chars,
-        total_messages=len(msgs),
-        service_stage_mailboxes=[s.rfc822_mailbox for s in SERVICE_TRANSITION_STAGES],
-    ).strip()
-    return trim_context_text(raw, settings.enrich.context_max_chars)

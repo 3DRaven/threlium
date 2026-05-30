@@ -29,16 +29,6 @@ From: {{ from_hdr or "(none)" }}
 {{ mail_context }}
 </conversation_history>
 {% endif %}
-{% if unified_deltas %}
-
-<conversation_delta>
-{% for block in unified_deltas %}{{ block }}{% if not loop.last %}
-
----
-
-{% endif %}{% endfor %}
-</conversation_delta>
-{% endif %}
 {% if thread_memory %}
 
 <thread_memory>
@@ -63,33 +53,17 @@ From: {{ from_hdr or "(none)" }}
 {{ task_state }}
 </task_state>
 {% endif %}
-{% if response_observations %}
+{% if history %}
 
-<response_observation>
-{% for note in response_observations %}{{ note }}{% if not loop.last %}
-
----
-
-{% endif %}{% endfor %}
-</response_observation>
-{% endif %}
-{% if memory_notes %}
-
-<memory_note>
-{% for note in memory_notes %}{{ note }}{% if not loop.last %}
+{#- Chronological stream of accumulated step results since the last reasoning turn
+    (the fast-cycle delta). Each entry is annotated with its origin stage; the tool
+    spec describes the semantics of every stage, so no per-kind XML tags are needed. -#}
+<conversation_delta>
+{% for entry in history %}[from: {{ entry.origin }}]
+{{ entry.text }}{% if not loop.last %}
 
 ---
 
 {% endif %}{% endfor %}
-</memory_note>
-{% endif %}
-{% if observation_notes %}
-
-<observation>
-{% for note in observation_notes %}{{ note }}{% if not loop.last %}
-
----
-
-{% endif %}{% endfor %}
-</observation>
+</conversation_delta>
 {% endif %}

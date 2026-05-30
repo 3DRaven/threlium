@@ -13,7 +13,12 @@ from typing import Self
 import msgspec
 from litellm.types.utils import ChatCompletionMessageToolCall, Message, ModelResponse
 
-from threlium.mime_reform import EnrichPartId, extract_part_by_content_id, group_relay_notes_by_family
+from threlium.mime_reform import (
+    EnrichPartId,
+    extract_part_by_content_id,
+    history_part_text,
+    iter_history_parts,
+)
 
 from ._core import _OptionalStripEmpty, _RequiredNonEmpty
 from .fsm_strings import (
@@ -103,24 +108,38 @@ class ReasoningIncomingEnvelope(msgspec.Struct, frozen=True, kw_only=True):
         )
 
 
-_RELAY_FAMILY_ORDER: tuple[EnrichPartId, ...] = (
-    EnrichPartId.RESPONSE_OBSERVATION,
-    EnrichPartId.MEMORY_NOTE,
-    EnrichPartId.OBSERVATION_NOTE,
-    EnrichPartId.UNIFIED_DELTA,
-)
+class ReasoningHistoryEntry(msgspec.Struct, frozen=True, kw_only=True):
+    """Одна ``<history>``-часть для хронологического стрима в ``reasoning/user.j2``.
+
+    После унификации виды (observation/memory/plan) в CID не кодируются: семантику
+    несёт ``origin`` (стадия-источник из ``X-Threlium-Origin``, штампует enrich_fast)
+    плюс tool spec, по которому модель знает каждую стадию. Дедуп по контент-адресному
+    CID уже выполнен в splice — здесь только текст + метка источника.
+    """
+
+    origin: str
+    text: str
 
 
-def _budget_relay_notes(notes: list[str], max_chars: int) -> list[str]:
-    if max_chars <= 0 or not notes:
-        return notes
-    kept: list[str] = []
+def _origin_label(part: EmailMessage) -> str:
+    """Метка источника ``<history>``-части: local-part ``X-Threlium-Origin`` или ``?``."""
+    raw = part.get(_HDR.ORIGIN.value)
+    if raw and str(raw).strip():
+        return str(raw).strip().split("@", 1)[0]
+    return "?"
+
+
+def _budget_history(entries: list[ReasoningHistoryEntry], max_chars: int) -> list[ReasoningHistoryEntry]:
+    """Урезание стрима по суммарному телу с хвоста (новейшее остаётся)."""
+    if max_chars <= 0 or not entries:
+        return entries
+    kept: list[ReasoningHistoryEntry] = []
     total = 0
-    for note in reversed(notes):
-        if kept and total + len(note) > max_chars:
+    for entry in reversed(entries):
+        if kept and total + len(entry.text) > max_chars:
             break
-        kept.append(note)
-        total += len(note)
+        kept.append(entry)
+        total += len(entry.text)
     kept.reverse()
     return kept
 
@@ -153,18 +172,17 @@ class ReasoningEnrichContext(msgspec.Struct, frozen=True, kw_only=True):
     global_memory: EnrichGlobalMemoryText | None
     response_state: ReasoningResponseStateText | None
     task_state: ReasoningTaskStateText | None
-    response_observations: tuple[str, ...]
-    memory_notes: tuple[str, ...]
-    observation_notes: tuple[str, ...]
-    unified_deltas: tuple[str, ...]
+    history: tuple[ReasoningHistoryEntry, ...]
 
     @classmethod
     def from_email(cls, msg: EmailMessage, *, max_chars: int) -> Self:
-        relay_grouped = group_relay_notes_by_family(msg)
-        relay = {
-            fam: _budget_relay_notes(relay_grouped.get(fam, []), max_chars)
-            for fam in _RELAY_FAMILY_ORDER
-        }
+        entries: list[ReasoningHistoryEntry] = []
+        for _cid, part in iter_history_parts(msg):
+            text = history_part_text(part).strip()
+            if not text:
+                continue
+            entries.append(ReasoningHistoryEntry(origin=_origin_label(part), text=text))
+        history = tuple(_budget_history(entries, max_chars))
         return cls(
             user_message=_extract_context_part_vo(
                 ReasoningUserMessageText, msg, EnrichPartId.USER_MESSAGE, max_chars
@@ -187,10 +205,7 @@ class ReasoningEnrichContext(msgspec.Struct, frozen=True, kw_only=True):
             task_state=_extract_context_part_vo(
                 ReasoningTaskStateText, msg, EnrichPartId.TASK_STATE, max_chars
             ),
-            response_observations=tuple(relay[EnrichPartId.RESPONSE_OBSERVATION]),
-            memory_notes=tuple(relay[EnrichPartId.MEMORY_NOTE]),
-            observation_notes=tuple(relay[EnrichPartId.OBSERVATION_NOTE]),
-            unified_deltas=tuple(relay[EnrichPartId.UNIFIED_DELTA]),
+            history=history,
         )
 
 
@@ -252,6 +267,7 @@ def reasoning_assistant_plain_text(msg: Message) -> ReasoningAssistantMessageTex
 
 __all__ = [
     "ReasoningEnrichContext",
+    "ReasoningHistoryEntry",
     "ReasoningIncomingEnvelope",
     "ReasoningResponseStateText",
     "ReasoningRouteDecision",

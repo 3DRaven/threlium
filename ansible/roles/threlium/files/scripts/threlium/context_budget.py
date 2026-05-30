@@ -3,6 +3,12 @@
 Level 1: MCKP (Multiple-Choice Knapsack) между бакетами — scipy.optimize.milp.
 Level 2: Per-message value scoring внутри unified_mail_context для динамического tier-assignment.
 
+После унификации history/system «содержательность» письма — наличие ``<history>``-части
+(:func:`threlium.mime_reform.message_has_history`), а не таблица ``To:``-стадий. Базовый вес
+сообщения — ``X-Threlium-Content-Score`` его ``<history>``-части (скоринг отправителя),
+потребитель домножает на recency/size. Семантику источника даёт ``X-Threlium-Origin`` /
+конвертный ``From:`` (метка ``[from: ...]``), без enum-типов и SERVICE-классификации.
+
 docs/TYPES.md: доменные enum, frozen dataclasses, typed containers.
 """
 from __future__ import annotations
@@ -14,87 +20,37 @@ from enum import StrEnum
 import numpy as np
 from scipy.optimize import LinearConstraint, Bounds, milp
 
-from threlium.mime_reform import EnrichPartId
-from threlium.types import FsmStage
+from threlium.mail_header_names import MailHeaderName
+from threlium.mime_reform import EnrichPartId, history_part_text, iter_history_parts
+from threlium.types.content_score import ThreliumContentScoreWire
 
-class ContextMessageType(StrEnum):
-    """Тип сообщения в контексте — определяет value-weight при scoring."""
-
-    USER_INPUT = "user_input"
-    AGENT_RESPONSE = "agent_response"
-    CONTEXT_SUMMARY = "context_summary"
-    TOOL_OBSERVATION = "tool_observation"
-    SYSTEM = "system"
-    SERVICE = "service"
+_HDR = MailHeaderName
 
 
-# Единая таблица: канонический ``To:`` → роль в enrich-контексте.
-#
-# Whitelist unified IRT-хвоста (:func:`message_in_unified_mail_context`) = все ключи,
-# кроме ``SERVICE``. Стадии без строки здесь не попадают в ``<unified-mail-context>``
-# (``classify_message_type`` → ``SYSTEM``).
-#
-# --- В unified (содержательное тело для LLM) ---
-#
-# ingress — ввод пользователя (мост email/matrix/telegram), ответы субагента
-#   (subagent_end→ingress), reflect, ошибки cli, наблюдения cli_exec (выход уходит
-#   с ``From: cli_exec``, но в Maildir фиксируется как письмо ``To: ingress``).
-# egress_router — итоговый текст перед наружу: response_finalize (compose) и
-#   cli_hitl_out (HITL bridge); одного блока достаточно, без egress_* и archive.
-# cli_exec — входящее задание на исполнение (payload после cli_intent); stdout/stderr
-#   смотри в следующем по IRT ``To: ingress`` от cli_exec.
-# formal_reason — payload от reasoning (SHACL/RDF-рассуждение); отчёт уходит в
-#   enrich_fast и не дублируется здесь, но входное письмо нужно в треде («проверь логику»).
-# memory_query — формулировка запроса к графу от reasoning; ответ — observation в
-#   enrich_fast, в IRT остаётся исходная постановка на ``To: memory_query``.
-# summarize_memory — итог ``summarize_context`` (сжатый хвост треда); высокий tier-score.
-#
-# --- SERVICE (явно не в unified; схлопывание в mail_context.j2) ---
-#
-# enrich — триггер цикла и монолитный MIME enrich→reasoning; контекст в отдельных
-#   Content-ID, не в IRT-хвосте.
-# enrich_fast — аддитивный relay observation/plan/memory между reasoning и вспомогательными
-#   стадиями: каждый хоп — отдельная MIME-часть с уникальным Content-ID <family@inner-mid>,
-#   накапливается в хвосте E_prev (не перезапись). reasoning группирует по семейству.
-# response_observe / response_edit / response_append — CRDT-наблюдения и правки ответа.
-# reflect — служебный переход (шаблон continue/final); смысл попадает в следующий ingress.
-# summarize_context — переполнение контекста → пакетное summarize; не история треда.
-#
-# --- Нет строки (не unified; отдельный канал или дублирует whitelist) ---
-#
-# reasoning — ``To: reasoning`` несёт multipart enrich (graph/unified/…); дублировал бы
-#   отдельные MIME-части и раздувал бы бюджет.
-# response_finalize — черновик собирается в handler; наружу идёт через egress_router
-#   (IRT egress часто на glue MID ingress, не на finalize).
-# thread_memory / global_memory — отдельные бакеты ``build_unified_email_messages``,
-#   не IRT-хвост ``all_messages``.
-# subagent_intent / subagent_end — границы субагента; результат subagent_end→ingress.
-# cli_intent / cli_resume — маршрутизация CLI; содержание — cli_exec или ingress.
-# cli_hitl_out — запрос подтверждения → egress_router (включён через egress_router).
-# egress_email / egress_telegram / egress_matrix — доставка и sent_raw; достаточно egress_router.
-# archive — audit egress; IRT-glue ответа пользователя, не для LLM-контекста.
-CONTEXT_ROLE_BY_TO_STAGE: dict[FsmStage, ContextMessageType] = {
-    FsmStage.INGRESS: ContextMessageType.USER_INPUT,
-    FsmStage.EGRESS_ROUTER: ContextMessageType.AGENT_RESPONSE,
-    FsmStage.CLI_EXEC: ContextMessageType.TOOL_OBSERVATION,
-    FsmStage.FORMAL_REASON: ContextMessageType.AGENT_RESPONSE,
-    FsmStage.MEMORY_QUERY: ContextMessageType.AGENT_RESPONSE,
-    FsmStage.SUMMARIZE_MEMORY: ContextMessageType.CONTEXT_SUMMARY,
-    FsmStage.ENRICH: ContextMessageType.SERVICE,
-    FsmStage.ENRICH_FAST: ContextMessageType.SERVICE,
-    FsmStage.RESPONSE_OBSERVE: ContextMessageType.SERVICE,
-    FsmStage.RESPONSE_EDIT: ContextMessageType.SERVICE,
-    FsmStage.RESPONSE_APPEND: ContextMessageType.SERVICE,
-    FsmStage.TASKS_UPSERT: ContextMessageType.SERVICE,
-    FsmStage.REFLECT: ContextMessageType.SERVICE,
-    FsmStage.SUMMARIZE_CONTEXT: ContextMessageType.SERVICE,
-}
+def message_content_score(msg: EmailMessage) -> float:
+    """Базовый вес = ``X-Threlium-Content-Score`` первой ``<history>``-части письма.
 
-SERVICE_TRANSITION_STAGES: frozenset[FsmStage] = frozenset(
-    stage
-    for stage, role in CONTEXT_ROLE_BY_TO_STAGE.items()
-    if role is ContextMessageType.SERVICE
-)
+    Скоринг отправителя (источник проставил базовый вес из ``settings.history.score_for``).
+    Нет части/заголовка → нейтральный вес (fallback :meth:`ThreliumContentScoreWire.as_score`).
+    """
+    for _cid, part in iter_history_parts(msg):
+        return ThreliumContentScoreWire.parse(part.get(_HDR.CONTENT_SCORE.value)).as_score()
+    return ThreliumContentScoreWire.parse(None).as_score()
+
+
+def message_origin_label(msg: EmailMessage) -> str:
+    """Метка источника для аннотации ``[from: ...]`` в mail_context.j2.
+
+    ``X-Threlium-Origin`` первой ``<history>``-части (штампует enrich_fast при сплайсе),
+    иначе local-part конвертного ``From:`` (для писем полного enrich без relay-копии).
+    """
+    for _cid, part in iter_history_parts(msg):
+        origin = part.get(_HDR.ORIGIN.value)
+        if origin and str(origin).strip():
+            return str(origin).strip().split("@", 1)[0]
+        break
+    frm = msg.get(_HDR.FROM.value) or ""
+    return frm.split("@", 1)[0].strip() or "?"
 
 
 class BucketConfigTier(StrEnum):
@@ -126,22 +82,7 @@ class ContextMessageTierAssignment:
     value: float
     assigned_tier: int
     body_chars: int
-    msg_type: ContextMessageType
-
-
-@dataclass(frozen=True)
-class ContextMessageTypeWeights:
-    """Веса типов сообщений — typed container вместо dict[str, float]."""
-
-    user_input: float
-    agent_response: float
-    context_summary: float
-    tool_observation: float
-    system: float
-    service: float
-
-    def weight_for(self, msg_type: ContextMessageType) -> float:
-        return getattr(self, msg_type.value)
+    origin: str
 
 
 def normalize_weights(raw: dict[EnrichPartId, float]) -> dict[EnrichPartId, float]:
@@ -153,127 +94,44 @@ def normalize_weights(raw: dict[EnrichPartId, float]) -> dict[EnrichPartId, floa
     return {k: max(0.0, v) / total for k, v in raw.items()}
 
 
-def _normalize_type_weights(weights: ContextMessageTypeWeights) -> ContextMessageTypeWeights:
-    """Нормализовать type weights к [0, 1]."""
-    raw = [
-        max(0.0, weights.user_input),
-        max(0.0, weights.agent_response),
-        max(0.0, weights.context_summary),
-        max(0.0, weights.tool_observation),
-        max(0.0, weights.system),
-        max(0.0, weights.service),
-    ]
-    total = sum(raw)
-    if total == 0:
-        n = len(raw)
-        raw = [1.0 / n] * n
-    else:
-        raw = [v / total for v in raw]
-    return ContextMessageTypeWeights(
-        user_input=raw[0],
-        agent_response=raw[1],
-        context_summary=raw[2],
-        tool_observation=raw[3],
-        system=raw[4],
-        service=raw[5],
-    )
-
-
-def to_stage_in_unified_role(stage: FsmStage | None) -> bool:
-    """``To``-стадия входит в unified: есть в :data:`CONTEXT_ROLE_BY_TO_STAGE` и роль не SERVICE.
-
-    Предикат **enrich**: фильтр IRT-хвоста треда (:func:`iter_irt_ancestors_filtered`).
-    ``thread_memory`` / ``global_memory`` сюда **не** входят — они собираются
-    отдельными бакетами :func:`build_unified_email_messages`, а не из IRT-цепочки.
-    Для drain (глобальный скан union-индекса) используется более широкий
-    :func:`content_indexable_to_stage`.
-    """
-    if stage is None:
-        return False
-    role = CONTEXT_ROLE_BY_TO_STAGE.get(stage)
-    return role is not None and role is not ContextMessageType.SERVICE
-
-
-def message_in_unified_mail_context(msg: EmailMessage) -> bool:
-    """IRT-хвост: ``To:`` есть в :data:`CONTEXT_ROLE_BY_TO_STAGE` и роль не SERVICE."""
-    return to_stage_in_unified_role(FsmStage.try_from_incoming_to(msg))
-
-
-# Стадии, чьё ``To:`` несёт содержательную нагрузку для графа LightRAG.
-#
-# База — те же не-SERVICE ключи :data:`CONTEXT_ROLE_BY_TO_STAGE`, что и unified
-# enrich-роль (:func:`to_stage_in_unified_role`), плюс выделенные memory-ящики
-# ``thread_memory`` / ``global_memory``.
-#
-# Фундаментальное отличие от enrich: enrich собирает контекст обходом IRT-цепочки
-# треда (:func:`iter_irt_ancestors_filtered`) — thread/subagent-локально, с дедупом
-# и отдельными memory-бакетами, которые в IRT-хвост не включаются. Drain же
-# сканирует весь union-индекс глобально (notmuch search), поэтому memory-письма
-# индексируются напрямую, а не как отдельные бакеты.
-CONTENT_INDEXABLE_STAGES: frozenset[FsmStage] = frozenset(
-    {
-        stage
-        for stage, role in CONTEXT_ROLE_BY_TO_STAGE.items()
-        if role is not ContextMessageType.SERVICE
-    }
-    | {FsmStage.THREAD_MEMORY, FsmStage.GLOBAL_MEMORY}
-)
-
-
-def content_indexable_stages() -> frozenset[FsmStage]:
-    """Whitelist стадий для LightRAG-drain (см. :data:`CONTENT_INDEXABLE_STAGES`)."""
-    return CONTENT_INDEXABLE_STAGES
-
-
-def content_indexable_to_stage(stage: FsmStage | None) -> bool:
-    """``To``-стадия письма несёт содержательную нагрузку для LightRAG-графа (drain)."""
-    return stage is not None and stage in CONTENT_INDEXABLE_STAGES
-
-
-def classify_message_type(msg: EmailMessage) -> ContextMessageType:
-    """Тип для scoring — из :data:`CONTEXT_ROLE_BY_TO_STAGE`, иначе SYSTEM."""
-    stage = FsmStage.try_from_incoming_to(msg)
-    if stage is None:
-        return ContextMessageType.SYSTEM
-    return CONTEXT_ROLE_BY_TO_STAGE.get(stage, ContextMessageType.SYSTEM)
+def history_body_chars(msg: EmailMessage) -> int:
+    """Длина тела первой ``<history>``-части (для scoring/оценки веса)."""
+    for _cid, part in iter_history_parts(msg):
+        return len(history_part_text(part))
+    part = msg.get_body(preferencelist=("plain", "html"))
+    return len(part.get_content()) if part else 0
 
 
 def message_value(
     pos_from_end: int,
     total: int,
-    msg_type: ContextMessageType,
+    content_score: float,
     body_chars: int,
-    type_weights: ContextMessageTypeWeights,
 ) -> float:
-    """Вычислить ценность сообщения для tier-assignment. O(1)."""
+    """Ценность сообщения для tier-assignment: recency × content_score × size_penalty. O(1)."""
     if total == 0:
         return 0.0
     recency = pos_from_end / total
-    type_w = type_weights.weight_for(msg_type)
     size_penalty = 1.0 if body_chars < 5000 else 5000 / max(1, body_chars)
-    return recency * type_w * size_penalty
+    return recency * max(0.0, content_score) * size_penalty
 
 
 def score_messages(
     messages: list[EmailMessage],
-    type_weights: ContextMessageTypeWeights,
 ) -> tuple[ContextMessageTierAssignment, ...]:
-    """Level 2: score все сообщения, вернуть sorted by value desc."""
-    normalized_tw = _normalize_type_weights(type_weights)
+    """Level 2: score все сообщения по content-score их ``<history>``-части (desc by value)."""
     total = len(messages)
     scored: list[ContextMessageTierAssignment] = []
     for idx, msg in enumerate(messages):
         pos_from_end = total - idx
-        msg_type = classify_message_type(msg)
-        part = msg.get_body(preferencelist=("plain", "html"))
-        body_chars = len(part.get_content()) if part else 0
-        val = message_value(pos_from_end, total, msg_type, body_chars, normalized_tw)
+        body_chars = history_body_chars(msg)
+        val = message_value(pos_from_end, total, message_content_score(msg), body_chars)
         scored.append(ContextMessageTierAssignment(
             chronological_index=idx,
             value=val,
             assigned_tier=3,
             body_chars=body_chars,
-            msg_type=msg_type,
+            origin=message_origin_label(msg),
         ))
     return tuple(scored)
 
@@ -298,7 +156,7 @@ def assign_tiers(
             value=assignment.value,
             assigned_tier=tier,
             body_chars=assignment.body_chars,
-            msg_type=assignment.msg_type,
+            origin=assignment.origin,
         ))
     return tuple(sorted(result, key=lambda x: x.chronological_index))
 
@@ -309,19 +167,16 @@ def estimate_unified_weight(
     tier2_count: int,
     preview_chars: int,
     header_chars: int = 100,
-    service_marker_chars: int = 50,
 ) -> int:
     """Оценка веса unified_mail_context без Jinja-рендеринга.
 
-    Использует body_chars и msg_type из scored для арифметической аппроксимации
-    вместо полного Jinja-рендеринга mail_context.j2.
+    Использует body_chars из scored для арифметической аппроксимации вместо полного
+    Jinja-рендеринга mail_context.j2. Все сообщения содержательные (есть ``<history>``).
     """
     tiered = assign_tiers(scored, tier1_count, tier2_count)
     total = 0
     for t in tiered:
-        if t.msg_type == ContextMessageType.SERVICE:
-            total += service_marker_chars
-        elif t.assigned_tier == 1:
+        if t.assigned_tier == 1:
             total += t.body_chars + header_chars
         elif t.assigned_tier == 2:
             total += preview_chars + header_chars
