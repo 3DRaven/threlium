@@ -133,7 +133,6 @@ _threlium_enrich_base:
   priority_thread_mem: 4.0
   priority_global_mem: 3.0
   priority_extra: 5.0
-  tool_observation_estimate_cap_chars: 500
   tier1_medium_ratio: 2
   summarize_enabled: true
   summarize_batch_max_messages: 10

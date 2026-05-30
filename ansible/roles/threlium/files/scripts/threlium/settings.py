@@ -632,10 +632,6 @@ class EnrichSettings(BaseModel):
     priority_global_mem: float = Field(default=3.0, description="Вес global_memory.")
     priority_extra: float = Field(default=5.0, description="Вес response_state + task_state + response_observation.")
 
-    tool_observation_estimate_cap_chars: int = Field(
-        default=500, ge=1,
-        description="Потолок символов тела tool_observation при оценке веса MCKP (не рендеринг).",
-    )
     tier1_medium_ratio: int = Field(
         default=2, ge=1,
         description="Делитель tier1_full для MEDIUM-варианта unified MCKP (tier1_med = tier1_full // ratio).",

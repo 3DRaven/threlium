@@ -29,7 +29,6 @@ from threlium.context_budget import (
     BucketConfigTier,
     assign_tiers,
     estimate_unified_weight,
-    history_body_chars,
     normalize_weights,
     score_messages,
     solve_mckp,
@@ -327,17 +326,16 @@ def _is_empty_rag_result(raw_result: dict[str, Any] | str | None, api: str) -> b
     return False
 
 
-def _estimate_msgs_weight(msgs: list[EmailMessage], tool_obs_cap: int = 500) -> int:
-    """Оценка веса списка сообщений в full-body режиме (без Jinja).
+def _full_body_weight(msgs: list[EmailMessage], preview_chars: int) -> int:
+    """Вес списка писем при full-body рендере — единый аппарат ``estimate_unified_weight``.
 
-    Все письма содержательные (есть ``<history>``-часть); большие тела (вывод tool-стадий)
-    капируются ``tool_obs_cap``, чтобы один гигантский вывод не раздувал оценку overflow.
+    Память (thread/global) рендерится без tier-демоушена, поэтому считаем все письма как
+    tier1 (полное тело). Это тот же estimator, что и у unified-бакета, без отдельной
+    модели веса с капом.
     """
-    total = 0
-    for m in msgs:
-        body_chars = history_body_chars(m)
-        total += min(body_chars, tool_obs_cap) + 100
-    return total
+    if not msgs:
+        return 0
+    return estimate_unified_weight(score_messages(msgs), len(msgs), 0, preview_chars)
 
 
 def _truncate_at_paragraph(text: str) -> str:
@@ -532,13 +530,13 @@ async def _enrich_async(
         EnrichPartId.UNIFIED_MAIL_CONTEXT: unified_configs,
         EnrichPartId.THREAD_MEMORY: _make_bucket_configs(
             EnrichPartId.THREAD_MEMORY,
-            _estimate_msgs_weight(ctx.thread_memory_msgs),
-            _estimate_msgs_weight(thread_medium_msgs),
+            _full_body_weight(ctx.thread_memory_msgs, _preview),
+            _full_body_weight(thread_medium_msgs, _preview),
             thread_signal),
         EnrichPartId.GLOBAL_MEMORY: _make_bucket_configs(
             EnrichPartId.GLOBAL_MEMORY,
-            _estimate_msgs_weight(ctx.global_memory_msgs),
-            _estimate_msgs_weight(global_medium_msgs),
+            _full_body_weight(ctx.global_memory_msgs, _preview),
+            _full_body_weight(global_medium_msgs, _preview),
             global_signal),
     }
 
@@ -736,8 +734,14 @@ def main(
     mckp_capacity = max(0, limit - budget_user - budget_extra)
 
     if config.enrich.summarize_enabled and ctx.all_messages:
-        raw_weight = _estimate_msgs_weight(
-            ctx.all_messages, config.enrich.tool_observation_estimate_cap_chars
+        # Overflow меряется тем же аппаратом, что и упаковка: full-вес unified-бакета
+        # (estimate_unified_weight по тем же tier1/tier2/preview, что и unified_configs[FULL]).
+        # Так решение «суммаризировать» согласовано с реальной сборкой контекста.
+        raw_weight = estimate_unified_weight(
+            score_messages(ctx.all_messages),
+            config.enrich.tier1_full,
+            config.enrich.tier2_summary,
+            config.enrich.tier_preview_chars,
         )
         excess = raw_weight - mckp_capacity
         if excess > config.enrich.summarize_trigger_min_excess_chars:
