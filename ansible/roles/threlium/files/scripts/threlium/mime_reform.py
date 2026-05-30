@@ -1,6 +1,7 @@
 """Разбор/сборка MIME для мостов и стадий — поверх stdlib ``email``."""
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Iterable
 from dataclasses import dataclass
 from email import policy
@@ -16,6 +17,8 @@ from threlium.logutil import logger
 from threlium.mail_header_names import MailHeaderName
 
 if TYPE_CHECKING:
+    from threlium.types.content_score import ThreliumContentScoreWire
+    from threlium.types.fsm_stage import FsmStage
     from threlium.types.fsm_strings import (
         EnrichGlobalMemoryText,
         EnrichGraphAnswerText,
@@ -46,24 +49,25 @@ class EnrichPartId(StrEnum):
     RESPONSE_STATE = "<response-state>"
     TASK_INIT = "<task-init>"
     TASK_STATE = "<task-state>"
-    RESPONSE_OBSERVATION = "<response-observation>"
-    MEMORY_NOTE = "<memory-note>"
-    OBSERVATION_NOTE = "<observation-note>"
-    UNIFIED_DELTA = "<unified-delta>"
+    HISTORY = "<history>"
+    SYSTEM = "<system>"
 
 
-# Семейства relay-частей (источник: вспомогательные стадии → enrich_fast → reasoning).
-# Каждый хоп штампует уникальный CID ``<{family}@{inner-mid}>`` (EnrichContentId.from_relay),
-# поэтому повторные вызовы одной стадии не затирают друг друга, а накапливаются.
-# ``RESPONSE_OBSERVATION`` (бывш. ``PLAN_STATE``) — нарратив-обзор буфера ответа + задач
-# от ``response_observe``. ``UNIFIED_DELTA`` — собирается самим ``enrich_fast``: хронология
-# unified-role писем, появившихся с прошлого ``To: reasoning`` (E_prev) до текущего листа;
-# каждый быстрый цикл добавляет свою часть, прошлые переносятся как части E_prev.
-RELAY_FAMILIES: Final[tuple[EnrichPartId, ...]] = (
-    EnrichPartId.OBSERVATION_NOTE,
-    EnrichPartId.RESPONSE_OBSERVATION,
-    EnrichPartId.MEMORY_NOTE,
-    EnrichPartId.UNIFIED_DELTA,
+# Единственное relay-семейство после унификации (docs/FSM.md): любая содержательная
+# нагрузка от любой стадии едет как ``<history>``-часть. CID контент-адресный
+# ``<{sha256(body)}@history>`` (хеш тела — local-part, ``history`` — домен), поэтому
+# идентичное тело (оригинал и relay-копия) даёт один CID и схлопывается при дедупе —
+# тип в CID не кодируется, семантику даёт ``X-Threlium-Origin`` + tool spec.
+# ``system`` НЕ релеится/не индексируется (носитель payload-команды между стадиями),
+# поэтому в RELAY_FAMILIES его нет — только в _CONTENT_ADDRESSED_FAMILIES для family-детекции.
+RELAY_FAMILIES: Final[tuple[EnrichPartId, ...]] = (EnrichPartId.HISTORY,)
+
+# Семейства с контент-адресным CID ``<{sha256(body)}@{family}>`` (хеш тела — local-part,
+# семейство — домен): ``history`` (релеится/индексируется) и ``system`` (payload-команда,
+# не релеится). Используется только для разбора домена в :attr:`EnrichContentId.family`.
+_CONTENT_ADDRESSED_FAMILIES: Final[tuple[EnrichPartId, ...]] = (
+    EnrichPartId.HISTORY,
+    EnrichPartId.SYSTEM,
 )
 
 # Фиксированные Content-ID полного ``enrich`` (build_enriched_multipart): не relay,
@@ -86,7 +90,7 @@ _HDR = MailHeaderName
 
 
 def _cid_token(part_id: EnrichPartId) -> str:
-    """``EnrichPartId.OBSERVATION_NOTE`` → ``'observation-note'`` (без угловых скобок)."""
+    """``EnrichPartId.HISTORY`` → ``'history'`` (CID-токен без угловых скобок)."""
     return part_id.value.strip("<>")
 
 
@@ -117,6 +121,31 @@ class EnrichContentId(msgspec.Struct, frozen=True):
         return cls(value=f"<{_cid_token(base)}@{source_inner.value}>")
 
     @classmethod
+    def from_history_body(cls, text: str) -> Self:
+        """Контент-адресный CID ``<{sha256(body)}@history>`` (хеш только по телу).
+
+        Хеш по телу части (без заголовков ``Origin``/``Score``/CID): ``X-Threlium-Origin``
+        штампует ``enrich_fast`` постфактум, поэтому у оригинала-производителя и relay-копии
+        тела совпадают, а заголовки — нет; хеш по телу делает их один CID → дедуп схлопывает.
+        Идиома ``TaskSubtaskContentId.from_text`` / ``IrtHashWire.from_irt_header_value``
+        (кодек только внутри VO).
+        """
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        return cls(value=f"<{digest}@{_cid_token(EnrichPartId.HISTORY)}>")
+
+    @classmethod
+    def from_system_body(cls, text: str) -> Self:
+        """Контент-адресный CID ``<{sha256(body)}@system>`` — носитель payload-команды.
+
+        Зеркало :meth:`from_history_body`; домен ``system`` отличает механический payload
+        от его history-копии: одинаковое тело → одинаковый хеш, но разный домен → разные
+        CID, поэтому дедуп их НЕ схлопывает (одна часть для механики, одна для памяти).
+        ``system`` не входит в :data:`RELAY_FAMILIES` — не релеится и не индексируется.
+        """
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        return cls(value=f"<{digest}@{_cid_token(EnrichPartId.SYSTEM)}>")
+
+    @classmethod
     def from_mime_part(cls, part: EmailMessage) -> Self | None:
         """Граница: ``Content-ID`` leaf-части после strip; отсутствие/пусто → ``None``."""
         raw = part.get("Content-ID")
@@ -127,13 +156,16 @@ class EnrichContentId(msgspec.Struct, frozen=True):
 
     @property
     def family(self) -> EnrichPartId | None:
-        """Семейство relay по префиксу до первого ``@``; ``None`` для core/чужих.
+        """Семейство relay; ``None`` для core/чужих.
 
-        Бэк-компат: канонический ``<observation-note>`` (без суффикса) — то же семейство.
+        Контент-адресный формат ``<{hash}@history>``: семейство определяется по **домену**
+        (часть после ``@``), а хеш-local-part уникален на контент. Канонический ``<history>``
+        (без ``@``) — то же семейство (определяется по самому токену).
         """
-        base_token = self.value.strip().strip("<>").split("@", 1)[0]
-        for fam in RELAY_FAMILIES:
-            if base_token == _cid_token(fam):
+        inner = self.value.strip().strip("<>")
+        token = inner.split("@", 1)[1] if "@" in inner else inner
+        for fam in _CONTENT_ADDRESSED_FAMILIES:
+            if token == _cid_token(fam):
                 return fam
         return None
 
@@ -229,17 +261,32 @@ def ingress_pipeline_email(incoming: EmailMessage) -> EmailMessage:
     return out
 
 
-def _make_inline_text_part(content_id: EnrichPartId | EnrichContentId, text: str) -> EmailMessage:
+def _make_inline_text_part(
+    content_id: EnrichPartId | EnrichContentId,
+    text: str,
+    *,
+    score: "ThreliumContentScoreWire | None" = None,
+    origin: "FsmStage | None" = None,
+) -> EmailMessage:
     """MIME text/plain part с Content-ID и Content-Disposition: inline.
 
     ``content_id`` — семейный enum (``EnrichPartId``) или VO ``EnrichContentId``
-    (например уникальный relay-CID ``<observation-note@…>``); оба несут ``.value``.
+    (например контент-адресный history-CID ``<{hash}@history>``); оба несут ``.value``.
+
+    Опц. per-part заголовки (только для ``<history>``-частей, граница через
+    ``MailHeaderName``, без сырых строк): ``score`` → ``X-Threlium-Content-Score``
+    (ставит источник из настроек), ``origin`` → ``X-Threlium-Origin`` (штампует
+    enrich_fast). Переживают relay-копирование ``out.attach(part)``.
     """
     part = EmailMessage()
     part.set_content(text, subtype="plain", charset="utf-8")
     part.add_header("Content-Disposition", "inline")
     part.replace_header("Content-Type", "text/plain; charset=\"utf-8\"")
     part["Content-ID"] = content_id.value
+    if score is not None:
+        part[_HDR.CONTENT_SCORE.value] = score.value
+    if origin is not None:
+        part[_HDR.ORIGIN.value] = origin.rfc822_mailbox
     return part
 
 
@@ -333,31 +380,76 @@ def _iter_relay_leaf_parts(msg: EmailMessage) -> list[tuple[EnrichContentId, Ema
     return out
 
 
-def group_relay_notes_by_family(msg: EmailMessage) -> dict[EnrichPartId, list[str]]:
-    """Тексты relay-частей, сгруппированные по семейству (oldest-first, как в MIME)."""
-    grouped: dict[EnrichPartId, list[str]] = {fam: [] for fam in RELAY_FAMILIES}
-    for cid, part in _iter_relay_leaf_parts(msg):
-        fam = cid.family
-        if fam is None:
-            continue
-        text = _leaf_part_text(part).strip()
-        if text:
-            grouped[fam].append(text)
-    return grouped
+def history_part_text(part: EmailMessage) -> str:
+    """Декодированное тело leaf ``<history>``-части (граница чтения MIME-тела)."""
+    return _leaf_part_text(part)
 
 
-def collect_relay_parts_of_families(
-    msg: EmailMessage, families: Iterable[EnrichPartId]
-) -> list[tuple[EnrichContentId, str]]:
-    """Relay-части указанных семейств как ``(EnrichContentId, text)`` (CID сохраняется)."""
-    wanted = frozenset(families)
-    out: list[tuple[EnrichContentId, str]] = []
-    for cid, part in _iter_relay_leaf_parts(msg):
-        if cid.family in wanted:
-            text = _leaf_part_text(part).strip()
-            if text:
-                out.append((cid, text))
-    return out
+def iter_history_parts(msg: EmailMessage) -> list[tuple[EnrichContentId, EmailMessage]]:
+    """Leaf ``<history>``-части письма как ``(EnrichContentId, part)`` в порядке walk.
+
+    Единый аксессор для всех потребителей (enrich/enrich_fast/reasoning/drain): семейство
+    ``HISTORY`` по домену CID; per-part заголовки (score/origin) читаются вызывающим из
+    ``part`` через VO. Core-части и чужие CID отфильтрованы.
+    """
+    return [
+        (cid, part)
+        for cid, part in _iter_relay_leaf_parts(msg)
+        if cid.family is EnrichPartId.HISTORY
+    ]
+
+
+def message_has_history(msg: EmailMessage) -> bool:
+    """Предикат «письмо несёт ≥1 непустую ``<history>``-часть» (= содержательное).
+
+    Заменяет ``to_stage_in_unified_role``/``content_indexable_to_stage`` (классификацию по
+    ``To:``): «сервисность» = отсутствие history-части, без таблицы стадий.
+    """
+    for _cid, part in iter_history_parts(msg):
+        if _leaf_part_text(part).strip():
+            return True
+    return False
+
+
+def iter_system_parts(msg: EmailMessage) -> list[tuple[EnrichContentId, EmailMessage]]:
+    """Leaf ``<system>``-части письма как ``(EnrichContentId, part)`` (по контракту — одна)."""
+    return [
+        (cid, part)
+        for cid, part in _iter_relay_leaf_parts(msg)
+        if cid.family is EnrichPartId.SYSTEM
+    ]
+
+
+def message_has_system(msg: EmailMessage) -> bool:
+    """Предикат «письмо несёт ≥1 непустую ``<system>``-часть» (payload-команду)."""
+    for _cid, part in iter_system_parts(msg):
+        if _leaf_part_text(part).strip():
+            return True
+    return False
+
+
+def system_part_text(msg: EmailMessage) -> str:
+    """Тело единственной ``<system>``-части — носитель payload-команды между стадиями.
+
+    Строгая граница чтения payload (замена :func:`extract_plain_body` для всех внутренних
+    чтений): стадии-потребители (cli_exec, egress_*, response_finalize, tool-входы,
+    durable-редьюсеры) берут команду отсюда. Контракт — ровно одна ``<system>``-часть.
+
+    Отсутствие ``<system>`` → ``RuntimeError`` (инвариант «payload только в ``<system>``»);
+    несколько частей — тоже нарушение контракта.
+    """
+    parts = iter_system_parts(msg)
+    if not parts:
+        raise RuntimeError(
+            "FSM-инвариант: ожидалась одна <system>-часть (носитель payload), не найдено "
+            "ни одной. Производитель должен класть payload в system через "
+            "build_fsm_step_to_stage(system=...)."
+        )
+    if len(parts) > 1:
+        raise RuntimeError(
+            f"FSM-инвариант: ожидалась ровно одна <system>-часть, найдено {len(parts)}."
+        )
+    return _leaf_part_text(parts[0][1])
 
 
 def extract_part_by_content_id(msg: EmailMessage, content_id: EnrichPartId) -> str | None:
@@ -371,39 +463,34 @@ def extract_part_by_content_id(msg: EmailMessage, content_id: EnrichPartId) -> s
 
 @dataclass(frozen=True)
 class RelaySpliceResult:
-    """Итог ``splice_e_prev_with_incoming_relay``: письмо + diff relay-CID для логов."""
+    """Итог ``splice_e_prev_with_history``: письмо + diff history-CID для логов."""
 
     message: EmailMessage
     appended: tuple[EnrichContentId, ...]
     skipped: tuple[EnrichContentId, ...]
 
 
-def splice_e_prev_with_incoming_relay(
+def splice_e_prev_with_history(
     e_prev: EmailMessage,
-    incoming: EmailMessage,
     *,
     response_state_text: str,
     task_state_text: str | None = None,
-    unified_delta: tuple[EnrichContentId, str] | None = None,
+    history_parts: Iterable[tuple[EnrichContentId, EmailMessage]] = (),
 ) -> RelaySpliceResult:
-    """``E_prev`` + relay-части входящего письма → новый multipart для reasoning.
+    """``E_prev`` + сырые ``<history>``-части окна-дельты → новый multipart для reasoning.
 
     Stage-agnostic быстрый цикл ``enrich_fast``:
 
     * копирует все части ``E_prev``;
     * **пересобирает** ``<response-state>`` из ``response_state_text`` (CRDT) и — если
       передан ``task_state_text`` — ``<task-state>`` из него (детерминированный recompute);
-    * **дописывает в хвост** relay-части ``incoming`` (не core, см.
-      :meth:`EnrichContentId.is_core`) — как есть, с их оригинальным ``Content-ID``;
-    * если передан ``unified_delta`` ``(cid, text)`` — добавляет его как ещё одну
-      relay-часть (хронология unified-писем, появившихся с прошлого ``To: reasoning``).
-      Часть вычисляет сам ``enrich_fast`` (её нет во входящем письме), CID уникален на
-      хоп (``<unified-delta@{inner-mid}>``), поэтому накапливается, а не затирается.
+    * **дописывает в хвост** переданные ``history_parts`` (``(cid, part)``) как есть, с их
+      оригинальным контент-адресным ``Content-ID`` ``<{hash}@history>``. Origin на частях
+      уже проставлен вызывающим (``enrich_fast``) — здесь только append+dedup.
 
-    Дубли по ``Content-ID`` не добавляются (идемпотентность при повторном проходе) и
-    попадают в ``skipped``; новые — в ``appended``. Уникальность relay-CID
-    (``<family@inner-mid>``) гарантирует, что каждый новый хоп — отдельная часть, а
-    не перезапись предыдущей.
+    Дедуп по контенту: повторный ``Content-ID`` (= идентичное тело, оригинал и relay-копия)
+    не добавляется и попадает в ``skipped``; новые — в ``appended``. Никакой ``To:``-логики:
+    схлопывание чисто по ``EnrichContentId`` (контент-хеш).
     """
     out = EmailMessage()
     out.make_mixed()
@@ -436,7 +523,7 @@ def splice_e_prev_with_incoming_relay(
 
     appended: list[EnrichContentId] = []
     skipped: list[EnrichContentId] = []
-    for cid, part in _iter_relay_leaf_parts(incoming):
+    for cid, part in history_parts:
         if cid.is_core:
             continue
         if cid in seen:
@@ -445,13 +532,6 @@ def splice_e_prev_with_incoming_relay(
         out.attach(part)
         seen.add(cid)
         appended.append(cid)
-
-    if unified_delta is not None:
-        delta_cid, delta_text = unified_delta
-        if delta_text.strip() and delta_cid not in seen:
-            out.attach(_make_inline_text_part(delta_cid, delta_text))
-            seen.add(delta_cid)
-            appended.append(delta_cid)
 
     return RelaySpliceResult(message=out, appended=tuple(appended), skipped=tuple(skipped))
 

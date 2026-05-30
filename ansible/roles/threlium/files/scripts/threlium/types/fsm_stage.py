@@ -72,6 +72,29 @@ class FsmStage(StrEnum):
             raise ValueError(f"FsmStage.parse: unknown stage {raw!r}") from e
 
     @classmethod
+    def from_mailbox(cls, raw: str | None) -> Self:
+        """Стадия из значения адреса (``From:``/``X-Threlium-Origin``): ``Name <stage@localhost>`` или ``stage@localhost``.
+
+        Используется при штампе/чтении ``X-Threlium-Origin`` (enrich_fast и презентация):
+        единая граница «mailbox-строка → FsmStage», без сырого парсинга ``From`` в стадиях.
+        """
+        s = str(raw).strip() if raw is not None else ""
+        if not s:
+            raise ValueError("FsmStage.from_mailbox: empty")
+        addrs = [a for _, a in getaddresses([s]) if a]
+        return cls.parse(addrs[0] if addrs else s)
+
+    @classmethod
+    def try_from_mailbox(cls, raw: str | None) -> Self | None:
+        """Как :meth:`from_mailbox`, но неизвестный/пустой адрес → ``None``."""
+        if raw is None:
+            return None
+        try:
+            return cls.from_mailbox(raw)
+        except ValueError:
+            return None
+
+    @classmethod
     def from_incoming_to(cls, msg: EmailMessage) -> Self:
         """Извлечь стадию из канонического ``To:`` входного письма.
 

@@ -39,6 +39,10 @@ class MailHeaderName(StrEnum):
     CAPABILITIES = "X-Threlium-Capabilities"
     SPACE_HASH = "X-Threlium-Space-Hash"
     IRT_HASH = "X-Threlium-Irt-Hash"
+    # Part-level (на отдельных <history>-MIME-частях, не на конверте письма):
+    # CONTENT_SCORE ставит источник из настроек; ORIGIN штампует enrich_fast при сплайсе.
+    CONTENT_SCORE = "X-Threlium-Content-Score"
+    ORIGIN = "X-Threlium-Origin"
 
     @classmethod
     def propagate_from_incoming(cls) -> tuple[MailHeaderName, ...]:

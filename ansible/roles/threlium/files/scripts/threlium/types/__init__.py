@@ -109,6 +109,7 @@ from .threlium_space import (
     normalize_threlium_space_dict,
     telegram_space_from_ingress_route,
 )
+from .content_score import ThreliumContentScoreWire
 from .irt_hash import IrtHashWire
 from .lightrag import (
     LightragChunkRecord,
@@ -255,6 +256,7 @@ __all__ = [
     "IngressRouterChildMsg",
     "IngressRouterResolvedChannelSlug",
     "IrtHashWire",
+    "ThreliumContentScoreWire",
     "ingress_route_from_json_str",
     "LightragChunkRecord",
     "LightragDocumentHeader",
