@@ -35,7 +35,8 @@ from email.message import EmailMessage
 from pathlib import Path
 
 # Run from scripts/ with threlium on PYTHONPATH (pip install -e .).
-from threlium.mime_reform import EnrichPartId, extract_part_by_content_id
+from threlium.fsm_emit import build_fsm_step_to_stage
+from threlium.mime_reform import history_part_text, iter_history_parts
 from threlium.prompts import init_prompts_root
 from threlium.settings import ThreliumSettings
 from threlium.states import formal_reason
@@ -59,27 +60,37 @@ def _parse_expect_before(text: str, block_start: int) -> dict[str, str] | None:
     return dict(EXPECT_KV_RE.findall(matches[-1].group("expect")))
 
 
-def _build_stub_incoming(payload_json: str) -> EmailMessage:
-    """Minimal text/plain email carrying the tool JSON, as reasoning would emit."""
-    msg = EmailMessage()
-    msg["Subject"] = "verify formal_reason snippet"
-    msg.set_content(payload_json, subtype="plain", charset="utf-8")
-    return msg
+def _build_stub_incoming(payload_json: str, config: ThreliumSettings) -> EmailMessage:
+    """Email carrying the tool JSON in a ``<system>`` part, as reasoning would emit.
+
+    formal_reason reads its payload via ``system_part_text``; the unified contract puts
+    the command in a ``<system>``-part, not the bare body — so we build it through the
+    same FSM choke-point (``build_fsm_step_to_stage(system=...)``).
+    """
+    base = EmailMessage()
+    base["Subject"] = "verify formal_reason snippet"
+    return build_fsm_step_to_stage(
+        base,
+        to_addr=FsmStage.FORMAL_REASON,
+        from_stage=FsmStage.REASONING,
+        system=payload_json,
+        settings=config,
+    )
 
 
 def _run_observation(payload_json: str, config: ThreliumSettings) -> str:
-    """Call the real stage and return the observation-note text."""
-    incoming = _build_stub_incoming(payload_json)
+    """Call the real stage and return the observation text (its ``<history>``-part)."""
+    incoming = _build_stub_incoming(payload_json, config)
     out = formal_reason.main(incoming, FsmStage.FORMAL_REASON, config=config)
     if out is None:
         raise RuntimeError("formal_reason.main returned None")
     to_addr = out["To"]
     if to_addr != FsmStage.ENRICH_FAST.rfc822_mailbox:
         raise RuntimeError(f"unexpected To: {to_addr!r}")
-    note = extract_part_by_content_id(out, EnrichPartId.OBSERVATION_NOTE)
-    if note is None:
-        raise RuntimeError("no observation-note part in stage output")
-    return note
+    parts = iter_history_parts(out)
+    if not parts:
+        raise RuntimeError("no <history> part in stage output")
+    return history_part_text(parts[0][1])
 
 
 _ERROR_KIND_MARKERS = {
