@@ -16,14 +16,16 @@
       },
       {
         "contains": "\"tools\""
+      },
+      {
+        "contains": "No subtasks recorded yet"
       }
     ],
     "customMatcher": {
       "name": "state-matcher",
       "parameters": {
         "hasContext": "stub-telegram-wiremock-live-e2e-private-tail-307::{{request.headers.[x-threlium-thread-root]}}",
-        "hasProperty": "reasoning_release",
-        "hasNotProperty": "reasoning_release_ledger_done"
+        "hasProperty": "reasoning_release"
       }
     }
   },
@@ -33,7 +35,7 @@
       "Content-Type": "application/json"
     },
     "jsonBody": {
-      "id": "chatcmpl-e2e-tasks-ledger-reasoning_release_ledger_done",
+      "id": "chatcmpl-e2e-tasks-ledger-empty",
       "object": "chat.completion",
       "created": 0,
       "model": "gpt-4o-mini",
@@ -46,7 +48,7 @@
             "content": null,
             "tool_calls": [
               {
-                "id": "call_e2e_tasks_ledger_reasoning_release_ledger_done",
+                "id": "call_e2e_tasks_ledger_empty",
                 "type": "function",
                 "function": {
                   "name": "tasks_upsert",
@@ -58,16 +60,5 @@
         }
       ]
     }
-  },
-  "serveEventListeners": [
-    {
-      "name": "recordState",
-      "parameters": {
-        "context": "stub-telegram-wiremock-live-e2e-private-tail-307::{{request.headers.[x-threlium-thread-root]}}",
-        "state": {
-          "reasoning_release_ledger_done": "1"
-        }
-      }
-    }
-  ]
+  }
 }
