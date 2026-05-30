@@ -19,7 +19,6 @@ from threlium.ingress_route_resolve import resolve_egress_task_route_ancestor
 from threlium.logutil import logger
 from threlium.mime_reform import (
     RFC822_FOR_INSERT,
-    email_message_from_bytes,
     system_part_text,
 )
 from threlium.types import (
@@ -53,13 +52,6 @@ def _references_append_smtp_tail(refs: str | None, tail: ExternalRfcMidWire | No
     if tail_token in set(references_angle_bracket_tokens(base)):
         return base
     return f"{base} {tail_token}".strip()
-
-
-def _strip_internal_before_smtp(em: EmailMessage) -> None:
-    for h in list(em.keys()):
-        hl = h.lower()
-        if hl.startswith("x-threlium-"):
-            del em[h]
 
 
 def _run_msmtp_stdin(data: bytes) -> None:
@@ -133,11 +125,9 @@ def _build_smtp_message(
     if not dest:
         raise RuntimeError("egress_email: empty X-Threlium-Route origin")
 
-    smtp_msg = email_message_from_bytes(msg.as_bytes(policy=RFC822_FOR_INSERT))
-    _strip_internal_before_smtp(smtp_msg)
-    # Внешнему получателю уходит чистое text/plain тело из <system>, без внутренней
-    # MIME-структуры FSM (<system>/<history>-части, их Content-ID и inline-дисп.).
-    # set_content схлопывает multipart обратно в одиночную text/plain-часть.
+    # Чистое SMTP-письмо с нуля: вход FSM — multipart (<system>+<history>), нельзя
+    # email_message_from_bytes + set_content (ValueError: set_content not valid on multipart).
+    smtp_msg = EmailMessage()
     smtp_msg.set_content(system_part_text(msg), subtype="plain", charset="utf-8")
 
     dm = ExternalRfcMidWire(value=outbound_mid)
