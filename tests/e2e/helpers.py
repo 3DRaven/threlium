@@ -3778,18 +3778,20 @@ def assert_full_mailflow_pipeline(
             min_posts=spec.min_rerank_posts,
             repo_root=REPO_ROOT,
         )
-    assert_notmuch_thread_fully_in_stages(
-        project, anchor_message_id=nm_inner, repo_root=REPO_ROOT
-    )
-    assert_notmuch_mailflow_thread_has_lightrag_indexed(
-        project, anchor_message_id=nm_inner, repo_root=REPO_ROOT
-    )
+    # Multi-hop scenarios (empty-ledger bounce, tasks_upsert, …) finish only after egress.
+    # Wait for the user-visible reply before requiring the notmuch thread to be fully settled.
     wait_for_greenmail_user_reply(
         project,
         raw_id=raw_id,
         repo_root=REPO_ROOT,
         **({"subject_substring": spec.reply_subject_needle} if spec.reply_subject_needle is not None else {}),
         **({"body_substring": spec.reply_body_needle} if spec.reply_body_needle is not None else {}),
+    )
+    assert_notmuch_thread_fully_in_stages(
+        project, anchor_message_id=nm_inner, repo_root=REPO_ROOT
+    )
+    assert_notmuch_mailflow_thread_has_lightrag_indexed(
+        project, anchor_message_id=nm_inner, repo_root=REPO_ROOT
     )
     if spec.expect_notmuch_stage_folders:
         assert_notmuch_thread_has_messages_in_folders(
