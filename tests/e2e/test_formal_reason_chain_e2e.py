@@ -4,15 +4,17 @@
 memory_query (SHACL reference) → enrich_fast → reasoning → response_finalize.
 
 Покрытие:
-- formal_reason handler: pySHACL validate, observation-note с conforms=true
-- memory_query handler: aquery к LightRAG, observation relay через enrich_fast
-- enrich_fast: relay ``<observation-note@mid>`` и ``<unified-delta@mid>`` (IRT unified-role
-  письма с прошлого ``To: reasoning``) → в промпте reasoning секция ``<conversation_delta>``
-- enrich_fast: **аддитивное** накопление relay-частей — observation от formal_reason НЕ
-  затирается observation от memory_query; дельта 1-го цикла (``ex:PositiveAgeShape`` из входа
-  formal_reason) видна в 3-м reasoning вместе с маркерами memory_query
+- formal_reason handler: pySHACL validate, ``<history>``-часть с conforms=true
+- memory_query handler: aquery к LightRAG, ``<history>``-наблюдение через enrich_fast
+- enrich_fast: сплайс сырых ``<history>``-частей окна-дельты (IRT-письма с прошлого
+  ``To: reasoning``, дедуп по контент-CID) → единый поток в секции ``<conversation_delta>``
+  промпта reasoning, каждая запись подписана ``[from: <stage>]``
+- enrich_fast: **аддитивное** накопление ``<history>``-частей — наблюдение formal_reason НЕ
+  затирается наблюдением memory_query; дельта 1-го цикла (``ex:PositiveAgeShape`` из входа
+  formal_reason = ``<history>`` tool-call'а reasoning) видна в 3-м reasoning вместе с маркерами
+  memory_query
 - post-assert: WireMock journal (``ex:PositiveAgeShape``) + notmuch ``PositiveAgeShape`` в
-  ``reasoning/Maildir`` (тело relay unified-delta на диске; без ``:`` — notmuch phrase-tokenizer)
+  ``reasoning/Maildir`` (тело ``<history>``-части на диске; без ``:`` — notmuch phrase-tokenizer)
 - Полный FSM цикл с 3 reasoning вызовами
 
 Стабы используют фазовый автомат WireMock State Extension:

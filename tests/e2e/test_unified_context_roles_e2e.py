@@ -104,7 +104,7 @@ def _reasoning_user_bodies(wm_base: str, *, stub_tag: str, correlation_key: str)
 @pytest.mark.e2e_live
 @pytest.mark.mailflow
 def test_unified_context_roles_two_turn(deployed_stack: str) -> None:
-    """Turn1 observe cycle; turn2 reasoning context whitelist (SERVICE stages excluded)."""
+    """Turn1 observe cycle; turn2 reasoning context = deduped <history> stream (no relay blob)."""
     project = deployed_stack
     try:
         with mailflow_inject_and_wait(UNIFIED_CONTEXT_TURN1_SPEC, project) as (
@@ -167,7 +167,17 @@ def test_unified_context_roles_two_turn(deployed_stack: str) -> None:
             mail_ctx = _conversation_history_from_reasoning_journal(merged)
             assert mail_ctx, "no <conversation_history> in reasoning WireMock journal"
             assert _SERVICE_STAGE_ADDR_LEAK not in mail_ctx.lower(), (
-                "SERVICE-stage mailboxes must not appear in unified IRT conversation_history"
+                "enrich_fast relay blob must collapse by content-CID dedup (and To: line is "
+                "not rendered): only canonical origins appear in conversation_history"
+            )
+            # Durability of tool output across turns (the history/system fix): the turn-1
+            # observe chunk is produced mid-turn (fast cycle) yet MUST survive into a
+            # <conversation_history> section — that section is rebuilt only by the full
+            # enrich of turn 2 from <history>-parts of the thread. If it appears only in
+            # the fast-cycle <conversation_delta>, full enrich lost it (the original bug).
+            assert E2E_OBSERVED_CHUNK in mail_ctx, (
+                "turn-1 observe output missing from <conversation_history>: full enrich "
+                "did not collect it from thread <history>-parts (history/system regression)"
             )
             log.info("unified_context_roles_ok", correlation_key=correlation_key)
     except Exception:

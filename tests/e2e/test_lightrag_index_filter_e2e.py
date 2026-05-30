@@ -1,22 +1,22 @@
 """Селективная индексация LightRAG на **уже поднятом** e2e-стеке (без compose/bake/Ansible).
 
 **Тест-кейс.** Полный почтовый контур (как ``test_mailflow_e2e``) прогоняется до
-конца, после чего проверяется **симметрия отбора enrich/drain**: drain индексирует
-только content-indexable стадии и отсекает SERVICE/не-whitelist стадии на уровне
-notmuch-селектора (push-down), а не пост-фильтром в Python.
+конца, после чего проверяется **единый предикат содержательности**: drain индексирует
+письма, несущие ``<history>``-часть (``message_has_history``), и пропускает письма без
+неё (только ``<system>``/control). Один контракт с enrich/enrich_fast — без таблицы
+``CONTEXT_ROLE_BY_TO_STAGE`` и роли SERVICE.
 
 Инвариант (см. [`INDEX.md` §5b.2](../../docs/INDEX.md), [`TYPES.md`](../../docs/TYPES.md)):
 
-* ``to:ingress@localhost`` (content-indexable, роль ``USER_INPUT``) → ``tag:lightrag_indexed``;
-* ``to:enrich@localhost`` (``SERVICE``), ``to:reasoning@localhost`` (нет роли),
-  ``to:response_finalize@localhost`` (нет роли) — в треде присутствуют, но **не**
-  ``tag:lightrag_indexed``: селектор ``lightrag_drain_pending_search()`` их не выбрал;
-* drain доходит до idle — отсечённые письма не «застревают» в pending.
+* ``to:enrich@localhost`` (письмо ingress→enrich несёт ``<history>`` пользовательского
+  хода) → ``tag:lightrag_indexed``;
+* ``to:ingress@localhost`` (внешнее письмо моста — голый ``text/plain`` без
+  ``<history>``-части) — в треде присутствует, но **не** ``tag:lightrag_indexed``:
+  load-time предикат ``message_has_history`` пометил его ``+lightrag_skipped``;
+* drain доходит до idle — пропущенные письма не «застревают» в pending.
 
-Принципиальное отличие от enrich: enrich собирает контекст обходом IRT-цепочки
-(`to_stage_in_unified_role`, memory — отдельные бакеты), drain сканирует union-индекс
-глобально (`content_indexable_stages`, memory индексируется напрямую). Поэтому единый
-базис ``CONTEXT_ROLE_BY_TO_STAGE`` (роль ≠ SERVICE), но два предиката.
+notmuch не индексирует MIME-части по Content-ID, поэтому selector даёт лишь tag-негативы,
+а финальный предикат ``message_has_history`` применяется load-time в ``_drain.py``.
 
 Стабы WireMock переиспользуются из ``wiremock_stubs/test_mailflow_e2e/`` — отдельная
 изоляция по ``X-Threlium-Thread-Root`` (уникальный ``correlation_key``).
@@ -51,12 +51,12 @@ LIGHTRAG_FILTER_SPEC = MailflowScenarioSpec(
     min_embedding_posts=5,
 )
 
-_INDEXED_STAGES: tuple[FsmStage, ...] = (FsmStage.INGRESS,)
-_EXCLUDED_STAGES: tuple[FsmStage, ...] = (
-    FsmStage.ENRICH,
-    FsmStage.REASONING,
-    FsmStage.RESPONSE_FINALIZE,
-)
+# ingress→enrich несёт <history> пользовательского хода → индексируется; внешнее письмо
+# моста (to:ingress) — голый text/plain без <history> → пропускается (lightrag_skipped).
+# reasoning/response_finalize теперь содержательны (несут <history>), поэтому из excluded
+# убраны — единый предикат message_has_history, без whitelist по To:-стадии.
+_INDEXED_STAGES: tuple[FsmStage, ...] = (FsmStage.ENRICH,)
+_EXCLUDED_STAGES: tuple[FsmStage, ...] = (FsmStage.INGRESS,)
 
 
 @pytest.fixture()
@@ -71,7 +71,7 @@ def lightrag_filter_stack(deployed_stack: str) -> object:
 def test_lightrag_selective_indexing(
     lightrag_filter_stack: tuple[str, str, str, str, str, str],
 ) -> None:
-    """Drain индексирует content-indexable стадии и отсекает SERVICE/не-whitelist."""
+    """Drain индексирует письма с <history>-частью и пропускает письма без неё."""
     project, raw_id, _canonical_id, nm_inner, stub_tag, correlation_key = (
         lightrag_filter_stack
     )
