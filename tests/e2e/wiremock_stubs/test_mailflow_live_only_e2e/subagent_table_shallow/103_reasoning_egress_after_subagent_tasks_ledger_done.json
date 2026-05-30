@@ -5,11 +5,20 @@
     "headers": {
       "X-Threlium-Call-Site": {
         "equalTo": "fsm"
+      },
+      "To": {
+        "contains": "reasoning@localhost"
       }
     },
     "bodyPatterns": [
       {
         "matches": "(?s).*(openai/threlium_e2e_l0|threlium_e2e_l0).*"
+      },
+      {
+        "contains": "<envelope>"
+      },
+      {
+        "contains": "\"tools\""
       },
       {
         "contains": "sat-shallow-01"
