@@ -49,17 +49,21 @@ class EnrichPartId(StrEnum):
     RESPONSE_OBSERVATION = "<response-observation>"
     MEMORY_NOTE = "<memory-note>"
     OBSERVATION_NOTE = "<observation-note>"
+    UNIFIED_DELTA = "<unified-delta>"
 
 
 # Семейства relay-частей (источник: вспомогательные стадии → enrich_fast → reasoning).
 # Каждый хоп штампует уникальный CID ``<{family}@{inner-mid}>`` (EnrichContentId.from_relay),
 # поэтому повторные вызовы одной стадии не затирают друг друга, а накапливаются.
 # ``RESPONSE_OBSERVATION`` (бывш. ``PLAN_STATE``) — нарратив-обзор буфера ответа + задач
-# от ``response_observe``.
+# от ``response_observe``. ``UNIFIED_DELTA`` — собирается самим ``enrich_fast``: хронология
+# unified-role писем, появившихся с прошлого ``To: reasoning`` (E_prev) до текущего листа;
+# каждый быстрый цикл добавляет свою часть, прошлые переносятся как части E_prev.
 RELAY_FAMILIES: Final[tuple[EnrichPartId, ...]] = (
     EnrichPartId.OBSERVATION_NOTE,
     EnrichPartId.RESPONSE_OBSERVATION,
     EnrichPartId.MEMORY_NOTE,
+    EnrichPartId.UNIFIED_DELTA,
 )
 
 # Фиксированные Content-ID полного ``enrich`` (build_enriched_multipart): не relay,
@@ -380,6 +384,7 @@ def splice_e_prev_with_incoming_relay(
     *,
     response_state_text: str,
     task_state_text: str | None = None,
+    unified_delta: tuple[EnrichContentId, str] | None = None,
 ) -> RelaySpliceResult:
     """``E_prev`` + relay-части входящего письма → новый multipart для reasoning.
 
@@ -389,7 +394,11 @@ def splice_e_prev_with_incoming_relay(
     * **пересобирает** ``<response-state>`` из ``response_state_text`` (CRDT) и — если
       передан ``task_state_text`` — ``<task-state>`` из него (детерминированный recompute);
     * **дописывает в хвост** relay-части ``incoming`` (не core, см.
-      :meth:`EnrichContentId.is_core`) — как есть, с их оригинальным ``Content-ID``.
+      :meth:`EnrichContentId.is_core`) — как есть, с их оригинальным ``Content-ID``;
+    * если передан ``unified_delta`` ``(cid, text)`` — добавляет его как ещё одну
+      relay-часть (хронология unified-писем, появившихся с прошлого ``To: reasoning``).
+      Часть вычисляет сам ``enrich_fast`` (её нет во входящем письме), CID уникален на
+      хоп (``<unified-delta@{inner-mid}>``), поэтому накапливается, а не затирается.
 
     Дубли по ``Content-ID`` не добавляются (идемпотентность при повторном проходе) и
     попадают в ``skipped``; новые — в ``appended``. Уникальность relay-CID
@@ -436,6 +445,13 @@ def splice_e_prev_with_incoming_relay(
         out.attach(part)
         seen.add(cid)
         appended.append(cid)
+
+    if unified_delta is not None:
+        delta_cid, delta_text = unified_delta
+        if delta_text.strip() and delta_cid not in seen:
+            out.attach(_make_inline_text_part(delta_cid, delta_text))
+            seen.add(delta_cid)
+            appended.append(delta_cid)
 
     return RelaySpliceResult(message=out, appended=tuple(appended), skipped=tuple(skipped))
 

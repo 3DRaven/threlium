@@ -14,7 +14,7 @@ from threlium.litellm_client import litellm_completion_sync
 from litellm.types.utils import Message
 
 from threlium.fsm_emit import HDR_HOP_BUDGET, build_fsm_plain_to_stage, hop_budget_remaining
-from threlium.logutil import logger
+from threlium.logutil import clip_log_text, logger
 from threlium.mime_reform import canonicalize_mime
 from threlium.prompts import render_prompt
 from threlium.states.reasoning_tool_spec import (
@@ -79,6 +79,7 @@ def _render_user_prompt(
         response_observations=list(ctx.response_observations),
         memory_notes=list(ctx.memory_notes),
         observation_notes=list(ctx.observation_notes),
+        unified_deltas=list(ctx.unified_deltas),
     )
 
 
@@ -96,12 +97,13 @@ def _route_from_assistant(
         )
     tool_name = ReasoningToolFunctionName.parse_tool_call(tc)
     wire = ReasoningToolCallArgumentsWire.from_tool_call(tc)
-    decision = route_decision_from_tool_call(tool_name, wire, schemas)
     log.info(
         "tool_call_args",
-        route=decision.target.value,
+        route=tool_name.value,
         args_len=len(wire.value),
+        args_wire=clip_log_text(wire.value),
     )
+    decision = route_decision_from_tool_call(tool_name, wire, schemas)
     log.info(
         "rendered_email",
         route=decision.target.value,

@@ -29,6 +29,16 @@ From: {{ from_hdr or "(none)" }}
 {{ mail_context }}
 </conversation_history>
 {% endif %}
+{% if unified_deltas %}
+
+<conversation_delta>
+{% for block in unified_deltas %}{{ block }}{% if not loop.last %}
+
+---
+
+{% endif %}{% endfor %}
+</conversation_delta>
+{% endif %}
 {% if thread_memory %}
 
 <thread_memory>

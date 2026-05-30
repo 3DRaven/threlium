@@ -107,6 +107,7 @@ _RELAY_FAMILY_ORDER: tuple[EnrichPartId, ...] = (
     EnrichPartId.RESPONSE_OBSERVATION,
     EnrichPartId.MEMORY_NOTE,
     EnrichPartId.OBSERVATION_NOTE,
+    EnrichPartId.UNIFIED_DELTA,
 )
 
 
@@ -155,6 +156,7 @@ class ReasoningEnrichContext(msgspec.Struct, frozen=True, kw_only=True):
     response_observations: tuple[str, ...]
     memory_notes: tuple[str, ...]
     observation_notes: tuple[str, ...]
+    unified_deltas: tuple[str, ...]
 
     @classmethod
     def from_email(cls, msg: EmailMessage, *, max_chars: int) -> Self:
@@ -188,6 +190,7 @@ class ReasoningEnrichContext(msgspec.Struct, frozen=True, kw_only=True):
             response_observations=tuple(relay[EnrichPartId.RESPONSE_OBSERVATION]),
             memory_notes=tuple(relay[EnrichPartId.MEMORY_NOTE]),
             observation_notes=tuple(relay[EnrichPartId.OBSERVATION_NOTE]),
+            unified_deltas=tuple(relay[EnrichPartId.UNIFIED_DELTA]),
         )
 
 

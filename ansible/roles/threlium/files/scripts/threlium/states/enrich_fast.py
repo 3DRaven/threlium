@@ -12,11 +12,17 @@ from __future__ import annotations
 
 from email.message import EmailMessage
 
-from threlium.enrich_context import trim_context_text
+from threlium.enrich_context import (
+    collect_unified_delta_msgs,
+    render_unified_delta_text,
+    trim_context_text,
+)
 from threlium.fsm_emit import emit_transition_preserving_payload
 from threlium.fsm_emit_semantic import managed_patch_simple_fsm_step
 from threlium.logutil import logger
 from threlium.mime_reform import (
+    EnrichContentId,
+    EnrichPartId,
     email_message_from_path,
     splice_e_prev_with_incoming_relay,
 )
@@ -70,14 +76,28 @@ def main(
     task_ledger = reduce_task_ops(collect_task_ops(inner))
     task_state_text = trim_context_text(build_task_state_summary(task_ledger), limit)
 
+    delta_msgs = collect_unified_delta_msgs(inner)
+    delta_text = render_unified_delta_text(delta_msgs, settings=config)
+    unified_delta: tuple[EnrichContentId, str] | None = None
+    if delta_text:
+        unified_delta = (
+            EnrichContentId.from_relay(EnrichPartId.UNIFIED_DELTA, inner),
+            delta_text,
+        )
+
     spliced = splice_e_prev_with_incoming_relay(
-        e_prev, msg, response_state_text=trimmed_summary, task_state_text=task_state_text,
+        e_prev, msg,
+        response_state_text=trimmed_summary,
+        task_state_text=task_state_text,
+        unified_delta=unified_delta,
     )
 
     log.info(
         "spliced_relay_parts",
         ops_count=len(ops),
         response_state_chars=len(trimmed_summary),
+        unified_delta_msgs=len(delta_msgs),
+        unified_delta_chars=len(delta_text),
         appended_cids=[cid.value for cid in spliced.appended] or None,
         skipped_duplicate_cids=[cid.value for cid in spliced.skipped] or None,
         message_id=mid_w.value if mid_w else None,

@@ -6,7 +6,7 @@
 кастомного prepare() для dict в record.msg.
 
 Публичный API:
-    from threlium.logutil import logger, setup_logging, shutdown_logging
+    from threlium.logutil import clip_log_text, logger, setup_logging, shutdown_logging
 """
 from __future__ import annotations
 
@@ -30,6 +30,20 @@ _FOREIGN_PRE_CHAIN = [
 
 _LITELLM_LOGGER_NAMES: tuple[str, ...] = ("LiteLLM", "LiteLLM Proxy", "LiteLLM Router")
 _FOREIGN_LOGGER_NAMES: tuple[str, ...] = ("httpx", "lightrag")
+
+_LOG_CLIP_SUFFIX = "…"
+_DEFAULT_LOG_TEXT_MAX_LEN = 128
+
+
+def clip_log_text(value: str, *, max_len: int = _DEFAULT_LOG_TEXT_MAX_LEN) -> str:
+    """Обрезать строку для structlog/journald; при превышении — суффикс ``…``."""
+    if max_len < 1:
+        raise ValueError(f"max_len must be >= 1, got {max_len!r}")
+    if len(value) <= max_len:
+        return value
+    if max_len <= len(_LOG_CLIP_SUFFIX):
+        return _LOG_CLIP_SUFFIX[:max_len]
+    return f"{value[: max_len - len(_LOG_CLIP_SUFFIX)]}{_LOG_CLIP_SUFFIX}"
 
 
 def _configure_litellm_loggers() -> None:

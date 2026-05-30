@@ -82,8 +82,9 @@ class EditOp:
 | `<task-init>` | `enrich` | Стартовый набор подзадач (op `TaskInitOp`, durable для collect) |
 | `<task-state>` | `enrich` / `enrich_fast` | Детерминированный reduced-ledger (кэш для промпта) |
 | `<response-observation>` | `response_observe` | Нарратив-обзор буфера + задач (бывш. `<plan-state>`) |
+| `<unified-delta>` | `enrich_fast` | Хронология unified-писем с прошлого `To: reasoning` до листа (`collect_unified_delta_msgs`) |
 
-`enrich_fast` пересобирает (**replace**) `<response-state>` и `<task-state>`; relay-части (`<observation-note>` / `<response-observation>` / `<memory-note>`) дописываются **аддитивно** с уникальным `Content-ID` `<{family}@{inner-mid}>` — повторные хопы накапливаются, а не затирают друг друга. Остальные части `E_prev` не пересобираются.
+`enrich_fast` пересобирает (**replace**) `<response-state>` и `<task-state>`; relay-части (`<observation-note>` / `<response-observation>` / `<memory-note>` / `<unified-delta>`) дописываются **аддитивно** с уникальным `Content-ID` `<{family}@{inner-mid}>` — повторные хопы накапливаются, а не затирают друг друга. `<unified-delta>` собирает сам `enrich_fast` (см. [FSM.md §5.2](FSM.md#52-контракт-тела-enrich--reasoning)), а не входящее письмо. Остальные части `E_prev` не пересобираются.
 
 ## 8. Task-ledger CRDT (anti-drift)
 

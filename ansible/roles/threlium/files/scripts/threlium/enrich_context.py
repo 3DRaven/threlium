@@ -8,9 +8,10 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 from threlium import nm
-from threlium.context_budget import to_stage_in_unified_role
+from threlium.context_budget import SERVICE_TRANSITION_STAGES, to_stage_in_unified_role
 from threlium.irt_chain import IrtAncestorSnapshot
 from threlium.logutil import logger
+from threlium.prompts import render_prompt
 from threlium.settings import ThreliumSettings
 from threlium.thread_context_filter import iter_irt_ancestors_filtered
 from threlium.mime_reform import email_message_from_path
@@ -21,6 +22,7 @@ from threlium.types import (
     NotmuchQueryConnective,
     NotmuchQueryField,
     NotmuchTag,
+    PromptPath,
 )
 
 log = logger.bind(stage="enrich_context")
@@ -149,3 +151,59 @@ def build_unified_email_messages(
         thread_memory_msgs=_sort_email_messages_oldest_first(_load_paths(tm_paths)),
         global_memory_msgs=_sort_email_messages_oldest_first(_load_paths(gm_paths)),
     )
+
+
+def collect_unified_delta_msgs(leaf_inner: NotmuchMessageIdInner) -> list[EmailMessage]:
+    """unified-role письма, появившиеся с прошлого ``To: reasoning`` (E_prev) до листа.
+
+    Обход IRT лист→корень (с изоляцией субагентов через
+    :func:`iter_irt_ancestors_filtered`) обрывается на ближайшем ``To: reasoning`` —
+    это E_prev (в multi-cycle — выход прошлого ``enrich_fast``). Всё строго новее этой
+    границы и в unified-роли (:func:`to_stage_in_unified_role`, без
+    ``tag:context_summarized``) идёт в дельту. По структуре IRT там нет «старых»
+    писем, поэтому MID-дедуп не нужен; прошлые циклы отрезаны watermark'ом.
+
+    Stage-agnostic: не зависит от того, сколько и какие стадии стоят перед
+    ``enrich_fast`` — фильтр по роли, а не по конкретным стадиям. Current-user-skip
+    из :func:`build_unified_email_messages` здесь намеренно не применяется: дельта не
+    пересобирает ``<user-message>``, поэтому ``ingress`` (USER_INPUT) уместен в ней.
+    """
+    summarized = NotmuchTag.CONTEXT_SUMMARIZED.value
+    snaps: list[IrtAncestorSnapshot] = []
+    for snap in iter_irt_ancestors_filtered(leaf_inner):
+        if snap.is_addressed_to_fsm_stage(FsmStage.REASONING):
+            break
+        if summarized in snap.tags:
+            continue
+        if not to_stage_in_unified_role(snap.to_fsm_stage()):
+            continue
+        snaps.append(snap)
+
+    loaded: list[EmailMessage] = []
+    for snap in snaps:
+        try:
+            loaded.append(email_message_from_path(snap.path))
+        except OSError as exc:
+            log.warning(
+                "unified_delta_load_path_skipped", path=str(snap.path), exc_msg=str(exc)
+            )
+            continue
+    return _sort_email_messages_oldest_first(loaded)
+
+
+def render_unified_delta_text(
+    msgs: list[EmailMessage], *, settings: ThreliumSettings
+) -> str:
+    """Рендер дельты через ``lightrag/mail_context.j2`` (полное тело), тримминг по лимиту."""
+    if not msgs:
+        return ""
+    raw = render_prompt(
+        PromptPath.LIGHTRAG_MAIL_CONTEXT,
+        messages=msgs,
+        tier_assignments={},
+        tier_assignments_types={},
+        preview_chars=settings.enrich.tier_preview_chars,
+        total_messages=len(msgs),
+        service_stage_mailboxes=[s.rfc822_mailbox for s in SERVICE_TRANSITION_STAGES],
+    ).strip()
+    return trim_context_text(raw, settings.enrich.context_max_chars)
