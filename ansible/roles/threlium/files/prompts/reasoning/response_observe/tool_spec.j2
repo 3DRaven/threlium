@@ -5,7 +5,7 @@
   "type": "function",
   "function": {
     "name": "response_observe",
-    "description": "Analyze the current reply buffer with LLM-powered summarization. Returns structured assessment: per-chunk summaries, overall coherence, completeness, unresolved issues, and edit/finalize recommendations. Use before response_edit or response_finalize to verify and plan next steps. When NOT to use: not on an empty buffer or a short direct reply that never used response_append — finalize directly.",
+    "description": "Maze move — CHECKPOINT: stop at the junction and check the buffer against the plan and the evidence (explored vs assumed). Analyze the current reply buffer with LLM-powered summarization. Returns structured assessment: per-chunk summaries, overall coherence, completeness, unresolved issues, and edit/finalize recommendations. Use before response_edit or response_finalize to verify and plan next steps. When NOT to use: not on an empty buffer or a short direct reply that never used response_append — finalize directly.",
     "parameters": {
       "type": "object",
       "properties": {

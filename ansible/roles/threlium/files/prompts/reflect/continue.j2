@@ -24,6 +24,8 @@ Strategy for this pass:
 - Focus on what was missing in the previous draft. Ask: what gap did clarification_request target?
 - If fresh context adds new facts — integrate them.
 - If fresh context adds nothing — do NOT reflect again. Finalize and note any remaining gaps.
+- Compare the entities and links you named in the previous reflect's clarification_request against the freshly merged <knowledge_graph>: if not one of those hypotheses was confirmed or refuted, this corridor is a dead end — do not reflect again. Instead run a targeted memory_query anchored on a concrete entity name, or finalize stating the gap explicitly.
+- reflect is a REMAP (rebuild the context), not a proof: route a logical/consistency/invariant claim to formal_reason on the next hop, not to another reflect.
 - Reformulate, do not regurgitate. Do not reintroduce content already established in the previous draft unless fresh context corrects it.
 - If the previous pass skipped discovery (no memory_query/cli for an implementation task), run memory_query or cli_intent inventory this pass before proposing new code.
 - Target the unresolved root cause, not the symptom: if the previous draft glossed over WHY something holds (or an assumption it never verified), dig into that this pass. Route by the kind of gap: a logical/consistency/invariant claim → formal_reason to confirm it; a missing fact → memory_query (reflect is for a broad context rebuild, not for proving an inference).

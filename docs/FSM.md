@@ -506,6 +506,7 @@ Assessment: response is 60% complete...
 
 - `[MEMORY_TABLE.md](MEMORY_TABLE.md)` — матрицы переходов `thread_memory` и `global_memory`, связь с LightRAG-индексацией (синтетический ingest + `chunking_func`, [`INDEX.md §7.6`](INDEX.md#76-per-thread-scoping-soft-через-маркеры); ранее — GraphRAG-экспортом).
 - `[MEMORY_TABLE.md §3](MEMORY_TABLE.md#3-reflect-продолжение-рассуждения)` — `reflect@localhost`: tool «думать ещё один цикл» через свежий `ingress → enrich → reasoning`, budget-aware промпт через шаблоны `$THRELIUM_HOME/prompts/reflect/{continue,final}.j2`. Self-route `reasoning → reasoning` отсутствует сознательно (минует `enrich`, нарушает SoT-инвариант [§5](#5-контракт-тела-между-стадиями)).
+- Промпт `reasoning` (`prompts/reasoning/system.j2`) задаёт модель навигации в условиях неполного контекста (видимый коридор enrich-выборки → explore `memory_query`/`cli_intent` → remap `reflect` → prove `formal_reason` → checkpoint `response_observe` → exit `response_finalize`); полная версия — bootstrap-док `knowledge/agent_navigation.md`, подтягиваемый через `memory_query`.
 
 ### 6.5. CLI-контур и безопасность исполнения
 
