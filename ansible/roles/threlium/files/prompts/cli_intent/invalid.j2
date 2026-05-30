@@ -3,3 +3,5 @@
     docs/ARCHITECTURE.md §6.2: cli_intent rejects on unparsable JSON.
     Route: ingress@localhost; Subject: cli_intent/invalid_subject.j2. -#}
 Threlium cli_intent: invalid or missing JSON intent. Expected a single JSON object with {"cli":{"argv":["cmd",...],"cwd":"..."}}.
+received payload: {{ prior }}
+The payload above could not be parsed and was NOT executed. Re-issue cli_intent with valid JSON.

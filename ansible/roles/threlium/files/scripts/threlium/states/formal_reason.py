@@ -11,9 +11,9 @@ from rdflib.namespace import RDF, SH
 from pyshacl import validate
 from pyshacl.errors import ConstraintLoadError, RuleLoadError, ShapeLoadError
 
-from threlium.fsm_emit import build_fsm_multipart_to_stage
+from threlium.fsm_emit import build_fsm_step_to_stage
 from threlium.knowledge_fsm import parse_formal_reason_payload
-from threlium.mime_reform import EnrichPartId, extract_plain_body
+from threlium.mime_reform import system_part_text
 from threlium.prompts import render_prompt
 from threlium.settings import ThreliumSettings
 from threlium.states.rdf_graphs import (
@@ -43,7 +43,8 @@ def _count_violations(results_graph: Graph) -> int:
 def main(
     msg: EmailMessage, stage: FsmStage, *, config: ThreliumSettings
 ) -> EmailMessage | None:
-    payload = parse_formal_reason_payload(extract_plain_body(msg))
+    request_payload = system_part_text(msg)
+    payload = parse_formal_reason_payload(request_payload)
     if payload is None:
         raise RuntimeError("formal_reason: invalid payload")
 
@@ -173,10 +174,17 @@ def main(
     )
     note = EnrichObservationNoteText.parse(observation).value
 
-    return build_fsm_multipart_to_stage(
+    # Модель «callee владеет историей»: в память едут ОБЕ стороны диалога с инструментом —
+    # ОТВЕТ (observation: conforms/violations/derived/query) как <history> origin=formal_reason,
+    # и ЗАПРОС (что отдали на проверку: reasoning + shapes/facts/ontology/query) как
+    # request_echo с предштампом origin=reasoning. Без эха формулировка задачи терялась бы из
+    # истории (reasoning теперь шлёт payload только в <system>) — ровно тот регресс, с которого
+    # начался рефакторинг. Разные тела → разные <hash@history>, дедуп их не схлопывает.
+    return build_fsm_step_to_stage(
         msg,
         to_addr=FsmStage.ENRICH_FAST,
         from_stage=stage,
-        parts=[(EnrichPartId.OBSERVATION_NOTE, note)],
+        history=note,
+        request_echo=request_payload,
         settings=config,
     )

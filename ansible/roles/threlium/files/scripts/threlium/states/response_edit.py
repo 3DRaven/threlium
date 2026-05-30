@@ -12,7 +12,7 @@ from email.message import EmailMessage
 from threlium.fsm_emit import build_fsm_plain_to_stage
 from threlium.fsm_emit_semantic import emit_transition_simple_step_preserving_payload
 from threlium.logutil import logger
-from threlium.mime_reform import extract_plain_body
+from threlium.mime_reform import system_part_text
 from threlium.prompts import render_prompt
 from threlium.response.collect import collect_ops
 from threlium.response.ops import AppendOp
@@ -38,7 +38,7 @@ def main(
     if inner is None:
         raise RuntimeError("response_edit: no Message-ID on incoming message")
 
-    body_raw = extract_plain_body(msg).strip()
+    body_raw = system_part_text(msg).strip()
     try:
         data = json.loads(body_raw)
         target_position = int(data["position"])

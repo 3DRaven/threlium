@@ -2,29 +2,30 @@
 
 Быстрый цикл обратной связи: берёт предыдущий enriched-контекст ``E_prev``
 (multipart/mixed с MIME-частями по Content-ID), пересобирает ``<response-state>``
-из CRDT и **аддитивно** дописывает relay-части входящего письма (с их
-оригинальными уникальными Content-ID) — возвращает в reasoning без повторного RAG.
+и ``<task-state>`` из CRDT и **аддитивно** дописывает ``<history>``-части окна-дельты
+(всё, что появилось с прошлого ``To: reasoning`` до листа) — возвращает в reasoning
+без повторного RAG.
 
-Stage-agnostic: enrich_fast не знает, какая стадия прислала relay-часть; повторные
-хопы одной стадии накапливаются (уникальный CID на хоп), а не затирают друг друга.
+Контент-адресные CID ``<{sha256(body)}@history>`` дают автоматический дедуп по телу:
+оригинал и его relay-копии схлопываются в одну часть. Origin (стадия-источник) — единственная
+стадия, теряющая контекст между ходами, поэтому именно ``enrich_fast`` штампует
+``X-Threlium-Origin`` на каждой ``<history>``-части из её конвертного ``From:``; ``score``
+уже проставлен стадией-источником. Stage-agnostic: фильтр по наличию ``<history>``, а не
+по конкретным ``To:``-стадиям.
 """
 from __future__ import annotations
 
 from email.message import EmailMessage
 
-from threlium.enrich_context import (
-    collect_unified_delta_msgs,
-    render_unified_delta_text,
-    trim_context_text,
-)
+from threlium.enrich_context import collect_unified_delta_msgs, trim_context_text
 from threlium.fsm_emit import emit_transition_preserving_payload
 from threlium.fsm_emit_semantic import managed_patch_simple_fsm_step
 from threlium.logutil import logger
 from threlium.mime_reform import (
     EnrichContentId,
-    EnrichPartId,
     email_message_from_path,
-    splice_e_prev_with_incoming_relay,
+    iter_history_parts,
+    splice_e_prev_with_history,
 )
 from threlium.response.collect import collect_ops
 from threlium.response.state_summary import build_state_summary
@@ -40,6 +41,8 @@ from threlium.types import (
 
 log = logger.bind(stage="enrich_fast")
 
+_HDR = MailHeaderName
+
 
 def _find_e_prev(start_inner: NotmuchMessageIdInner) -> EmailMessage | None:
     """Найти ``E_prev``: первый предок своего фрейма, адресованный reasoning@localhost.
@@ -50,6 +53,26 @@ def _find_e_prev(start_inner: NotmuchMessageIdInner) -> EmailMessage | None:
         if snap.is_addressed_to_fsm_stage(FsmStage.REASONING):
             return email_message_from_path(snap.path)
     return None
+
+
+def _collect_delta_history_parts(
+    delta_msgs: list[EmailMessage],
+) -> list[tuple[EnrichContentId, EmailMessage]]:
+    """``<history>``-части окна-дельты со штампом ``X-Threlium-Origin`` (= конвертный From).
+
+    Origin ставится один раз на части без него: стадии-источники проставляют только
+    ``score`` (полнота знаний о своём контенте), а ``origin`` теряется при релее — его
+    восстанавливает enrich_fast по ``From:`` письма-носителя. Тело части не трогаем —
+    контент-адресный CID ``<{hash}@history>`` обязан остаться стабильным для дедупа.
+    """
+    out: list[tuple[EnrichContentId, EmailMessage]] = []
+    for dm in delta_msgs:
+        origin = FsmStage.try_from_mailbox(dm.get(_HDR.FROM.value))
+        for cid, part in iter_history_parts(dm):
+            if origin is not None and not part.get(_HDR.ORIGIN.value):
+                part[_HDR.ORIGIN.value] = origin.rfc822_mailbox
+            out.append((cid, part))
+    return out
 
 
 def main(
@@ -77,27 +100,21 @@ def main(
     task_state_text = trim_context_text(build_task_state_summary(task_ledger), limit)
 
     delta_msgs = collect_unified_delta_msgs(inner)
-    delta_text = render_unified_delta_text(delta_msgs, settings=config)
-    unified_delta: tuple[EnrichContentId, str] | None = None
-    if delta_text:
-        unified_delta = (
-            EnrichContentId.from_relay(EnrichPartId.UNIFIED_DELTA, inner),
-            delta_text,
-        )
+    history_parts = _collect_delta_history_parts(delta_msgs)
 
-    spliced = splice_e_prev_with_incoming_relay(
-        e_prev, msg,
+    spliced = splice_e_prev_with_history(
+        e_prev,
         response_state_text=trimmed_summary,
         task_state_text=task_state_text,
-        unified_delta=unified_delta,
+        history_parts=history_parts,
     )
 
     log.info(
-        "spliced_relay_parts",
+        "spliced_history_parts",
         ops_count=len(ops),
         response_state_chars=len(trimmed_summary),
-        unified_delta_msgs=len(delta_msgs),
-        unified_delta_chars=len(delta_text),
+        delta_msgs=len(delta_msgs),
+        delta_history_parts=len(history_parts),
         appended_cids=[cid.value for cid in spliced.appended] or None,
         skipped_duplicate_cids=[cid.value for cid in spliced.skipped] or None,
         message_id=mid_w.value if mid_w else None,

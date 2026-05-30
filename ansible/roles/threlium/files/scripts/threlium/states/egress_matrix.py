@@ -20,7 +20,7 @@ from threlium.ingress_route_resolve import (
     resolve_egress_task_route_ancestor_with_thread_correlation,
 )
 from threlium.logutil import logger
-from threlium.mime_reform import RFC822_FOR_INSERT, extract_plain_body
+from threlium.mime_reform import RFC822_FOR_INSERT, system_part_text
 from threlium.settings import ThreliumSettings
 from threlium.types.litellm_correlation_header import LitellmCorrelationHeader
 from threlium.types import (
@@ -136,7 +136,7 @@ def main(
     log.info("routing", room_id=room_id, event_ref=event_id)
 
     body_wire = MatrixOutboundPlainBodyWire.parse_present_optional(
-        extract_plain_body(msg)
+        system_part_text(msg)
     )
     if body_wire is None:
         raise RuntimeError("egress_matrix: plain body is empty after strip")

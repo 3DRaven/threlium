@@ -20,7 +20,7 @@ from threlium.ingress_route_resolve import (
 )
 from threlium.invisible_task_mid import PLACEHOLDER_TEXT
 from threlium.logutil import logger
-from threlium.mime_reform import RFC822_FOR_INSERT, extract_plain_body
+from threlium.mime_reform import RFC822_FOR_INSERT, system_part_text
 from threlium.bridges.telegram import (
     edit_message_text,
     run_ptb,
@@ -115,7 +115,7 @@ def main(
 
     token_vo = telegram_token(config)
     body_wire = TelegramPtbOutboundReplyBody.parse_present_optional(
-        extract_plain_body(msg)
+        system_part_text(msg)
     )
     if body_wire is None:
         raise RuntimeError("egress_telegram: plain body is empty after strip")

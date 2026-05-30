@@ -11,17 +11,16 @@ import json
 from email.message import EmailMessage
 
 from threlium import nm as nmlib
-from threlium.fsm_emit import build_fsm_plain_to_stage
+from threlium.fsm_emit import build_fsm_step_to_stage
 from threlium.litellm_client import litellm_site_completion_text
 from threlium.litellm_correlation_headers import build_litellm_correlation_headers
 from threlium.litellm_route_context import get_litellm_http_correlation
 from threlium.logutil import logger
-from threlium.mime_reform import extract_plain_body
+from threlium.mime_reform import system_part_text
 from threlium.prompts import render_prompt
 from threlium.settings import ThreliumSettings
 from threlium.types import (
     FsmStage,
-    FsmTransitionPlainBody,
     LiteLlmChatMessage,
     LitellmCallSite,
     LitellmRoutingSite,
@@ -76,7 +75,7 @@ def _e2e_litellm_correlation(
 def main(
     msg: EmailMessage, stage: FsmStage, *, config: ThreliumSettings
 ) -> EmailMessage | None:
-    body_raw = extract_plain_body(msg).strip()
+    body_raw = system_part_text(msg).strip()
     parsed = _parse_payload(body_raw)
     if parsed is None:
         log.error("unparseable_payload", body_preview=body_raw[:200])
@@ -109,10 +108,13 @@ def main(
     tagged = nmlib.batch_tag_add(nm_mids, NotmuchTag.CONTEXT_SUMMARIZED)
     log.info("tagged_originals", tagged=tagged, total=len(nm_mids))
 
-    return build_fsm_plain_to_stage(
+    # Сводка едет <history>-частью: оригиналы помечены context_summarized (выпадают из
+    # unified), поэтому именно эта history-копия заменяет их в контексте следующего enrich.
+    # summarize_memory payload не потребляет (re-trigger по IRT), <system> не нужен.
+    return build_fsm_step_to_stage(
         msg,
         to_addr=FsmStage.SUMMARIZE_MEMORY,
         from_stage=stage,
-        body=FsmTransitionPlainBody.parse(summary),
+        history=summary,
         settings=config,
     )

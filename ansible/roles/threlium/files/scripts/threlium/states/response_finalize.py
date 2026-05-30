@@ -11,9 +11,13 @@ from __future__ import annotations
 
 from email.message import EmailMessage
 
-from threlium.fsm_emit import build_fsm_plain_to_stage, hop_budget_remaining
+from threlium.fsm_emit import (
+    build_fsm_plain_to_stage,
+    build_fsm_step_to_stage,
+    hop_budget_remaining,
+)
 from threlium.logutil import logger
-from threlium.mime_reform import extract_plain_body
+from threlium.mime_reform import system_part_text
 from threlium.prompts import render_prompt
 from threlium.response.collect import collect_ops
 from threlium.response.reduce import reduce_ops
@@ -46,7 +50,7 @@ def main(
     if inner is None:
         raise RuntimeError("response_finalize: no Message-ID on incoming message")
 
-    inline_content = extract_plain_body(msg).strip() or None
+    inline_content = system_part_text(msg).strip() or None
 
     ops = collect_ops(inner)
     buffer_text = reduce_ops(ops).strip() or None
@@ -108,11 +112,14 @@ def main(
         notice = render_prompt(PromptPath.INGRESS_RESPONSE_NOT_FORMED).strip()
         # При исчерпанном бюджете отбивка в ingress зациклит — отдаём notice пользователю.
         if budget_exhausted:
-            return build_fsm_plain_to_stage(
+            # Финальная отбивка пользователю: <system> = тело для egress, <history> =
+            # копия в долгую память (что отправили пользователю).
+            return build_fsm_step_to_stage(
                 msg,
                 to_addr=FsmStage.EGRESS_ROUTER,
                 from_stage=stage,
-                body=FsmTransitionPlainBody.parse(notice),
+                history=notice,
+                system=notice,
                 subject_line=FsmTransitionPlainSubjectLine.parse(subject_raw),
                 settings=config,
             )
@@ -134,11 +141,15 @@ def main(
         message_id=mid_w.value if mid_w else None,
     )
 
-    return build_fsm_plain_to_stage(
+    # Итоговый ответ агента: <system> — тело для egress (внешнее письмо строится из него),
+    # <history> — копия в conversation-history (что отправили пользователю), origin поставит
+    # enrich_fast при сплайсе на следующем ходе.
+    return build_fsm_step_to_stage(
         msg,
         to_addr=FsmStage.EGRESS_ROUTER,
         from_stage=stage,
-        body=FsmTransitionPlainBody.parse(final_body),
+        history=final_body,
+        system=final_body,
         subject_line=FsmTransitionPlainSubjectLine.parse(subject_raw),
         settings=config,
     )

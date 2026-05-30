@@ -17,7 +17,11 @@ from threlium.egress_self_archive import (
 )
 from threlium.ingress_route_resolve import resolve_egress_task_route_ancestor
 from threlium.logutil import logger
-from threlium.mime_reform import RFC822_FOR_INSERT, email_message_from_bytes
+from threlium.mime_reform import (
+    RFC822_FOR_INSERT,
+    email_message_from_bytes,
+    system_part_text,
+)
 from threlium.types import (
     EmailIngressRoute,
     EmailNativeId,
@@ -131,6 +135,10 @@ def _build_smtp_message(
 
     smtp_msg = email_message_from_bytes(msg.as_bytes(policy=RFC822_FOR_INSERT))
     _strip_internal_before_smtp(smtp_msg)
+    # Внешнему получателю уходит чистое text/plain тело из <system>, без внутренней
+    # MIME-структуры FSM (<system>/<history>-части, их Content-ID и inline-дисп.).
+    # set_content схлопывает multipart обратно в одиночную text/plain-часть.
+    smtp_msg.set_content(system_part_text(msg), subtype="plain", charset="utf-8")
 
     dm = ExternalRfcMidWire(value=outbound_mid)
     for h in list(smtp_msg.keys()):

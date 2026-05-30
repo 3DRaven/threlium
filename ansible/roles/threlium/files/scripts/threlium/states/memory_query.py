@@ -5,10 +5,10 @@
 """
 from email.message import EmailMessage
 
-from threlium.fsm_emit import build_fsm_multipart_to_stage
+from threlium.fsm_emit import build_fsm_step_to_stage
 from threlium.knowledge_fsm import parse_memory_query_payload
 from threlium.litellm_route_context import get_litellm_http_correlation
-from threlium.mime_reform import EnrichPartId, extract_plain_body
+from threlium.mime_reform import system_part_text
 from threlium.prompts import render_prompt
 from threlium.runners.lightrag import daemon_lightrag, run_rag_coroutine
 from threlium.settings import ThreliumSettings
@@ -19,7 +19,7 @@ from threlium.types.litellm_correlation_header import LitellmCorrelationHeader
 def main(
     msg: EmailMessage, stage: FsmStage, *, config: ThreliumSettings
 ) -> EmailMessage | None:
-    payload = parse_memory_query_payload(extract_plain_body(msg))
+    payload = parse_memory_query_payload(system_part_text(msg))
     if payload is None:
         raise RuntimeError("memory_query: invalid payload")
 
@@ -56,10 +56,15 @@ def main(
         answer=truncated,
     ).strip()
 
-    return build_fsm_multipart_to_stage(
+    # Callee владеет историей: в память едут ЗАПРОС (что искали: payload.query, эхо с
+    # предштампом origin=reasoning) и ОТВЕТ (observation: RAG-результат, origin=memory_query).
+    # Иначе сама формулировка запроса терялась бы из истории (reasoning шлёт её только в
+    # <system>). Разные тела → разные <hash@history>.
+    return build_fsm_step_to_stage(
         msg,
         to_addr=FsmStage.ENRICH_FAST,
         from_stage=stage,
-        parts=[(EnrichPartId.OBSERVATION_NOTE, observation)],
+        history=observation,
+        request_echo=payload.query,
         settings=config,
     )

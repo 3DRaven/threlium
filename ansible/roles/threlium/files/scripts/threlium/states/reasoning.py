@@ -13,7 +13,7 @@ from email.message import EmailMessage
 from threlium.litellm_client import litellm_completion_sync
 from litellm.types.utils import Message
 
-from threlium.fsm_emit import HDR_HOP_BUDGET, build_fsm_plain_to_stage, hop_budget_remaining
+from threlium.fsm_emit import HDR_HOP_BUDGET, build_fsm_step_to_stage, hop_budget_remaining
 from threlium.logutil import clip_log_text, logger
 from threlium.mime_reform import canonicalize_mime
 from threlium.prompts import render_prompt
@@ -76,10 +76,7 @@ def _render_user_prompt(
         global_memory=ctx.global_memory.value if ctx.global_memory is not None else None,
         response_state=ctx.response_state.value if ctx.response_state is not None else None,
         task_state=ctx.task_state.value if ctx.task_state is not None else None,
-        response_observations=list(ctx.response_observations),
-        memory_notes=list(ctx.memory_notes),
-        observation_notes=list(ctx.observation_notes),
-        unified_deltas=list(ctx.unified_deltas),
+        history=[{"origin": e.origin, "text": e.text} for e in ctx.history],
     )
 
 
@@ -279,11 +276,16 @@ def main(
         route=decision.target.value,
         target=decision.target.rfc822_mailbox,
     )
-    return build_fsm_plain_to_stage(
+    # Модель «callee владеет историей»: тело tool-call едет ТОЛЬКО как <system>
+    # (исполняемая команда адресату). reasoning НЕ кладёт <history> — что из запроса
+    # достойно памяти, решает сама вызванная стадия (эхо-запрос через request_echo).
+    # Так мутаторы (response_append/edit/tasks_upsert) не засоряют контекст сырым буфером.
+    decision_body = FsmTransitionPlainBody.parse(decision.body.value).value
+    return build_fsm_step_to_stage(
         canonical,
         to_addr=decision.target,
         from_stage=stage,
-        body=FsmTransitionPlainBody.parse(decision.body.value),
+        system=decision_body,
         subject_line=FsmTransitionPlainSubjectLine.parse(decision.subject.value),
         settings=config,
     )

@@ -11,7 +11,7 @@ from threlium.cli_fsm import (
 )
 from threlium.ingress_hitl_resolve import find_cli_intent_maildir_path_from_in_reply_to_ancestors
 from threlium.fsm_emit import build_fsm_plain_to_stage
-from threlium.mime_reform import extract_plain_body
+from threlium.mime_reform import extract_plain_body, system_part_text
 from threlium.nm import require_inner_message_id_from_fsm_email
 from threlium.settings import ThreliumSettings
 from threlium.types import FsmStage, FsmTransitionPlainBody, FsmTransitionPlainSubjectLine
@@ -29,7 +29,7 @@ def main(
 ) -> EmailMessage | None:
     # FSM-стадии не индексируют (docs/INDEX.md §8): fdm/notmuch insert уже сделали
     # терминирующий `notmuch insert` при доставке этого письма.
-    yn = parse_yes_no(extract_plain_body(msg))
+    yn = parse_yes_no(system_part_text(msg))
 
     intent_path = find_cli_intent_maildir_path_from_in_reply_to_ancestors(
         require_inner_message_id_from_fsm_email(msg)

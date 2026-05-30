@@ -9,14 +9,13 @@ import subprocess
 from email.message import EmailMessage
 
 from threlium.cli_fsm import parse_cli_intent_payload, resolve_cli_exec_argv
-from threlium.fsm_emit import build_fsm_plain_to_stage
+from threlium.fsm_emit import build_fsm_step_to_stage
 from threlium.logutil import logger
-from threlium.mime_reform import extract_plain_body
+from threlium.mime_reform import system_part_text
 from threlium.prompts import render_prompt
 from threlium.settings import ThreliumSettings
 from threlium.types import (
     FsmStage,
-    FsmTransitionPlainBody,
     MailHeaderName,
     PromptPath,
     ThreliumCapabilitiesBudgetLine,
@@ -42,16 +41,17 @@ def _peek_cap_top(
 def main(
     msg: EmailMessage, stage: FsmStage, *, config: ThreliumSettings
 ) -> EmailMessage | None:
-    prior = extract_plain_body(msg).strip()
+    prior = system_part_text(msg).strip()
     cli = parse_cli_intent_payload(prior)
 
     if not cli:
         log.warning("no_parseable_payload")
         body = render_prompt(PromptPath.CLI_EXEC_OBSERVATION, cmd_line="", prior=prior)
-        return build_fsm_plain_to_stage(
+        # observation → <history> (результат tool в долгую память, origin=cli_exec) +
+        # <system> (payload, который ingress прочитает как продолжение хода).
+        return build_fsm_step_to_stage(
             msg, to_addr=FsmStage.INGRESS, from_stage=stage,
-            body=FsmTransitionPlainBody.parse(body),
-            settings=config,
+            history=body, system=body, settings=config,
         )
 
     # Peek capability profile from X-Threlium-Capabilities stack top
@@ -99,8 +99,9 @@ def main(
         cmd_line=cmd_line,
         prior=observation,
     )
-    return build_fsm_plain_to_stage(
+    # observation (cmd_line + stdout/stderr/exit) → <history> (origin=cli_exec) + <system>.
+    # cmd_line уже встроен в рендер, отдельный request_echo не нужен (был бы дублем).
+    return build_fsm_step_to_stage(
         msg, to_addr=FsmStage.INGRESS, from_stage=stage,
-        body=FsmTransitionPlainBody.parse(body),
-        settings=config,
+        history=body, system=body, settings=config,
     )

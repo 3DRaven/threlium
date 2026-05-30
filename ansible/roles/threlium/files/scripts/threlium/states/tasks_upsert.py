@@ -17,7 +17,7 @@ import msgspec
 from threlium.fsm_emit import build_fsm_plain_to_stage
 from threlium.fsm_emit_semantic import emit_transition_simple_step_preserving_payload
 from threlium.logutil import logger
-from threlium.mime_reform import extract_plain_body
+from threlium.mime_reform import system_part_text
 from threlium.prompts import render_prompt
 from threlium.settings import ThreliumSettings
 from threlium.task import build_task_state_summary, collect_task_ops, reduce_task_ops
@@ -69,7 +69,7 @@ def main(
     prior_ops = collect_task_ops(parent_inner) if parent_inner is not None else []
     prior_ledger = reduce_task_ops(prior_ops)
 
-    body_raw = extract_plain_body(msg).strip()
+    body_raw = system_part_text(msg).strip()
     try:
         args = msgspec.json.decode(body_raw.encode("utf-8"), type=TasksUpsertToolArgs)
         op = TasksUpsertOp.from_tool_args(

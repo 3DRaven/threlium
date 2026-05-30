@@ -2,5 +2,8 @@
     This Jinja comment is stripped and never sent to the model.
 -#}
 
-{#- docs/ARCHITECTURE.md §6.2: deny by local policy (dangerous argv pattern). -#}
+{#- docs/ARCHITECTURE.md §6.2: deny by local policy (dangerous argv pattern).
+    command_line is echoed so the agent remembers BOTH the attempt and the refusal. -#}
 Threlium cli_intent: command denied by local policy (dangerous pattern in argv or disallowed construct).
+attempted command: {{ command_line }}
+The command above was NOT executed. Adjust the approach (different argv, or a safe alternative) — do not retry the same denied command.

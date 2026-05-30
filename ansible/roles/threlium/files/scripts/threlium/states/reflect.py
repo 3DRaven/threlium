@@ -16,7 +16,7 @@ from email.message import EmailMessage
 
 from threlium.fsm_emit import HDR_HOP_BUDGET, build_fsm_plain_to_stage
 from threlium.logutil import logger
-from threlium.mime_reform import extract_plain_body
+from threlium.mime_reform import system_part_text
 from threlium.prompts import render_prompt
 from threlium.settings import ThreliumSettings
 from threlium.types import (
@@ -74,7 +74,7 @@ def main(
         template,
         remaining_hops=remaining,
         cycle_cost=CYCLE_COST,
-        previous_reasoning=extract_plain_body(msg),
+        previous_reasoning=system_part_text(msg),
         subject=subj_vo.value,
     )
     log.info("selected_template", template=str(template), remaining=remaining)

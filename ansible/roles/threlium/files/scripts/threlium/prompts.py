@@ -47,6 +47,27 @@ def _plain_text_tojson(value: object, indent: int | None = None) -> str:
     return dumps_fn(value, **kwargs)
 
 
+def _history_text(msg: object) -> str:
+    """Jinja-фильтр: содержательное тело письма = конкатенация его ``<history>``-частей.
+
+    После унификации тело контекста живёт в ``<history>``-частях (а не в первом попавшемся
+    text/plain, которым может оказаться ``<system>``-payload). Граница чтения — VO-хелперы
+    ``mime_reform``; импорт ленивый, чтобы не тянуть MIME-слой в низкоуровневый рендерер.
+    """
+    from email.message import EmailMessage
+
+    from threlium.mime_reform import history_part_text, iter_history_parts
+
+    if not isinstance(msg, EmailMessage):
+        return ""
+    chunks = [
+        text
+        for _cid, part in iter_history_parts(msg)
+        if (text := history_part_text(part).strip())
+    ]
+    return "\n\n---\n\n".join(chunks)
+
+
 def init_prompts_root(home: Path) -> None:
     global _PROMPTS_ROOT, _PROMPTS_ENV
     _PROMPTS_ROOT = home / "prompts"
@@ -71,6 +92,7 @@ def _prompts_env() -> Environment:
         _PROMPTS_ENV.policies["json.dumps_kwargs"] = _kw
         _PROMPTS_ENV.policies["json.dumps_function"] = json.dumps
         _PROMPTS_ENV.filters["tojson"] = _plain_text_tojson
+        _PROMPTS_ENV.filters["history_text"] = _history_text
     return _PROMPTS_ENV
 
 

@@ -27,11 +27,9 @@ from threlium import nm as nmlib
 from threlium.context_budget import (
     BucketConfig,
     BucketConfigTier,
-    ContextMessageType,
-    SERVICE_TRANSITION_STAGES,
     assign_tiers,
-    classify_message_type,
     estimate_unified_weight,
+    history_body_chars,
     normalize_weights,
     score_messages,
     solve_mckp,
@@ -47,14 +45,12 @@ from threlium.mime_reform import (
     EnrichContentId,
     EnrichPartId,
     build_enriched_multipart,
-    collect_relay_parts_of_families,
     email_message_from_path,
 )
 from threlium.litellm_client import litellm_site_completion_text
 from threlium.prompts import render_prompt
 from threlium.response.collect import collect_ops
 from threlium.response.state_summary import build_state_summary
-from threlium.thread_context_filter import iter_irt_ancestors_filtered
 from threlium.runners.lightrag import daemon_lightrag, run_rag_coroutine
 from threlium.task import (
     build_task_state_summary,
@@ -178,37 +174,22 @@ class EnrichResult:
     global_memory: EnrichGlobalMemoryText | None
 
 
-# Семейства relay-частей, переносимые из e_prev при полном enrich (carry-over).
-# observation/memory намеренно НЕ переносим — полный enrich обновляет контекст RAG,
-# их накопление живёт только в быстром цикле enrich_fast. ``<task-state>`` НЕ carry-over —
-# enrich пересобирает его детерминированно (как ``<response-state>``).
-_CARRY_OVER_FAMILIES = (EnrichPartId.RESPONSE_OBSERVATION,)
-
-
 def _collect_extra_parts(
     inner: NotmuchMessageIdInner, limit: int
 ) -> list[tuple[EnrichContentId, str]]:
-    """Пересчёт ``<response-state>`` из CRDT + carry-over ``<response-observation>`` из e_prev.
+    """Пересчёт ``<response-state>`` из CRDT для полного enrich.
 
-    Carry-over — CID-aware: relay-части переносятся **с их оригинальными** уникальными
-    Content-ID (``<response-observation@…>``), распознавание семейства через
-    :attr:`EnrichContentId.family` (бэк-компат с каноническим ``<response-observation>``).
+    Carry-over relay-частей из E_prev убран: после унификации полный enrich обновляет
+    контекст через LightRAG + ``<unified-mail-context>`` (собранный из ``<history>``-частей
+    треда по :func:`message_has_history`), а не переносом хвоста E_prev. ``<task-state>``
+    enrich пересобирает детерминированно отдельно (как ``<response-state>``).
     """
     parts: list[tuple[EnrichContentId, str]] = []
-
     ops = collect_ops(inner)
     summary = build_state_summary(ops)
     trimmed = trim_context_text(summary, limit)
     if trimmed:
         parts.append((EnrichContentId.from_part_id(EnrichPartId.RESPONSE_STATE), trimmed))
-
-    for snap in iter_irt_ancestors_filtered(inner, stop_at_route=True):
-        if snap.is_addressed_to_fsm_stage(FsmStage.REASONING):
-            e_prev = email_message_from_path(snap.path)
-            for cid, text in collect_relay_parts_of_families(e_prev, _CARRY_OVER_FAMILIES):
-                parts.append((cid, trim_context_text(text, limit)))
-            break
-
     return parts
 
 
@@ -321,7 +302,6 @@ def _render_mail_context(
         tier_assignments_types=tier_assignments_types or {},
         preview_chars=preview_chars,
         total_messages=total_messages,
-        service_stage_mailboxes=[s.rfc822_mailbox for s in SERVICE_TRANSITION_STAGES],
     ).strip()
     return trim_context_text(raw, limit)
 
@@ -348,19 +328,15 @@ def _is_empty_rag_result(raw_result: dict[str, Any] | str | None, api: str) -> b
 
 
 def _estimate_msgs_weight(msgs: list[EmailMessage], tool_obs_cap: int = 500) -> int:
-    """Оценка веса списка сообщений в full-body режиме (без Jinja)."""
+    """Оценка веса списка сообщений в full-body режиме (без Jinja).
+
+    Все письма содержательные (есть ``<history>``-часть); большие тела (вывод tool-стадий)
+    капируются ``tool_obs_cap``, чтобы один гигантский вывод не раздувал оценку overflow.
+    """
     total = 0
     for m in msgs:
-        msg_type = classify_message_type(m)
-        if msg_type == ContextMessageType.SERVICE:
-            total += 50
-        else:
-            part = m.get_body(preferencelist=("plain", "html"))
-            body_chars = len(part.get_content()) if part else 0
-            if msg_type == ContextMessageType.TOOL_OBSERVATION:
-                total += min(body_chars, tool_obs_cap) + 100
-            else:
-                total += body_chars + 100
+        body_chars = history_body_chars(m)
+        total += min(body_chars, tool_obs_cap) + 100
     return total
 
 
@@ -499,7 +475,7 @@ async def _enrich_async(
     _tier1 = cfg.enrich.tier1_full
     _tier2 = cfg.enrich.tier2_summary
 
-    scored = score_messages(ctx.all_messages, cfg.enrich.message_type_weights()) if ctx.all_messages else ()
+    scored = score_messages(ctx.all_messages) if ctx.all_messages else ()
 
     # --- Phase 1: estimate weights for MCKP (no Jinja rendering) ---
 
@@ -576,7 +552,7 @@ async def _enrich_async(
     if chosen_unified and chosen_unified.tier != BucketConfigTier.EMPTY and ctx.all_messages:
         tiered = assign_tiers(scored, chosen_unified.tier1_count, chosen_unified.tier2_count)
         ta = {t.chronological_index: t.assigned_tier for t in tiered}
-        ta_types = {t.chronological_index: t.msg_type.value for t in tiered}
+        ta_types = {t.chronological_index: t.origin for t in tiered}
         final_unified = _render_mail_context(
             ctx.all_messages, mckp_capacity,
             tier_assignments=ta, tier_assignments_types=ta_types,

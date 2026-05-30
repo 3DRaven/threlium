@@ -16,9 +16,7 @@ Fail-fast матрица (`docs/INDEX.md` §8):
 from email.message import EmailMessage
 
 from threlium.settings import ThreliumSettings
-from threlium.fsm_emit_semantic import (
-    emit_transition_simple_step_preserving_payload,
-)
+from threlium.fsm_emit import build_fsm_step_to_stage
 from threlium.logutil import logger
 from threlium.mime_reform import (
     extract_plain_body,
@@ -31,7 +29,13 @@ from threlium.types.ingress_hitl import (
     HitlParentWithoutIntent,
     classify_hitl_parent_notmuch,
 )
-from threlium.types import FsmStage, IngressRouterChildMsg, OrphanNoticePrefixLine
+from threlium.types import (
+    FsmStage,
+    FsmTransitionPlainSubjectLine,
+    IngressRouterChildMsg,
+    MailHeaderName,
+    OrphanNoticePrefixLine,
+)
 
 log = logger.bind(stage="ingress")
 
@@ -81,14 +85,30 @@ def _prefix_plain_body_in_message(
     return out
 
 
+def _preserved_subject(msg: EmailMessage) -> FsmTransitionPlainSubjectLine | None:
+    """Сохранить исходный Subject входа (без ``Re:``-префикса билдера) для enrich-шаблона."""
+    raw = msg.get(MailHeaderName.SUBJECT)
+    return FsmTransitionPlainSubjectLine.parse(raw) if raw else None
+
+
 def _emit_to_enrich(
     msg: EmailMessage, stage: FsmStage, *, orphan: bool = False, settings: ThreliumSettings,
 ) -> EmailMessage:
     if orphan:
         msg = _prefix_plain_body_in_message(msg, ORPHAN_NOTICE, stage=stage)
     msg = ingress_pipeline_email(msg)
-    return emit_transition_simple_step_preserving_payload(
-        msg, to_addr=FsmStage.ENRICH, from_stage=stage, settings=settings,
+    # Ход пользователя входит в долгую память как <history>-часть (origin поставит
+    # enrich_fast), а тело-команда для enrich едет в <system>. enrich читает текст
+    # через get_body (часть text/plain; inline).
+    user_body = extract_plain_body(msg).strip()
+    return build_fsm_step_to_stage(
+        msg,
+        to_addr=FsmStage.ENRICH,
+        from_stage=stage,
+        history=user_body,
+        system=user_body,
+        subject_line=_preserved_subject(msg),
+        settings=settings,
     )
 
 
@@ -96,10 +116,14 @@ def _emit_to_cli_resume(
     msg: EmailMessage, stage: FsmStage, *, settings: ThreliumSettings,
 ) -> EmailMessage:
     msg = ingress_pipeline_email(msg)
-    return emit_transition_simple_step_preserving_payload(
+    # HITL-ответ пользователя — управляющий сигнал (yes/no): только <system> (cli_resume
+    # читает его через system_part_text). Содержательная история возникнет ниже по потоку.
+    return build_fsm_step_to_stage(
         msg,
         to_addr=FsmStage.CLI_RESUME,
         from_stage=stage,
+        system=extract_plain_body(msg).strip(),
+        subject_line=_preserved_subject(msg),
         settings=settings,
     )
 

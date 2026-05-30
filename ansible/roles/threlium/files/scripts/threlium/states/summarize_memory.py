@@ -2,8 +2,9 @@
 """summarize_memory@localhost: стадия-хранитель итога суммаризации.
 
 Аналог thread_memory — ничего не делает кроме возврата в enrich.
-Письмо To: summarize_memory@ с телом-суммаризацией остаётся в Maildir
-и попадает в ``<unified-mail-context>`` (``ContextMessageType.CONTEXT_SUMMARY``).
+Письмо To: summarize_memory@ несёт ``<history>``-часть (сводку от summarize_context)
+и остаётся в Maildir, поэтому попадает в ``<unified-mail-context>`` по предикату
+``message_has_history`` (оригиналы при этом помечены ``context_summarized`` и выпадают).
 """
 from __future__ import annotations
 

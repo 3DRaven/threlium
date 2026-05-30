@@ -8,8 +8,7 @@ from __future__ import annotations
 
 from email.message import EmailMessage
 
-from threlium.fsm_emit import build_fsm_multipart_to_stage
-from threlium.mime_reform import EnrichPartId
+from threlium.fsm_emit import build_fsm_step_to_stage
 from threlium.litellm_client import litellm_site_completion_text
 from threlium.logutil import logger
 from threlium.prompts import render_prompt
@@ -86,10 +85,10 @@ def main(
         message_id=mid_w.value if mid_w else None,
     )
 
-    return build_fsm_multipart_to_stage(
+    return build_fsm_step_to_stage(
         msg,
         to_addr=FsmStage.ENRICH_FAST,
         from_stage=stage,
-        parts=[(EnrichPartId.RESPONSE_OBSERVATION, observation)],
+        history=observation,
         settings=config,
     )
