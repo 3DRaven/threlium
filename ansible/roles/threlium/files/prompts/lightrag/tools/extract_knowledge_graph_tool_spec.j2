@@ -1,0 +1,47 @@
+{#- tool_spec for LightRAG entity extraction / gleaning -#}
+{
+  "type": "function",
+  "function": {
+    "name": "extract_knowledge_graph",
+    "description": "Extract entities and relationships from the input text. Use empty arrays and no entity lines when there is nothing left to extract (gleaning complete).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "entities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "type": { "type": "string", "minLength": 1 },
+              "description": { "type": "string", "minLength": 1 }
+            },
+            "required": ["name", "type", "description"],
+            "additionalProperties": false
+          }
+        },
+        "relations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "source_entity": { "type": "string", "minLength": 1 },
+              "target_entity": { "type": "string", "minLength": 1 },
+              "relationship_keywords": { "type": "string" },
+              "relationship_description": { "type": "string", "minLength": 1 }
+            },
+            "required": [
+              "source_entity",
+              "target_entity",
+              "relationship_keywords",
+              "relationship_description"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["entities", "relations"],
+      "additionalProperties": false
+    }
+  }
+}

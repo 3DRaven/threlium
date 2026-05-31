@@ -16,6 +16,7 @@ Source priority (highest to lowest):
 4. Do NOT supplement with your own training knowledge — only use what the Context provides.
 
 Output rules:
+* Call only `generate_rag_answer` with an `answer` field (plain text). Do not write the answer in message content.
 * Prefer concise factual sentences — the consumer is the reasoning stage, not a human reader.
 * Do NOT fabricate citations to messages outside the provided Context.
 * Do NOT invent, assume, or infer information not present in the Context.

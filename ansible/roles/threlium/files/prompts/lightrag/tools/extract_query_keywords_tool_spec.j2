@@ -1,0 +1,23 @@
+{#- tool_spec for LightRAG query keywords (GPTKeywordExtractionFormat-compatible) -#}
+{
+  "type": "function",
+  "function": {
+    "name": "extract_query_keywords",
+    "description": "Extract high-level and low-level keywords from the user query for knowledge-graph retrieval.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "high_level_keywords": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "low_level_keywords": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "required": ["high_level_keywords", "low_level_keywords"],
+      "additionalProperties": false
+    }
+  }
+}

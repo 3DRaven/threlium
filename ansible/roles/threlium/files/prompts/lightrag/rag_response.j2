@@ -16,6 +16,7 @@ Source priority (highest to lowest):
 4. Do NOT supplement with your own training knowledge — only use what the Context provides.
 
 Output rules:
+* Call only `generate_rag_answer` with an `answer` field (plain text). Do not write the answer in message content.
 * Answer in max 300 words. Use bullet points for multiple facts.
 * Cite source Message-IDs in brackets where available (e.g. [msg-id:abc123]).
 * Omit entities/relations not directly relevant to the query.

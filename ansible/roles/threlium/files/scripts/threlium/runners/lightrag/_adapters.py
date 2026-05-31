@@ -4,12 +4,15 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+import jsonschema
 import numpy as np
-from lightrag.types import GPTKeywordExtractionFormat
-from litellm.types.utils import Embedding, Message
+from litellm.types.utils import Embedding
 
 from threlium.litellm_client import litellm_acompletion, litellm_aembedding, litellm_arerank
-from threlium.litellm_wire import require_chat_model_response, require_embedding_response
+from threlium.litellm_tool_completion import acompletion_required_tool
+from threlium.litellm_tool_response import LiteLlmToolResponseError
+from threlium.litellm_tool_spec import load_tool_spec
+from threlium.litellm_wire import require_embedding_response
 from threlium.settings import (
     ThreliumSettings,
     LlmEndpoint,
@@ -17,107 +20,32 @@ from threlium.settings import (
     RerankEndpoint,
 )
 from threlium.types import (
-    LightragLiteLlmCompletionBody,
     LitellmCallSite,
     LiteLlmAcompletionKwargs,
     LiteLlmArerankKwargs,
     LiteLlmAembeddingKwargs,
     LiteLlmChatMessage,
-    lite_llm_acompletion_to_dict,
     lite_llm_aembedding_to_dict,
     lite_llm_arerank_to_dict,
 )
 from threlium.types.litellm_correlation_header import LitellmCorrelationHeader
+from threlium.types.lightrag_tool_function import LightragToolBridgeError
+from threlium.types.lightrag_tool_phase import (
+    detect_lightrag_call_site_wire,
+    lightrag_tool_phase_for_call_site,
+)
 
 from threlium.logutil import logger
 
-log = logger.bind(stage="lightrag")
-
-_LITELLM_ACOMPLETION_PAYLOAD_KEYS = frozenset(
-    {
-        "model",
-        "messages",
-        "timeout",
-        "max_retries",
-        "api_key",
-        "api_base",
-        "max_tokens",
-        "tools",
-        "tool_choice",
-        "response_format",
-        "extra_headers",
-        "chat_template_kwargs",
-    }
+from .lightrag_tool_bridge import (
+    parse_tool_call_for_phase,
+    struct_to_lightrag_wire,
+    to_lightrag_return_value,
 )
 
+log = logger.bind(stage="lightrag")
 
-def _detect_lightrag_phase(
-    base_call_site: str | None,
-    *,
-    keyword_extraction: bool,
-    has_history: bool,
-    has_system_prompt: bool,
-) -> str:
-    """Гранулярный ``X-Threlium-Call-Site`` по сигналам ``llm_func`` без инспекции prompt content.
-
-    Сигналы (из исходников ``lightrag.operate`` / ``lightrag.utils.use_llm_func_with_cache``):
-
-    * **keyword_extraction=True** — только ``get_keywords_from_query`` (query path).
-    * **history_messages non-empty** — gleaning (continue entity extraction, index path).
-    * **system_prompt absent** — ``_handle_single_entity_summary`` (index, ``_priority=8``).
-    * **остальное** — entity extraction (index) или rag/kg response (query).
-    """
-    if base_call_site == LitellmCallSite.LIGHTRAG_QUERY.value:
-        if keyword_extraction:
-            return LitellmCallSite.LIGHTRAG_QUERY_KEYWORDS.value
-        return LitellmCallSite.LIGHTRAG_QUERY_RESPONSE.value
-
-    if keyword_extraction:
-        return LitellmCallSite.LIGHTRAG_QUERY_KEYWORDS.value
-
-    if has_history:
-        return LitellmCallSite.LIGHTRAG_INDEX_GLEANING.value
-    if not has_system_prompt:
-        return LitellmCallSite.LIGHTRAG_INDEX_SUMMARIZE.value
-    return LitellmCallSite.LIGHTRAG_INDEX_ENTITY.value
-
-
-def _llm_bridge_completion_text(
-    msg_obj: Message | None,
-    *,
-    keyword_extraction: bool,
-) -> str:
-    if msg_obj is None:
-        if keyword_extraction:
-            log.warning("llm_func_empty_message_keyword_extraction")
-            raise RuntimeError(
-                "LightRAG LLM bridge: empty message in keyword extraction response"
-            )
-        return ""
-
-    if keyword_extraction:
-        raw_c = msg_obj.content
-        if not isinstance(raw_c, str) or not raw_c.strip():
-            log.warning("llm_func_no_parsed_content", content_type=type(raw_c).__name__)
-            raise RuntimeError(
-                "LightRAG LLM bridge: keyword extraction response missing text content"
-            )
-        try:
-            parsed = GPTKeywordExtractionFormat.model_validate_json(raw_c)
-            return str(parsed.model_dump_json())
-        except Exception as exc:
-            log.warning(
-                "keyword_extraction_parse_failed",
-                exc_type=type(exc).__name__,
-                exc_msg=str(exc),
-            )
-            raise
-
-    raw_c = msg_obj.content
-    if isinstance(raw_c, str):
-        return str(LightragLiteLlmCompletionBody.parse(raw_c).value)
-    log.warning("llm_func_unexpected_content_type", content_type=type(raw_c).__name__)
-    return ""
+_MAX_LIGHTRAG_TOOL_BRIDGE_RETRIES = 2
 
 
 def build_llm_func(
@@ -125,10 +53,9 @@ def build_llm_func(
     *,
     llm_ep: LlmEndpoint,
     default_max_retries: int,
-    max_tokens: int | None = None,
     chat_template_kwargs: dict[str, Any] | None = None,
 ) -> Callable[..., Awaitable[str]]:
-    closure_max_tokens = max_tokens
+    closure_max_tokens = llm_ep.max_tokens
     closure_ctk = chat_template_kwargs
     llm_timeout = float(llm_ep.timeout)
 
@@ -149,7 +76,7 @@ def build_llm_func(
         )
         if correlation is not None:
             base_cs = correlation.get(LitellmCorrelationHeader.CALL_SITE.value)
-            granular_cs = _detect_lightrag_phase(
+            granular_cs = detect_lightrag_call_site_wire(
                 base_cs,
                 keyword_extraction=keyword_extraction,
                 has_history=bool(history_messages),
@@ -179,9 +106,22 @@ def build_llm_func(
             LiteLlmChatMessage(role=str(m["role"]), content=str(m["content"]))
             for m in messages
         ]
-        response_format: object | None = (
-            GPTKeywordExtractionFormat if keyword_extraction else None
-        )
+
+        if correlation is not None:
+            call_site_wire = str(
+                correlation[LitellmCorrelationHeader.CALL_SITE.value]
+            )
+        else:
+            call_site_wire = detect_lightrag_call_site_wire(
+                LitellmCallSite.LIGHTRAG_INDEX.value,
+                keyword_extraction=keyword_extraction,
+                has_history=bool(history_messages),
+                has_system_prompt=bool(system_prompt),
+            )
+        phase = lightrag_tool_phase_for_call_site(call_site_wire)
+        tool_spec = load_tool_spec(phase.tool_spec_path)
+        tools = [tool_spec]
+
         mr = llm_ep.max_retries if llm_ep.max_retries is not None else default_max_retries
         call = LiteLlmAcompletionKwargs(
             model=llm_ep.model,
@@ -191,29 +131,49 @@ def build_llm_func(
             api_key=llm_ep.api_key,
             api_base=llm_ep.api_base,
             max_tokens=effective_max,
-            response_format=response_format,
             chat_template_kwargs=closure_ctk,
         )
-        call_kwargs = lite_llm_acompletion_to_dict(call)
-        litellm_payload: dict[str, Any] = {
-            k: v
-            for k, v in call_kwargs.items()
-            if k in _LITELLM_ACOMPLETION_PAYLOAD_KEYS
-        }
-        resp = require_chat_model_response(
-            await litellm_acompletion(
-                settings=settings,
-                **litellm_payload,
-                stream=False,
-                correlation_override=correlation,
-            )
-        )
-        choice = resp.choices[0]
-        msg_obj: Message | None = choice.message
-        return _llm_bridge_completion_text(
-            msg_obj,
-            keyword_extraction=keyword_extraction,
-        )
+
+        last_bridge_error: BaseException | None = None
+        for bridge_attempt in range(_MAX_LIGHTRAG_TOOL_BRIDGE_RETRIES + 1):
+            try:
+                resp = await acompletion_required_tool(
+                    settings=settings,
+                    call=call,
+                    tools=tools,
+                    correlation_override=correlation,
+                )
+                msg_obj = resp.choices[0].message
+                if msg_obj is None:
+                    raise RuntimeError("LightRAG LLM bridge: empty assistant message")
+
+                args_struct = parse_tool_call_for_phase(msg_obj, phase)
+                wire = struct_to_lightrag_wire(phase, args_struct)
+                result = to_lightrag_return_value(wire)
+
+                log.debug(
+                    "lightrag_tool_call",
+                    phase=phase.call_site.value,
+                    tool_name=phase.tool_name.value,
+                )
+                return result
+            except (
+                LiteLlmToolResponseError,
+                LightragToolBridgeError,
+                jsonschema.ValidationError,
+            ) as exc:
+                last_bridge_error = exc
+                if bridge_attempt >= _MAX_LIGHTRAG_TOOL_BRIDGE_RETRIES:
+                    raise
+                log.warning(
+                    "lightrag_tool_bridge_retry",
+                    attempt=bridge_attempt + 1,
+                    call_site=call_site_wire,
+                    error=str(exc),
+                )
+        if last_bridge_error is not None:
+            raise last_bridge_error
+        raise RuntimeError("LightRAG LLM bridge: unreachable retry loop exit")
 
     return llm_func
 

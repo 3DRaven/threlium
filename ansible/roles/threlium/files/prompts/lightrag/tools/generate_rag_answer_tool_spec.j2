@@ -1,0 +1,20 @@
+{#- tool_spec for LightRAG RAG / naive RAG final answer -#}
+{
+  "type": "function",
+  "function": {
+    "name": "generate_rag_answer",
+    "description": "Generate the final RAG answer from the provided context and query.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "answer": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Final answer text for the user query."
+        }
+      },
+      "required": ["answer"],
+      "additionalProperties": false
+    }
+  }
+}

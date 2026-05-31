@@ -55,6 +55,8 @@ _threlium_litellm_base:
       api_key: null
       timeout: 120
   targets:
+    cli_hitl_resume:
+      target_score: 0.0
     reasoning:
       target_score: 0.0
     enrich_plan:
@@ -90,7 +92,6 @@ _threlium_lightrag_base:
   enable_rerank: true
   rag_loop_shutdown_timeout_sec: 30
   bootstrap_timeout_sec: 1800
-  llm_max_tokens: 0
 
 _threlium_knowledge_base:
   formal_report_max_chars: 4000
@@ -172,6 +173,10 @@ threlium_required_prompts:
   - lightrag/naive_query_context.j2
   - lightrag/keywords_extraction.j2
   - lightrag/keywords_extraction_examples.j2
+  - lightrag/tools/extract_knowledge_graph_tool_spec.j2
+  - lightrag/tools/summarize_descriptions_tool_spec.j2
+  - lightrag/tools/extract_query_keywords_tool_spec.j2
+  - lightrag/tools/generate_rag_answer_tool_spec.j2
   - reflect/continue.j2
   - reflect/final.j2
   - cli_intent/invalid.j2
@@ -185,6 +190,9 @@ threlium_required_prompts:
   - cli_resume/bad_intent_subject.j2
   - cli_resume/not_confirmed.j2
   - cli_resume/not_confirmed_subject.j2
+  - cli_resume/tools/confirm_cli_hitl_tool_spec.j2
+  - cli_resume/classify_system.j2
+  - cli_resume/classify_user.j2
   - cli_hitl_out/confirm.j2
   - cli_hitl_out/unparsable.j2
   - cli_hitl_out/subject.j2

@@ -6,6 +6,9 @@
 You are a Knowledge Graph Specialist responsible for extracting entities and relationships from the input text.
 
 ---Instructions---
+0.  **Tool (required):** Call only `extract_knowledge_graph` with `entities` and `relations` arrays. Do not emit delimiter lines or free text in the message body.
+    Delimiter layouts in §1–2 describe JSON fields (`name`, `type`, `description`, …) for reference only.
+
 1.  **Entity Extraction & Output:**
     *   **Identification:** Identify clearly defined and meaningful entities in the input text.
     *   **Entity Details:** For each identified entity, extract the following information:

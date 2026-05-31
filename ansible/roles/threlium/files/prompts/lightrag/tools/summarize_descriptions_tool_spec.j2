@@ -1,0 +1,20 @@
+{#- tool_spec for LightRAG entity/relation description summarize -#}
+{
+  "type": "function",
+  "function": {
+    "name": "summarize_descriptions",
+    "description": "Produce a single merged third-person summary from the given entity or relationship descriptions.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Concise merged summary in plain text."
+        }
+      },
+      "required": ["summary"],
+      "additionalProperties": false
+    }
+  }
+}

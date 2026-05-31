@@ -73,9 +73,6 @@ def build_rag(settings: ThreliumSettings) -> LightRAG:
     install_overlay(settings)
 
     body_max, overlap_toks = _chunk_dims(settings)
-    max_out = (
-        settings.lightrag.llm_max_tokens if settings.lightrag.llm_max_tokens > 0 else None
-    )
     llm_ep = resolve_llm_endpoint(settings.litellm, LitellmRoutingSite.LIGHTRAG_LLM)
     embed_ep = resolve_embedding_endpoint(settings.litellm)
     log.info("litellm_routing", site=LitellmRoutingSite.LIGHTRAG_LLM.value, score=llm_ep.score, embedding_score=embed_ep.embedding_score)
@@ -89,7 +86,6 @@ def build_rag(settings: ThreliumSettings) -> LightRAG:
             settings,
             llm_ep=llm_ep,
             default_max_retries=settings.litellm.max_retries,
-            max_tokens=max_out,
             chat_template_kwargs=llm_ep.chat_template_kwargs or None,
         ),
         "embedding_func": EmbeddingFunc(
