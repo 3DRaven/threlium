@@ -354,7 +354,7 @@ INS ..> AQ : "общий\nworking_dir/"
 | ------------ | ------------------------------------------------------------------ |
 | `reasoning`  | Формирует намерение через tool call: «хочу выполнить echo hello»   |
 | `cli_intent` | Политика: allow / deny / ask-human. Команды **не исполняет**       |
-| `cli_exec`   | Исполнение разрешённой команды в песочнице `systemd-run --scope`    |
+| `cli_exec`   | Исполнение разрешённой команды в песочнице `systemd-run --user --wait --pipe`    |
 
 `cli_intent` использует грубый фильтр: запрещённые подстроки (`;`, `|`, `$(`, `&&`), белый список базовых команд. Осознанно жёсткий — ложные срабатывания лучше, чем пропущенная инъекция. Если команда не попала ни в allow, ни в deny — уходит на подтверждение к человеку (HITL). Это решение я пока оставил совсем простым так же как и другие, суть в использовании systemd-run в будущем, пока просто заготовка.
 
@@ -390,7 +390,7 @@ CE -> I : observation (результат)
 
 ![HITL-прерывание](https://www.plantuml.com/plantuml/png/RLBDQjj04BxlKmm-nL2Jkmzfm2XO4328-6msyYOHI5gpMYVDhN5faqEWK7flxxsu8S8XJcJm4yo-GfuadoGxmQqFqh3wVkQRMUrdLXexJc8nGet2Q2HJImsZPARJA3rjaCmes0J3E1f4gLMfhT2E_pzy5jbueCSreTlR9AXJex9iO80hKp6yGCZGQaCD_iK5pzqjpr3lUEecd9VdYjRVz46yqgY2jcG0DavK7N7B1EgJ2clG4oAWrXu6eJPPhMCAPHotoIJKCYUqQvFHxb1QAK1Oqy9OPbbqSjacVkQS-8uWqHSVtev3bLwk1DqU15t_wB1DxeeNxZCNg0zkucw95rld_IuWWjGB80NdmLs1yyG57E0Exjgcu2VXLV7xe2x_y6-UyWnWxcvMFVwTu-DoBlgbmgyLFtcwdDCEx2Qmpjs4t3KAB7X6_0Y_Ppppfl3N8ZyuQg7pN_SLxtjw-VQ33enEohMyttrDxmHKVwwlGtJgLNkhh-Kjq0vwlOVEqQve2b1MtVHnfiovj95EAofYkI_bqf0N2skAVPKEyGk_0W==)
 
-`cli_exec` запускает команду через `systemd-run --scope`: по умолчанию user-scope sandbox (`ProtectSystem=strict`, `PrivateNetwork`, `ReadWritePaths` из `threlium_cli`); при `privileged: true` в payload — `--uid=0` (system scope). HITL для privileged настраивается `privileged_hitl_enabled`.
+`cli_exec` запускает команду через `systemd-run`: по умолчанию user-scope sandbox (`--user --wait --pipe`, `ProtectSystem=strict`, `PrivateNetwork`, `ReadWritePaths` из `threlium_cli`); при `privileged: true` в payload — `--wait --pipe --uid=0` (system scope). HITL для privileged настраивается `privileged_hitl_enabled`.
 
 ---
 

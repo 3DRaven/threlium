@@ -81,7 +81,7 @@ class EmailStruct:
 
 **`X-Threlium-Thread-Id` (только ingest-строка):** не пишется в Maildir; задаётся только в синтетическом RFC822 для `ainsert` (оболочка — `email.message.EmailMessage` + `policy.default`, тело — шаблон `lightrag/ingest_body.j2`, см. [`docs/adr/0001-lightrag-ingest-chunking-enrich.md`](adr/0001-lightrag-ingest-chunking-enrich.md)).
 
-**CLI intent payload:** `CliIntentPayload` — `argv`, опционально `cwd`, `privileged: bool` (default false). Политика `CliIntentPolicy`: `SANDBOX` | `PRIVILEGED`. Sandbox — user-scope systemd с `ProtectSystem=strict`; privileged — `systemd-run --uid=0` после HITL (если `cli.privileged_hitl_enabled`).
+**CLI intent payload:** `CliIntentPayload` — `argv`, опционально `cwd`, `privileged: bool` (default false). Политика `CliIntentPolicy`: `SANDBOX` | `PRIVILEGED`. Sandbox — `systemd-run --user --wait --pipe` с `ProtectSystem=strict`; privileged — `systemd-run --wait --pipe --uid=0` после HITL (если `cli.privileged_hitl_enabled`).
 
 **FSM `emit`:** низкоуровневый `emit_transition_preserving_payload` записывает только карту `MailHeaderName` → VO; семантические обёртки (IRT из `Message-ID` входа, копия Cap, декремент hop на простом шаге) — в `fsm_emit_semantic.py` (например `emit_transition_simple_step_preserving_payload`, `managed_patch_simple_fsm_step`).
 
