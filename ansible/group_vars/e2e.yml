@@ -113,6 +113,11 @@ threlium_enrich:
 threlium_knowledge:
   observation_max_chars: 8000
 
+# hop: budget_sub=4 — L1 nested subagent_intent exhausts after L0 delegate (budget exhausted e2e);
+# shallow L1 path (tasks_upsert + finalize, no nested subagent) still fits.
+threlium_hop:
+  budget_sub: 4
+
 # lightrag: только overrides для e2e (insert_batch=1, query_api без llm)
 threlium_lightrag:
   insert_batch: 1
