@@ -104,7 +104,7 @@ flowchart LR
 
 | Стадия | To: | echo | resp | sys | Роль |
 |---|---|:--:|:--:|:--:|---|
-| `ingress` | `enrich` (или `cli_resume`) | — | да¹ | да | Единая точка входа. Ход пользователя → `<history>` + `<system>`; HITL-ответ → `cli_resume` только `<system>` (текст ответа для LLM-классификатора, ¹без history). |
+| `ingress` | `enrich` (или `cli_resume`) | — | да¹ | **нет**² | Единая точка входа. → `enrich`: preserving payload + append `<history>` (distill brief); HITL → `cli_resume` только `<system>` (¹без history). ²На пути enrich `<system>` не эмитится. |
 | `enrich` | `reasoning` / `summarize_context` | — | — | да² | → `reasoning`: **`<system>` НЕТ** (reasoning не читает payload, см. ниже) — собирает core-CID §4 + `<unified-mail-context>` из `<history>`-частей треда; своих `<history>` не создаёт. ²Только → `summarize_context` есть `<system>`. |
 | `enrich_fast` | `reasoning` | — | — | **релей** | Relay-сборщик дельты: `<history>` + `<system>` из окна (штампует `origin`); replace `<response-state>`/`<task-state>`. Старые `@system` из `E_prev` не копируются — только свежие из дельты. `reasoning` не кладёт их в LLM-промпт, но читает для FSM gate (`formal_reason`). |
 | `reasoning` | tool | **нет** | **нет** | да | Чистый `<system>`-эмиттер tool-call (команда адресату). История — забота callee. На ВХОДЕ сам `<system>` не читает. |
@@ -183,9 +183,10 @@ MCKP-бюджет / тиринг контекста (`context_budget.py`) жив
   Собирает все `<history>`-части окна **сырыми** (`collect_unified_delta_msgs`), штампует
   `X-Threlium-Origin` из `From:`, дописывает в хвост `E_prev`; **replace** `<response-state>`
   / `<task-state>` (пересчёт CRDT). Остальные части `E_prev` не трогает.
-- **`enrich`** (`enrich_context.py`): полный обход IRT-предков (старые→новые), берёт
-  `<history>`-части из **всех** писем (включая `To: enrich_fast`), исключая
-  `tag:context_summarized` и memory-бакеты.
+- **`enrich`** (`enrich_context.py`): полный обход IRT (лист + предки, старые→новые), берёт
+  `<history>`-части из **всех** писем (включая лист ingress→enrich и `To: enrich_fast`),
+  исключая `tag:context_summarized` и memory-бакеты. Последняя history листа может кратко
+  дублировать `<user-message>` (canonical = `last_history_text`).
 - **Дедуп — в обоих** по равенству `EnrichContentId` (контент-хеш тела): relay-копия
   схлопывается с оригиналом. Приоритет при коллизии — более раннее письмо (origin автора).
 
@@ -216,9 +217,11 @@ load-time. Тело графа — конкатенация `<history>`-част
 
 ## 8. Сквозные примеры по CID
 
-**Ход пользователя (внешний → ingress).** Мост: внешнее тело → `<system>` + `<history>`-копия
-→ `ingress`. `ingress._emit_to_enrich`: `<history>` (ход в память, origin=ingress) +
-`<system>` (тело-команда для enrich) → `enrich`.
+**Ход пользователя (внешний → ingress).** Мост: полное внешнее тело (без semantic trim) →
+`ingress`. `ingress._emit_to_enrich`: preserving MIME + append **несколько** `<history>` (LLM distill,
+`tool_choice=required`; каждое поле tool — свой Jinja; порядок: language → step_back → gaps →
+**`user_query` последним**) → `enrich` читает **последнюю** `<history>` (`last_history_part_text`
+→ `<user-message>`); все distill-`<history>` — в unified (лист не пропускается) и в LightRAG.
 
 **Tool-цикл (reasoning → formal_reason → enrich_fast → reasoning).** Каноническое описание
 (gate, `FormalReasonResultPayload`, relay `<system>`) — [`FORMAL_REASON_GATE.md`](FORMAL_REASON_GATE.md).
