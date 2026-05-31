@@ -48,8 +48,7 @@ fetchmail. Ответы агента тест читает из отдельно
 
 ---
 
-**CLI: deny / allow без HITL / отказ после HITL.** Отдельные сценарии WireMock (``cli_intent_deny``,
-``cli_intent_allow_echo``, ``hitl_matrix_resume_no``): те же приёмы notmuch + IMAP, без ``journalctl``.
+**CLI: sandbox allow / отказ после HITL.** WireMock (``cli_intent_allow_echo``, ``hitl_matrix_resume_no``).
 
 ---
 
@@ -91,6 +90,8 @@ from .helpers import (
     assert_notmuch_folder_contains_body_token,
     assert_notmuch_thread_has_messages_in_folders,
     discover_live_e2e_project_name,
+    e2e_refresh_hop_budget_default,
+    e2e_refresh_hop_budget_sub,
     poll_notmuch_thread_in_stage_folder,
     discover_runtime,
     e2e_dense_threlium_ctx_body,
@@ -145,10 +146,6 @@ LIVE_HITL_MATRIX_STUB_TAG = "stub-mailflow-live-hitl-mx-01"
 LIVE_HITL_MATRIX_BODY_ANCHOR_LINE = "e2e_subagent_hitl_matrix full cycle body hitl-mx-01"
 LIVE_HITL_MATRIX_STUB_DIR = _LIVE_ONLY_ROOT / "hitl_matrix"
 LIVE_HITL_MATRIX_SUBJECT = "e2e subagent+HITL matrix live hitlmx01"
-
-LIVE_CLI_DENY_STUB_TAG = "stub-mailflow-live-cli-deny-01"
-LIVE_CLI_DENY_STUB_DIR = _LIVE_ONLY_ROOT / "cli_intent_deny"
-LIVE_CLI_DENY_SUBJECT = "e2e_cli_intent_deny live cli-deny-01"
 
 LIVE_CLI_ALLOW_STUB_TAG = "stub-mailflow-live-cli-allow-01"
 LIVE_CLI_ALLOW_STUB_DIR = _LIVE_ONLY_ROOT / "cli_intent_allow_echo"
@@ -240,7 +237,6 @@ _LIVE_KIND_TO_STUB: dict[str, tuple[Path, str]] = {
     "global_memory": (LIVE_GLOBAL_MEMORY_STUB_DIR, LIVE_GLOBAL_MEMORY_STUB_TAG),
     "reflect_cycle": (LIVE_REFLECT_CYCLE_STUB_DIR, LIVE_REFLECT_CYCLE_STUB_TAG),
     "hitl_matrix": (LIVE_HITL_MATRIX_STUB_DIR, LIVE_HITL_MATRIX_STUB_TAG),
-    "cli_intent_deny": (LIVE_CLI_DENY_STUB_DIR, LIVE_CLI_DENY_STUB_TAG),
     "cli_intent_allow_echo": (LIVE_CLI_ALLOW_STUB_DIR, LIVE_CLI_ALLOW_STUB_TAG),
     "hitl_matrix_resume_no": (LIVE_HITL_RESUME_NO_STUB_DIR, LIVE_HITL_RESUME_NO_STUB_TAG),
 }
@@ -641,6 +637,7 @@ def test_live_subagent_budget_exhausted_on_running_stack(live_mailflow_runtime) 
     correlation_key = e2e_thread_root_mid_for_message_id(user_mid)
     wm_base = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
     try:
+        e2e_refresh_hop_budget_sub(rt.project_name, budget_sub=4, repo_root=REPO_ROOT)
         _live_prepare_wiremock(rt, kind="subagent_budget_exhausted", correlation_key=correlation_key)
         smtp_h, smtp_p = rt.greenmail_smtp_host, rt.greenmail_smtp_port
         imap_h, imap_p = rt.greenmail_imap_host, rt.greenmail_imap_port
@@ -702,13 +699,13 @@ def test_live_subagent_budget_exhausted_on_running_stack(live_mailflow_runtime) 
             anchor_message_id=nm_root,
             stage_folder_ids=(
                 FsmStage.SUBAGENT_INTENT.value,
-                FsmStage.ENRICH_FAST.value,
                 FsmStage.RESPONSE_FINALIZE.value,
                 FsmStage.EGRESS_EMAIL.value,
             ),
         )
     finally:
         assert_wiremock_zero_unmatched_requests(wm_base)
+        e2e_refresh_hop_budget_default(rt.project_name, repo_root=REPO_ROOT)
 
 
 @pytest.mark.e2e
@@ -1115,89 +1112,6 @@ def test_live_subagent_hitl_matrix_full_cycle_on_running_stack(live_mailflow_run
 
 @pytest.mark.e2e
 @pytest.mark.e2e_live
-def test_live_cli_intent_deny_on_running_stack(live_mailflow_runtime) -> None:
-    """``cli_intent`` → deny (``$(`` subshell в argv) → снова контур → ``egress_email``."""
-    rt = live_mailflow_runtime
-    user_mid = f"e2e-cli-deny-{uuid.uuid4().hex}@localhost"
-    correlation_key = e2e_thread_root_mid_for_message_id(user_mid)
-    wm_base = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
-    try:
-        _live_prepare_wiremock(rt, kind="cli_intent_deny", correlation_key=correlation_key)
-        smtp_h, smtp_p = rt.greenmail_smtp_host, rt.greenmail_smtp_port
-        imap_h, imap_p = rt.greenmail_imap_host, rt.greenmail_imap_port
-        to_addr = e2e_greenmail_mailbox_address(E2E_FETCHMAIL_USER)
-        from_addr = e2e_greenmail_mailbox_address("pytest")
-        imap_user = E2E_GREENMAIL_REPLY_USER
-        imap_pass = E2E_FETCHMAIL_PASS
-
-        baseline_uid = _pytest_inbox_max_uid(imap_h, imap_p, user=imap_user, password=imap_pass)
-
-        m = EmailMessage()
-        m["From"] = from_addr
-        m["To"] = to_addr
-        m["Subject"] = LIVE_CLI_DENY_SUBJECT
-        m["Message-ID"] = f"<{user_mid}>"
-        m.set_content(
-            e2e_dense_threlium_ctx_body(
-                head="e2e live cli_intent deny body cli-deny-01",
-                correlation_key=correlation_key,
-            )
-        )
-        _smtp_send(smtp_h, smtp_p, m)
-
-        uinner = user_mid.strip().strip("<>")
-        nm_root = email_ingress_notmuch_id_inner(user_mid)
-
-        poll_notmuch_thread_in_stage_folder(
-            rt.project_name,
-            anchor_message_id=nm_root,
-            stage_folder_id=FsmStage.CLI_INTENT.value,
-        )
-
-        def _agent_reply() -> bool | None:
-            rows = _pytest_inbox_rows(
-                imap_h,
-                imap_p,
-                user=imap_user,
-                password=imap_pass,
-                since_uid=baseline_uid,
-                subject="",
-                in_reply_to=uinner,
-            )
-            if not rows:
-                return None
-            for row in reversed(rows):
-                _, _, _, _, _, body = row
-                if E2E_REPLY_BODY_SNIPPET.lower() not in body.lower():
-                    continue
-                return True
-            return None
-
-        poll_until(
-            _agent_reply,
-            timeout=TIMEOUT_POLL_SHORT,
-            desc="live cli_intent deny: agent e2e reply in pytest@ INBOX",
-        )
-        assert_notmuch_thread_has_messages_in_folders(
-            rt.project_name,
-            anchor_message_id=nm_root,
-            stage_folder_ids=(
-                FsmStage.INGRESS.value,
-                FsmStage.ENRICH.value,
-                FsmStage.REASONING.value,
-                FsmStage.CLI_INTENT.value,
-                FsmStage.RESPONSE_FINALIZE.value,
-                FsmStage.EGRESS_ROUTER.value,
-                FsmStage.EGRESS_EMAIL.value,
-                FsmStage.ARCHIVE.value,
-            ),
-        )
-    finally:
-        assert_wiremock_zero_unmatched_requests(wm_base)
-
-
-@pytest.mark.e2e
-@pytest.mark.e2e_live
 def test_live_cli_intent_allow_echo_on_running_stack(live_mailflow_runtime) -> None:
     """``cli_intent`` allow (``echo``) → ``cli_exec`` → … → ``egress_email``."""
     rt = live_mailflow_runtime
@@ -1412,7 +1326,7 @@ def test_live_hitl_user_rejects_cli_on_running_stack(live_mailflow_runtime) -> N
 
         assert_notmuch_folder_contains_body_token(
             rt.project_name,
-            stage_folder_id=FsmStage.INGRESS.value,
+            stage_folder_id=FsmStage.ENRICH_FAST.value,
             body_token="user did not confirm the CLI command",
             repo_root=REPO_ROOT,
         )
@@ -1426,6 +1340,7 @@ def test_live_hitl_user_rejects_cli_on_running_stack(live_mailflow_runtime) -> N
                 FsmStage.CLI_INTENT.value,
                 FsmStage.CLI_HITL_OUT.value,
                 FsmStage.CLI_RESUME.value,
+                FsmStage.ENRICH_FAST.value,
                 FsmStage.REASONING.value,
                 FsmStage.RESPONSE_FINALIZE.value,
                 FsmStage.EGRESS_ROUTER.value,

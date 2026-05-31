@@ -19,6 +19,11 @@ import pytest
 from tests.e2e.log import clip_log_body, log
 from threlium.types import FsmStage
 
+from .formal_reason_assertions import (
+    assert_journal_contains,
+    assert_ungated_reasoning_has_finalize,
+    assert_violation_reasoning_without_gate,
+)
 from .helpers import (
     MailflowScenarioSpec,
     assert_full_mailflow_pipeline,
@@ -27,10 +32,7 @@ from .helpers import (
     mailflow_inject_and_wait,
     REPO_ROOT,
 )
-from .wiremock_client import (
-    find_wiremock_requests_by_body_contains,
-    wiremock_public_base,
-)
+from .wiremock_client import wiremock_public_base
 
 _WIREMOCK_STUBS_ROOT = Path(__file__).resolve().parent / "wiremock_stubs"
 E2E_FORMAL_REASON_VIOLATION_BODY = "E2E-FORMAL-REASON-VIOLATION-BODY"
@@ -62,26 +64,6 @@ FORMAL_REASON_VIOLATION_SPEC = MailflowScenarioSpec(
 )
 
 
-def _assert_reasoning_saw_violation_observation(project: str, stub_tag: str) -> None:
-    """Second reasoning call journal must include SHACL violation observation relay."""
-    rt = discover_runtime(project, repo_root=REPO_ROOT)
-    wm_base = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
-    for needle in ("conforms: False", "violations:"):
-        matches = find_wiremock_requests_by_body_contains(
-            wm_base, needle, stub_tag=stub_tag
-        )
-        chat_matches = [
-            e
-            for e in matches
-            if "/chat/completions" in (e.get("request", {}).get("url") or "")
-        ]
-        assert chat_matches, (
-            f"No chat/completions requests contain {needle!r} "
-            f"(stub_tag={stub_tag!r})"
-        )
-    log.info("formal_reason_violation_observation_verified", stub_tag=stub_tag)
-
-
 @pytest.fixture()
 def formal_reason_violation_processed_stack(deployed_stack: str) -> object:
     with mailflow_inject_and_wait(FORMAL_REASON_VIOLATION_SPEC, deployed_stack) as ids:
@@ -107,7 +89,15 @@ def test_formal_reason_violation_full_pipeline(
             stub_tag=stub_tag,
             correlation_key=correlation_key,
         )
-        _assert_reasoning_saw_violation_observation(project, stub_tag)
+        rt = discover_runtime(project, repo_root=REPO_ROOT)
+        wm_base = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
+        for needle in ("conforms: False", "violations:"):
+            assert_journal_contains(wm_base, stub_tag, needle)
+        assert_violation_reasoning_without_gate(wm_base, stub_tag)
+        assert_ungated_reasoning_has_finalize(
+            wm_base, stub_tag, needle="conforms: False"
+        )
+        log.info("formal_reason_violation_observation_verified", stub_tag=stub_tag)
     except Exception:
         log.debug(
             "failure_artifacts",

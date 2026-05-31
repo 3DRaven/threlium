@@ -4,7 +4,7 @@
     "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
     "headers": {
       "X-Threlium-Call-Site": {
-        "equalTo": "lightrag_index_gleaning"
+        "equalTo": "lightrag_index_summarize"
       }
     },
     "bodyPatterns": [
@@ -15,7 +15,7 @@
     "customMatcher": {
       "name": "state-matcher",
       "parameters": {
-        "hasContext": "stub-mailflow-live-cli-deny-01::{{request.headers.[x-threlium-thread-root]}}"
+        "hasContext": "stub-formal-reason-technical-gate-01::{{request.headers.[x-threlium-thread-root]}}"
       }
     }
   },
@@ -25,7 +25,7 @@
       "Content-Type": "application/json"
     },
     "jsonBody": {
-      "id": "chatcmpl-e2e-wiremock-gleaning",
+      "id": "chatcmpl-e2e-memory-query-summarize",
       "object": "chat.completion",
       "created": 0,
       "model": "gpt-4o-mini",
@@ -35,7 +35,7 @@
           "finish_reason": "stop",
           "message": {
             "role": "assistant",
-            "content": "<|COMPLETE|>"
+            "content": "E2e merged stub summary for knowledge update query test entity."
           }
         }
       ]

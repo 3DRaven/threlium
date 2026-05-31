@@ -36,6 +36,12 @@ import pytest
 from tests.e2e.log import clip_log_body, log
 from threlium.types import FsmStage
 
+from .formal_reason_assertions import (
+    FULL_TOOL_NAMES,
+    GATE_TOOL_NAMES,
+    assert_all_reasoning_gate_absent,
+    tool_names_from_chat_body,
+)
 from .helpers import (
     MailflowScenarioSpec,
     REPO_ROOT,
@@ -139,6 +145,24 @@ def test_formal_reason_chain_full_pipeline(
             correlation_key=correlation_key,
         )
         _assert_unified_delta_in_reasoning_journal(project, stub_tag)
+        rt = discover_runtime(project, repo_root=REPO_ROOT)
+        wm_base = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
+        assert_all_reasoning_gate_absent(wm_base, stub_tag)
+        mq_matches = find_wiremock_requests_by_body_contains(
+            wm_base, E2E_MEMORY_QUERY_REASONING_MARKER, stub_tag=stub_tag
+        )
+        mq_chat = [
+            e
+            for e in mq_matches
+            if "/chat/completions" in (e.get("request", {}).get("url") or "")
+        ]
+        assert mq_chat, "expected memory_query reasoning journal entry"
+        mq_body = mq_chat[0].get("request", {}).get("body") or ""
+        mq_tools = frozenset(tool_names_from_chat_body(str(mq_body)))
+        assert mq_tools != GATE_TOOL_NAMES
+        assert FsmStage.MEMORY_QUERY.value in mq_tools
+        assert FsmStage.RESPONSE_FINALIZE.value in mq_tools
+        assert mq_tools <= FULL_TOOL_NAMES
         assert_notmuch_folder_contains_body_token(
             project,
             stage_folder_id=FsmStage.REASONING.value,

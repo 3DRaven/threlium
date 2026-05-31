@@ -60,7 +60,10 @@ _KNOWLEDGE_PROMPTS = [
     "reasoning/memory_query/tool_spec.j2",
     "reasoning/memory_query/email_body.j2",
     "reasoning/memory_query/email_subject.j2",
-    "formal_reason/observation.j2",
+    "formal_reason/observation_passed.j2",
+    "formal_reason/observation_fatal.j2",
+    "formal_reason/observation_supplemental_error.j2",
+    "formal_reason/observation_shacl_negative.j2",
     "memory_query/observation.j2",
 ]
 

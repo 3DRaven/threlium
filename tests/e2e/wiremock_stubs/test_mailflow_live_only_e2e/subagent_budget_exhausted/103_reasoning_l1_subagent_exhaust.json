@@ -16,9 +16,6 @@
       },
       {
         "contains": "\"tools\""
-      },
-      {
-        "contains": "sat-budget-exhausted-01"
       }
     ],
     "customMatcher": {

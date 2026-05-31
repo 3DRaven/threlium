@@ -18,15 +18,15 @@
         "contains": "\"tools\""
       },
       {
-        "contains": "E2E-CLI-DISCOVERY-CHAIN-BODY"
+        "contains": "FORCED FINALIZE"
       }
     ],
     "customMatcher": {
       "name": "state-matcher",
       "parameters": {
-        "hasContext": "stub-cli-discovery-chain-01::{{request.headers.[x-threlium-thread-root]}}",
-        "hasProperty": "active",
-        "hasNotProperty": "phase_cli_intent_done"
+        "hasContext": "stub-mailflow-live-sat-budget-exhausted-01::{{request.headers.[x-threlium-thread-root]}}",
+        "hasProperty": "phase_nested",
+        "hasNotProperty": "phase_l1_done"
       }
     }
   },
@@ -36,7 +36,7 @@
       "Content-Type": "application/json"
     },
     "jsonBody": {
-      "id": "chatcmpl-e2e-live-cli-intent-allow",
+      "id": "chatcmpl-e2e-live-l1-force-finalize",
       "object": "chat.completion",
       "created": 0,
       "model": "gpt-4o-mini",
@@ -49,11 +49,11 @@
             "content": null,
             "tool_calls": [
               {
-                "id": "call_threlium_e2e_cli_intent_allow",
+                "id": "call_threlium_e2e_l1_force_finalize",
                 "type": "function",
                 "function": {
-                  "name": "cli_intent",
-                  "arguments": "{\"argv\": [\"bash\", \"-c\", \"rg -l E2E-CLI-DISCOVERY-MARKER /home/threlium/threlium/agent/e2e-cli-discovery-marker.txt | grep -E 'DISCOVERY|MARKER' | head -n 5; echo E2E-CLI-DISCOVERY-STDOUT-MARKER\"], \"reasoning\": \"e2e discovery chain: rg | grep -E with pipe in quotes (th-agent regression)\"}"
+                  "name": "response_finalize",
+                  "arguments": "{\"reasoning\": \"e2e L1: hop budget exhausted after nested subagent blocked\", \"subject\": \"e2e subagent budget exhausted\", \"verification_summary\": \"e2e: nested subagent blocked by hop budget\", \"content\": \"e2e L1 budget-exhausted notice relay (POP to L0).\"}"
                 }
               }
             ]
@@ -66,9 +66,9 @@
     {
       "name": "recordState",
       "parameters": {
-        "context": "stub-cli-discovery-chain-01::{{request.headers.[x-threlium-thread-root]}}",
+        "context": "stub-mailflow-live-sat-budget-exhausted-01::{{request.headers.[x-threlium-thread-root]}}",
         "state": {
-          "phase_cli_intent_done": "1"
+          "phase_l1_done": "1"
         }
       }
     }

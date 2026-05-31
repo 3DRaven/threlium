@@ -15,7 +15,7 @@
     "customMatcher": {
       "name": "state-matcher",
       "parameters": {
-        "hasContext": "stub-mailflow-live-cli-deny-01::{{request.headers.[x-threlium-thread-root]}}"
+        "hasContext": "stub-formal-reason-technical-gate-01::{{request.headers.[x-threlium-thread-root]}}"
       }
     }
   },
@@ -28,7 +28,7 @@
       "response-template"
     ],
     "jsonBody": {
-      "id": "chatcmpl-e2e-wiremock-keywords",
+      "id": "chatcmpl-e2e-memory-query-keywords",
       "object": "chat.completion",
       "created": 0,
       "model": "gpt-4o-mini",

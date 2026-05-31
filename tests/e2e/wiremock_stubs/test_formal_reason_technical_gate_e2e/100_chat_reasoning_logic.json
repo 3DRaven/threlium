@@ -18,15 +18,18 @@
         "contains": "\"tools\""
       },
       {
-        "contains": "E2E-CLI-DISCOVERY-CHAIN-BODY"
+        "contains": "E2E-FORMAL-REASON-TECH-GATE-BODY"
+      },
+      {
+        "doesNotMatch": "(?s).*\"enable_thinking\"\\s*:\\s*false.*"
       }
     ],
     "customMatcher": {
       "name": "state-matcher",
       "parameters": {
-        "hasContext": "stub-cli-discovery-chain-01::{{request.headers.[x-threlium-thread-root]}}",
+        "hasContext": "stub-formal-reason-technical-gate-01::{{request.headers.[x-threlium-thread-root]}}",
         "hasProperty": "active",
-        "hasNotProperty": "phase_cli_intent_done"
+        "hasNotProperty": "phase_tech_first_done"
       }
     }
   },
@@ -36,7 +39,7 @@
       "Content-Type": "application/json"
     },
     "jsonBody": {
-      "id": "chatcmpl-e2e-live-cli-intent-allow",
+      "id": "chatcmpl-e2e-formal-reason-tech-gate-reasoning-1",
       "object": "chat.completion",
       "created": 0,
       "model": "gpt-4o-mini",
@@ -49,11 +52,11 @@
             "content": null,
             "tool_calls": [
               {
-                "id": "call_threlium_e2e_cli_intent_allow",
+                "id": "call_e2e_formal_reason_tech_gate_1",
                 "type": "function",
                 "function": {
-                  "name": "cli_intent",
-                  "arguments": "{\"argv\": [\"bash\", \"-c\", \"rg -l E2E-CLI-DISCOVERY-MARKER /home/threlium/threlium/agent/e2e-cli-discovery-marker.txt | grep -E 'DISCOVERY|MARKER' | head -n 5; echo E2E-CLI-DISCOVERY-STDOUT-MARKER\"], \"reasoning\": \"e2e discovery chain: rg | grep -E with pipe in quotes (th-agent regression)\"}"
+                  "name": "formal_reason",
+                  "arguments": "{\"reasoning\": \"e2e: intentional bad SPARQL to trigger QUERY ERROR gate\", \"query\": \"PREFIX ex: <http://example.org/> SELECT ?name WHERE { ?p ex:name ?name\", \"shapes_ttl\": \"@prefix sh: <http://www.w3.org/ns/shacl#> .\\n@prefix ex: <http://example.org/> .\\n\\nex:PersonShape a sh:NodeShape ;\\n  sh:targetClass ex:Person ;\\n  sh:property [ sh:path ex:name ; sh:minCount 1 ] .\", \"facts_ttl\": \"@prefix ex: <http://example.org/> .\\n\\nex:alice a ex:Person ;\\n  ex:name \\\"Alice\\\" .\\n\"}"
                 }
               }
             ]
@@ -66,9 +69,9 @@
     {
       "name": "recordState",
       "parameters": {
-        "context": "stub-cli-discovery-chain-01::{{request.headers.[x-threlium-thread-root]}}",
+        "context": "stub-formal-reason-technical-gate-01::{{request.headers.[x-threlium-thread-root]}}",
         "state": {
-          "phase_cli_intent_done": "1"
+          "phase_tech_first_done": "1"
         }
       }
     }

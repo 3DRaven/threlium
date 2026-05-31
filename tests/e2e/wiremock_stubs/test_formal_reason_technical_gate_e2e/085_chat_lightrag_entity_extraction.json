@@ -4,21 +4,18 @@
     "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
     "headers": {
       "X-Threlium-Call-Site": {
-        "equalTo": "lightrag_query_response"
+        "equalTo": "lightrag_index_entity"
       }
     },
     "bodyPatterns": [
       {
         "matches": "(?s).*(openai/threlium_e2e_l0|threlium_e2e_l0).*"
-      },
-      {
-        "matches": "(?s)(?!.*Knowledge Graph Data \\(Entity\\):)(?!.*---Data to be Processed---).*(?:X-Threlium-LightRAG-Chunk:\\s*\\d+).*"
       }
     ],
     "customMatcher": {
       "name": "state-matcher",
       "parameters": {
-        "hasContext": "stub-mailflow-live-cli-deny-01::{{request.headers.[x-threlium-thread-root]}}"
+        "hasContext": "stub-formal-reason-technical-gate-01::{{request.headers.[x-threlium-thread-root]}}"
       }
     }
   },
@@ -28,7 +25,7 @@
       "Content-Type": "application/json"
     },
     "jsonBody": {
-      "id": "chatcmpl-e2e-wiremock-naive",
+      "id": "chatcmpl-e2e-memory-query-entity-extraction",
       "object": "chat.completion",
       "created": 0,
       "model": "gpt-4o-mini",
@@ -38,7 +35,7 @@
           "finish_reason": "stop",
           "message": {
             "role": "assistant",
-            "content": "E2e naive RAG stub: no grounded answer in mock (use graph path in e2e)."
+            "content": "entity<|#|>E2e Knowledge Update Entity<|#|>concept<|#|>Synthetic entity for knowledge update query e2e.<|COMPLETE|>"
           }
         }
       ]

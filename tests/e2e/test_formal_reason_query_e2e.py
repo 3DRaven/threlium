@@ -17,13 +17,19 @@ import pytest
 from tests.e2e.log import clip_log_body, log
 from threlium.types import FsmStage
 
+from .formal_reason_assertions import (
+    assert_all_reasoning_gate_absent,
+    assert_ungated_reasoning_has_finalize,
+)
 from .helpers import (
     MailflowScenarioSpec,
     assert_full_mailflow_pipeline,
+    discover_runtime,
     dump_failure_artifacts,
     mailflow_inject_and_wait,
     REPO_ROOT,
 )
+from .wiremock_client import wiremock_public_base
 
 _WIREMOCK_STUBS_ROOT = Path(__file__).resolve().parent / "wiremock_stubs"
 E2E_FORMAL_REASON_QUERY_BODY = "E2E-FORMAL-REASON-QUERY-BODY"
@@ -79,6 +85,12 @@ def test_formal_reason_query_full_pipeline(
             nm_inner=nm_inner,
             stub_tag=stub_tag,
             correlation_key=correlation_key,
+        )
+        rt = discover_runtime(project, repo_root=REPO_ROOT)
+        wm_base = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
+        assert_all_reasoning_gate_absent(wm_base, stub_tag)
+        assert_ungated_reasoning_has_finalize(
+            wm_base, stub_tag, needle="query_result:"
         )
     except Exception:
         log.debug(

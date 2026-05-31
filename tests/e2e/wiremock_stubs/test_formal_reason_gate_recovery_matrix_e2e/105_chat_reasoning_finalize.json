@@ -16,13 +16,22 @@
       },
       {
         "contains": "\"tools\""
+      },
+      {
+        "contains": "query_result:"
+      },
+      {
+        "contains": "E2E-FORMAL-REASON-GATE-MATRIX-BODY"
+      },
+      {
+        "doesNotMatch": "(?s).*\"enable_thinking\"\\s*:\\s*false.*"
       }
     ],
     "customMatcher": {
       "name": "state-matcher",
       "parameters": {
-        "hasContext": "stub-mailflow-live-cli-deny-01::{{request.headers.[x-threlium-thread-root]}}",
-        "hasProperty": "live_cli_deny_round1_ledger_done"
+        "hasContext": "stub-formal-reason-gate-matrix-01::{{request.headers.[x-threlium-thread-root]}}",
+        "hasProperty": "phase_matrix_ledger_done"
       }
     }
   },
@@ -32,7 +41,7 @@
       "Content-Type": "application/json"
     },
     "jsonBody": {
-      "id": "chatcmpl-e2e-live-cli-deny-egress",
+      "id": "chatcmpl-e2e-formal-reason-matrix-finalize",
       "object": "chat.completion",
       "created": 0,
       "model": "gpt-4o-mini",
@@ -45,11 +54,11 @@
             "content": null,
             "tool_calls": [
               {
-                "id": "call_threlium_e2e_egress_after_deny",
+                "id": "call_e2e_response_finalize_matrix",
                 "type": "function",
                 "function": {
                   "name": "response_finalize",
-                  "arguments": "{\"reasoning\": \"e2e: finalizing response with verified content\", \"subject\": \"e2e reply\", \"verification_summary\": \"e2e: direct answer, content verified\", \"content\": \"ok from llm-mock\"}"
+                  "arguments": "{\"reasoning\": \"e2e matrix: finalize after fatal + memory_query + query error recovery\", \"content\": \"e2e-formal-reason-gate-matrix-verified-answer\", \"verification_summary\": \"Recovered through formal_reason gate with memory_query and retries.\"}"
                 }
               }
             ]

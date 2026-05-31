@@ -1,0 +1,85 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
+    "headers": {
+      "X-Threlium-Call-Site": {
+        "equalTo": "fsm"
+      }
+    },
+    "bodyPatterns": [
+      {
+        "matches": "(?s).*(openai/threlium_e2e_l0|threlium_e2e_l0).*"
+      },
+      {
+        "contains": "<envelope>"
+      },
+      {
+        "contains": "\"tools\""
+      },
+      {
+        "contains": "QUERY ERROR"
+      },
+      {
+        "contains": "FORMAL REASON GATE"
+      },
+      {
+        "contains": "E2E-FORMAL-REASON-GATE-MATRIX-BODY"
+      },
+      {
+        "doesNotMatch": "(?s).*\"enable_thinking\"\\s*:\\s*false.*"
+      }
+    ],
+    "customMatcher": {
+      "name": "state-matcher",
+      "parameters": {
+        "hasContext": "stub-formal-reason-gate-matrix-01::{{request.headers.[x-threlium-thread-root]}}",
+        "hasProperty": "phase_matrix_query_error_done",
+        "hasNotProperty": "phase_matrix_recovery_done"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "id": "chatcmpl-e2e-formal-reason-matrix-reasoning-4",
+      "object": "chat.completion",
+      "created": 0,
+      "model": "gpt-4o-mini",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "tool_calls",
+          "message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_e2e_formal_reason_matrix_recovery",
+                "type": "function",
+                "function": {
+                  "name": "formal_reason",
+                  "arguments": "{\"reasoning\": \"e2e matrix: recovery with valid SPARQL after QUERY ERROR gate\", \"query\": \"PREFIX ex: <http://example.org/> SELECT ?name WHERE { ?p ex:name ?name }\", \"shapes_ttl\": \"@prefix sh: <http://www.w3.org/ns/shacl#> .\\n@prefix ex: <http://example.org/> .\\n\\nex:PersonShape a sh:NodeShape ;\\n  sh:targetClass ex:Person ;\\n  sh:property [ sh:path ex:name ; sh:minCount 1 ] .\", \"facts_ttl\": \"@prefix ex: <http://example.org/> .\\n\\nex:alice a ex:Person ;\\n  ex:name \\\"Alice\\\" .\\n\"}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "serveEventListeners": [
+    {
+      "name": "recordState",
+      "parameters": {
+        "context": "stub-formal-reason-gate-matrix-01::{{request.headers.[x-threlium-thread-root]}}",
+        "state": {
+          "phase_matrix_recovery_done": "1"
+        }
+      }
+    }
+  ]
+}

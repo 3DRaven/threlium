@@ -2109,6 +2109,44 @@ def run_e2e_site_playbook(
     _diag(f"ansible deploy done (elapsed={time.monotonic() - started:.1f}s)")
 
 
+_E2E_LEAVE_STACK_RUNNING_ENV = "THRELIUM_E2E_LEAVE_STACK_RUNNING"
+_E2E_DEFAULT_HOP_BUDGET = {"budget_root": 256, "budget_sub": 256}
+
+
+def e2e_refresh_hop_budget_sub(
+    project_name: str,
+    *,
+    budget_sub: int,
+    repo_root: Path | None = None,
+) -> None:
+    """Redeploy ``threlium.yaml`` ``hop.budget_sub`` via ansible ``refresh`` (restarts engine)."""
+    os.environ[_E2E_LEAVE_STACK_RUNNING_ENV] = "1"
+    hop = dict(_E2E_DEFAULT_HOP_BUDGET)
+    hop["budget_sub"] = budget_sub
+    run_e2e_site_playbook(
+        project_name,
+        checkout="/unused",
+        repo_root=repo_root or REPO_ROOT,
+        ansible_tags="refresh",
+        ansible_extra_vars={"threlium_hop": hop},
+    )
+
+
+def e2e_refresh_hop_budget_default(
+    project_name: str,
+    *,
+    repo_root: Path | None = None,
+) -> None:
+    """Restore e2e inventory ``hop`` defaults (``budget_sub=256``) after a scoped override."""
+    os.environ[_E2E_LEAVE_STACK_RUNNING_ENV] = "1"
+    run_e2e_site_playbook(
+        project_name,
+        checkout="/unused",
+        repo_root=repo_root or REPO_ROOT,
+        ansible_tags="refresh",
+    )
+
+
 def copy_repo_and_run_ansible(
     project_name: str,
     *,

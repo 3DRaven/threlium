@@ -1,4 +1,4 @@
-"""E2E: ``cli_intent`` shell chain (``sh -c`` + ``&&``) with discovery allowlist → ``cli_exec`` → finalize.
+"""E2E: ``cli_intent`` shell chain (``sh -c`` + pipe in ``grep -E``) → sandbox ``cli_exec`` → finalize.
 
 Стабы: ``wiremock_stubs/test_cli_discovery_chain_e2e/`` (``stub-cli-discovery-chain-01``).
 """
@@ -59,6 +59,7 @@ CLI_DISCOVERY_CHAIN_SPEC = MailflowScenarioSpec(
         FsmStage.REASONING.value,
         FsmStage.CLI_INTENT.value,
         FsmStage.CLI_EXEC.value,
+        FsmStage.ENRICH_FAST.value,
         FsmStage.TASKS_UPSERT.value,
         FsmStage.RESPONSE_FINALIZE.value,
         FsmStage.EGRESS_ROUTER.value,

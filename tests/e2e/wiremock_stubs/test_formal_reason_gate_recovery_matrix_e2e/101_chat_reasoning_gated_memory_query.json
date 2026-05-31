@@ -18,15 +18,24 @@
         "contains": "\"tools\""
       },
       {
-        "contains": "X-Threlium-Hop-Budget exhausted"
+        "contains": "PARSE ERROR"
+      },
+      {
+        "contains": "FORMAL REASON GATE"
+      },
+      {
+        "contains": "E2E-FORMAL-REASON-GATE-MATRIX-BODY"
+      },
+      {
+        "doesNotMatch": "(?s).*\"enable_thinking\"\\s*:\\s*false.*"
       }
     ],
     "customMatcher": {
       "name": "state-matcher",
       "parameters": {
-        "hasContext": "stub-mailflow-live-sat-budget-exhausted-01::{{request.headers.[x-threlium-thread-root]}}",
-        "hasProperty": "phase_l1_subagent_attempted",
-        "hasNotProperty": "phase_l1_done"
+        "hasContext": "stub-formal-reason-gate-matrix-01::{{request.headers.[x-threlium-thread-root]}}",
+        "hasProperty": "phase_matrix_fatal_done",
+        "hasNotProperty": "phase_matrix_mq_done"
       }
     }
   },
@@ -36,7 +45,7 @@
       "Content-Type": "application/json"
     },
     "jsonBody": {
-      "id": "chatcmpl-e2e-live-l1-after-budget-exhaust",
+      "id": "chatcmpl-e2e-formal-reason-matrix-reasoning-2",
       "object": "chat.completion",
       "created": 0,
       "model": "gpt-4o-mini",
@@ -49,11 +58,11 @@
             "content": null,
             "tool_calls": [
               {
-                "id": "call_threlium_e2e_l1_finalize_after_exhaust",
+                "id": "call_e2e_memory_query_matrix_gate",
                 "type": "function",
                 "function": {
-                  "name": "response_finalize",
-                  "arguments": "{\"reasoning\": \"e2e L1: finalize after budget exhausted notice\", \"subject\": \"e2e subagent budget exhausted\", \"verification_summary\": \"e2e: nested subagent blocked by hop budget\", \"content\": \"e2e L1 budget-exhausted notice relay (POP to L0).\"}"
+                  "name": "memory_query",
+                  "arguments": "{\"reasoning\": \"e2e matrix: memory_query allowed under formal_reason gate after parse fatal\", \"query\": \"turtle_syntax.md SHACL gate recovery\"}"
                 }
               }
             ]
@@ -66,9 +75,9 @@
     {
       "name": "recordState",
       "parameters": {
-        "context": "stub-mailflow-live-sat-budget-exhausted-01::{{request.headers.[x-threlium-thread-root]}}",
+        "context": "stub-formal-reason-gate-matrix-01::{{request.headers.[x-threlium-thread-root]}}",
         "state": {
-          "phase_l1_done": "1"
+          "phase_matrix_mq_done": "1"
         }
       }
     }
