@@ -187,6 +187,11 @@ MCKP-бюджет / тиринг контекста (`context_budget.py`) жив
   `<history>`-части из **всех** писем (включая лист ingress→enrich и `To: enrich_fast`),
   исключая `tag:context_summarized` и memory-бакеты. Последняя history листа может кратко
   дублировать `<user-message>` (canonical = `last_history_text`).
+  Планировщик графа (`enrich_query_plan.j2`, recent messages) и overflow summarize
+  (`enrich._emit_summarize_overflow`) читают те же `<history>`-части через
+  `concat_history_parts_text` / Jinja `history_text`, **не** `get_body`.
+  В overflow-batch письма без непустого `<history>` пропускаются (`summarize_overflow_skip_no_history`);
+  пустой batch после фильтра — ошибка, summarize не эмитится.
 - **Дедуп — в обоих** по равенству `EnrichContentId` (контент-хеш тела): relay-копия
   схлопывается с оригиналом. Приоритет при коллизии — более раннее письмо (origin автора).
 
@@ -222,6 +227,13 @@ load-time. Тело графа — конкатенация `<history>`-част
 `tool_choice=required`; каждое поле tool — свой Jinja; порядок: language → step_back → gaps →
 **`user_query` последним**) → `enrich` читает **последнюю** `<history>` (`last_history_part_text`
 → `<user-message>`); все distill-`<history>` — в unified (лист не пропускается) и в LightRAG.
+
+| Поле distill | History heading | Потребитель | Язык |
+|---|---|---|---|
+| `user_query` | `## User intent` | enrich `<user-message>`, reasoning `<user_message>`, graph query | English (internal) |
+| `user_reply_language` | `## User reply language` | reasoning egress / `response_finalize` | как у пользователя |
+| `step_back_notes` | `## Step-back context` | unified, reasoning history | English (internal) |
+| `open_gaps` | `## Open gaps` | unified, reasoning history | English (internal) |
 
 **Tool-цикл (reasoning → formal_reason → enrich_fast → reasoning).** Каноническое описание
 (gate, `FormalReasonResultPayload`, relay `<system>`) — [`FORMAL_REASON_GATE.md`](FORMAL_REASON_GATE.md).
