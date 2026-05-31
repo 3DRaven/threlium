@@ -138,7 +138,7 @@ flowchart LR
 |---|---|:--:|:--:|:--:|---|
 | `cli_exec` | `enrich_fast` | —⁴ | да | да | Результат команды (observation: cmd_line+stdout/stderr/exit) → `<history>` (origin=cli_exec) + `<system>`. ⁴cmd_line уже в observation, отдельный echo избыточен. |
 | `cli_hitl_out` | `egress_router` | — | да | да | Вопрос пользователю: `<system>` = тело отправки, `<history>` = копия вопроса. |
-| `cli_resume` | `ingress` / `cli_exec` | — | нет | да | Возобновление после HITL: `<system>` = ответ пользователя; решение — sync LLM tool `confirm_cli_hitl` (score 0), не regex. |
+| `cli_resume` | `ingress` / `cli_exec` | — | нет | да | Возобновление после HITL: `<system>` = ответ пользователя; пустой ответ → `enrich_fast` без LLM; иначе sync LLM tool `confirm_cli_hitl` (score 0, retry bridge). Отказ пользователя (`confirmed=false`) → `enrich_fast`; ошибка classify после retry → падение стадии. |
 
 **Субагент-возврат / сжатие / терминальные.**
 
