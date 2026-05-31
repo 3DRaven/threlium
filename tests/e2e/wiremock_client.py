@@ -2359,6 +2359,30 @@ def wiremock_unmatched_requests_count(
     return len(wiremock_unmatched_request_entries(public_base, timeout=timeout))
 
 
+_WIREMOCK_UNMATCHED_DEBUG_HINT = (
+    "После теста unmatched не чистятся — только assert; "
+    "предсессионный cold reset: ``conftest._e2e_wiremock_journal_reset_once`` "
+    "(§8.3 ``docs/E2E_ISOLATION.md``).\n"
+    "\n"
+    "Отладка e2e / WireMock / SUT (``docs/E2E_ISOLATION.md``, ``docs/TESTING.md``):\n"
+    "  • Источники: journald SUT (связка писем), Maildir, WireMock (журнал/unmatched ниже), лог pytest (-s).\n"
+    "  • Изоляция: ``state-matcher`` + composite ``hasContext`` "
+    "``{stub_tag}::{{x-threlium-thread-root}}``; дискриминаторы ``X-Threlium-Call-Site``, "
+    "phase ``hasProperty``/``hasNotProperty``; без ``priority`` и ``doesNotContain`` для чужих тестов.\n"
+    "  • Сид до отправки: ``wiremock_state_seed_context(stub_tag::correlation_key)``; "
+    "``correlation_key`` = ``X-Threlium-Thread-Root`` (email/matrix/tg); после bridge — ``X-Threlium-Route``.\n"
+    "  • Matrix/TG: shared list (``matrix_rooms`` / ``telegram_updates``); в ``finally`` только "
+    "``unregister_room``/``unregister_update`` — контекст route не удалять (§2.4, §7).\n"
+    "  • Правки ``tests/`` — свободно; код проекта — по согласованию; таймаут 30 с не менять.\n"
+    "  • Прогон: pytest -s, долгие — в фоне; не tee|tail.\n"
+    "  • Быстрый цикл (``docs/FSTS_SYNC.md``): не bake / ``wipe_sync`` / ``wipe_bake`` / "
+    "полный ``ansible-playbook`` — стек уже поднят. FSTS: ``docker cp`` пакет ``threlium`` + "
+    "``prompts`` в ``sut`` → ``pip install -e`` в ``.venv`` → ``systemctl --user restart`` "
+    "``threlium-engine`` + нужный ``threlium-bridge@…``; опционально DELETE WM journal/state "
+    "и flush Maildir (``e2e_flush_sut_fsm_maildirs``). Затем целевой pytest."
+)
+
+
 def assert_wiremock_unmatched_journal_empty(
     public_base: str,
     *,
@@ -2376,10 +2400,8 @@ def assert_wiremock_unmatched_journal_empty(
     if not entries:
         return
     lines = [
-        f"WireMock unmatched journal not empty ({phase}): {len(entries)} request(s). "
-        "Ищите причину (стабы, WireMock State / сид контекста, "
-        "``X-Threlium-Thread-Root``, порядок teardown). После теста unmatched не чистятся — только "
-        "assert; предпрогоновый полный сброс журнала см. ``conftest._e2e_wiremock_journal_reset_once``."
+        f"WireMock unmatched journal not empty ({phase}): {len(entries)} request(s).",
+        _WIREMOCK_UNMATCHED_DEBUG_HINT,
     ]
     for i, ent in enumerate(entries[: max(0, int(preview_limit))]):
         method, url = _wiremock_journal_entry_method_url(ent)
