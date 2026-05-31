@@ -15,11 +15,12 @@ import pytest
 from threlium.types import FsmStage
 
 from .formal_reason_assertions import (
-    assert_gate_absent_with_body_marker,
+    assert_first_fsm_reasoning_gate_absent,
     assert_gated_reasoning_calls,
     assert_journal_contains,
     assert_ungated_reasoning_has_finalize,
 )
+from .log import clip_log_body, log
 from .helpers import (
     MailflowScenarioSpec,
     assert_full_mailflow_pipeline,
@@ -87,7 +88,7 @@ def test_formal_reason_technical_gate_full_pipeline(
         )
         rt = discover_runtime(project, repo_root=REPO_ROOT)
         wm_base = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
-        assert_gate_absent_with_body_marker(
+        assert_first_fsm_reasoning_gate_absent(
             wm_base, stub_tag, E2E_FORMAL_REASON_TECH_GATE_BODY
         )
         assert_gated_reasoning_calls(wm_base, stub_tag)
@@ -96,11 +97,8 @@ def test_formal_reason_technical_gate_full_pipeline(
             wm_base, stub_tag, needle="query_result:"
         )
     except Exception:
-        dump_failure_artifacts(
-            FORMAL_REASON_TECH_GATE_SPEC,
-            project=project,
-            raw_id=raw_id,
-            nm_inner=nm_inner,
-            repo_root=REPO_ROOT,
+        log.error(
+            "formal_reason_technical_gate_failed",
+            body=clip_log_body(dump_failure_artifacts(project, repo_root=REPO_ROOT)),
         )
         raise

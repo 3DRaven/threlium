@@ -21,7 +21,7 @@
         "contains": "QUERY ERROR"
       },
       {
-        "contains": "FORMAL REASON GATE"
+        "contains": "Gate retry counter:"
       },
       {
         "contains": "E2E-FORMAL-REASON-TECH-GATE-BODY"

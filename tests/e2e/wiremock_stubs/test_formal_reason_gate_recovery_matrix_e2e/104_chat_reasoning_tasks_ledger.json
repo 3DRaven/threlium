@@ -18,25 +18,10 @@
         "contains": "\"tools\""
       },
       {
-        "contains": "PARSE ERROR"
-      },
-      {
-        "contains": "QUERY ERROR"
-      },
-      {
         "contains": "query_result:"
       },
       {
-        "contains": "turtle_syntax.md SHACL gate recovery"
-      },
-      {
-        "contains": "e2e matrix: intentional invalid Turtle"
-      },
-      {
-        "contains": "e2e matrix: valid Turtle but broken SPARQL"
-      },
-      {
-        "contains": "<conversation_delta>"
+        "doesNotMatch": "(?s).*Gate retry counter:.*"
       },
       {
         "contains": "E2E-FORMAL-REASON-GATE-MATRIX-BODY"

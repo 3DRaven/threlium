@@ -55,7 +55,7 @@
                 "type": "function",
                 "function": {
                   "name": "response_finalize",
-                  "arguments": "{\"reasoning\": \"e2e: answer after QUERY ERROR gate recovery\", \"content\": \"e2e-formal-reason-tech-gate-verified-answer\", \"verification_summary\": \"Recovered from QUERY ERROR via formal_reason retry under gate.\"}"
+                  "arguments": "{\"reasoning\": \"e2e: answer after QUERY ERROR gate recovery\", \"subject\": \"Re: e2e reply\", \"verification_summary\": \"Recovered from QUERY ERROR via formal_reason retry under gate.\", \"content\": \"e2e-formal-reason-tech-gate-verified-answer\"}"
                 }
               }
             ]

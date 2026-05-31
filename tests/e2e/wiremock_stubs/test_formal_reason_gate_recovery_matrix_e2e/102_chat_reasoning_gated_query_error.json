@@ -21,24 +21,11 @@
         "contains": "PARSE ERROR"
       },
       {
-        "contains": "FSM locked"
-      },
-      {
-        "contains": "FORMAL REASON GATE"
-      },
-      {
-        "comment": "memory_query relay after first gate hop must remain in prompt",
-        "contains": "turtle_syntax.md SHACL gate recovery"
-      },
-      {
-        "comment": "unified-delta: first formal_reason tool-call reasoning preserved",
-        "contains": "e2e matrix: intentional invalid Turtle"
-      },
-      {
-        "contains": "<conversation_delta>"
-      },
-      {
         "contains": "E2E-FORMAL-REASON-GATE-MATRIX-BODY"
+      },
+      {
+        "comment": "Hop после memory_query: в дельте enrich_fast нет formal_reason @system (CONTEXT_CONTRACT §5, FORMAL_REASON_GATE §2) — gate OFF на этом LLM-вызове. Стаб отвечает formal_reason с битым SPARQL; стадия сама эмитит QUERY ERROR в @system дельты → gate ON на 103.",
+        "doesNotMatch": "(?s).*Gate retry counter:.*"
       },
       {
         "doesNotMatch": "(?s).*\"enable_thinking\"\\s*:\\s*false.*"

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from threlium.types import FsmStage
 from threlium.types.reasoning_routes import REASONING_TARGET_STAGES
@@ -11,7 +12,10 @@ from .wiremock_client import (
     journal_entries_for_stub_tag,
 )
 
-GATE_NOTICE = "FORMAL REASON GATE"
+# Rendered only when ``formal_reason_gate.j2`` is appended (gate ON). ``system.j2`` describes
+# the same policy in static strategy text — do not match on ``FORMAL REASON GATE`` substrings.
+GATE_ACTIVE_BODY_MARKER = "Gate retry counter:"
+GATE_NOTICE = GATE_ACTIVE_BODY_MARKER
 GATE_TOOL_NAMES = frozenset(
     {FsmStage.FORMAL_REASON.value, FsmStage.MEMORY_QUERY.value}
 )
@@ -153,6 +157,7 @@ def assert_all_reasoning_gate_absent(wm_base: str, stub_tag: str) -> None:
 def assert_gate_absent_with_body_marker(
     wm_base: str, stub_tag: str, body_marker: str
 ) -> None:
+    """Every FSM reasoning request carrying ``body_marker`` must be ungated."""
     matches = find_wiremock_requests_by_body_contains(
         wm_base, body_marker, stub_tag=stub_tag
     )
@@ -163,6 +168,26 @@ def assert_gate_absent_with_body_marker(
     )
     for entry in chat_matches:
         assert_gate_absent_in_body(_journal_request_body(entry))
+
+
+def assert_first_fsm_reasoning_gate_absent(
+    wm_base: str, stub_tag: str, body_marker: str
+) -> None:
+    """First FSM reasoning hop with ``body_marker`` (pre-gate) must not render gate notice."""
+    for entry in journal_entries_for_stub_tag(wm_base, stub_tag=stub_tag):
+        if not _is_chat_completions_entry(entry):
+            continue
+        body = _journal_request_body(entry)
+        if '"tools"' not in body or "<envelope>" not in body:
+            continue
+        if body_marker not in body:
+            continue
+        assert_gate_absent_in_body(body)
+        return
+    raise AssertionError(
+        f"No FSM reasoning chat/completions with body marker {body_marker!r} "
+        f"(stub_tag={stub_tag!r})"
+    )
 
 
 def assert_journal_contains(
@@ -200,8 +225,13 @@ def assert_chat_request_contains_all(
     needles: tuple[str, ...],
     *,
     gate_only: bool = False,
+    exclude: tuple[str, ...] = (),
 ) -> None:
-    """At least one chat/completions **request** body contains every ``needle``."""
+    """At least one chat/completions **request** body contains every ``needle``.
+
+    With ``exclude``, matching bodies must not contain any excluded substring
+    (proves staged accumulation: later hops not yet visible in an earlier prompt).
+    """
     if gate_only:
         bodies = _gated_reasoning_chat_bodies(wm_base, stub_tag)
     else:
@@ -210,12 +240,16 @@ def assert_chat_request_contains_all(
             for e in fsm_reasoning_chat_entries(wm_base, stub_tag)
         ]
     for body in bodies:
-        if all(needle in body for needle in needles):
-            return
+        if not all(needle in body for needle in needles):
+            continue
+        if exclude and any(ex in body for ex in exclude):
+            continue
+        return
     scope = "gated reasoning" if gate_only else "reasoning"
+    ex_msg = f", excluding any body containing {exclude!r}" if exclude else ""
     raise AssertionError(
-        f"No {scope} chat/completions request contains all of {needles!r} "
-        f"(stub_tag={stub_tag!r})"
+        f"No {scope} chat/completions request contains all of {needles!r}"
+        f"{ex_msg} (stub_tag={stub_tag!r})"
     )
 
 
@@ -248,6 +282,21 @@ def assert_gated_formal_reason_history_accumulated(
     )
 
 
+def _journal_served_response_text(entry: dict) -> str:
+    """Тело ответа из журнала WM: ``body`` или сериализованный ``jsonBody``."""
+    for key in ("response", "responseDefinition"):
+        block = entry.get(key)
+        if not isinstance(block, dict):
+            continue
+        body = block.get("body")
+        if isinstance(body, str) and body.strip():
+            return body
+        jb = block.get("jsonBody")
+        if jb is not None:
+            return json.dumps(jb, ensure_ascii=False)
+    return ""
+
+
 def assert_memory_query_tool_served(
     wm_base: str,
     stub_tag: str,
@@ -256,16 +305,14 @@ def assert_memory_query_tool_served(
     tool_name: str = FsmStage.MEMORY_QUERY.value,
 ) -> None:
     """WireMock served a reasoning response with ``memory_query`` tool_calls (FSM executed)."""
-    want = f'"name": "{tool_name}"'
+    name_pat = re.compile(
+        rf'"name"\s*:\s*"{re.escape(tool_name)}"',
+    )
     for entry in journal_entries_for_stub_tag(wm_base, stub_tag=stub_tag):
         if not _is_chat_completions_entry(entry):
             continue
-        resp = entry.get("response")
-        if not isinstance(resp, dict):
-            continue
-        body = resp.get("body")
-        text = body if isinstance(body, str) else ""
-        if tool_call_id in text and want in text:
+        text = _journal_served_response_text(entry)
+        if tool_call_id in text and name_pat.search(text):
             return
     raise AssertionError(
         f"No journal entry served {tool_name!r} tool_call {tool_call_id!r} "

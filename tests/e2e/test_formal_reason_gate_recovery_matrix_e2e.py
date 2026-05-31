@@ -25,12 +25,13 @@ from .formal_reason_assertions import (
 )
 from .helpers import (
     MailflowScenarioSpec,
+    REPO_ROOT,
     assert_full_mailflow_pipeline,
     discover_runtime,
     dump_failure_artifacts,
     mailflow_inject_and_wait,
-    REPO_ROOT,
 )
+from .log import clip_log_body, log
 from .wiremock_client import (
     find_wiremock_requests_by_body_contains,
     wiremock_public_base,
@@ -77,7 +78,7 @@ FORMAL_REASON_GATE_MATRIX_SPEC = MailflowScenarioSpec(
 
 def _assert_at_least_two_gated_reasoning_calls(wm_base: str, stub_tag: str) -> None:
     matches = find_wiremock_requests_by_body_contains(
-        wm_base, "FORMAL REASON GATE", stub_tag=stub_tag
+        wm_base, "Gate retry counter:", stub_tag=stub_tag
     )
     chat = [
         e
@@ -132,21 +133,28 @@ def test_formal_reason_gate_recovery_matrix_full_pipeline(
         assert_journal_contains(
             wm_base, stub_tag, E2E_MATRIX_MEMORY_QUERY_TEXT
         )
-        # После memory_query: parse fatal + MQ relay видны перед 2-м formal_reason под gate.
+        # Накопление контекста — post-assert по WireMock journal (не bodyPatterns стабов).
+        # Первый gated hop (101, stub phase_matrix_fatal_done): после fatal formal_reason
+        # enrich_fast relayed PARSE в дельту → gate ON. Текст memory_query ещё не в промпте
+        # (ответ 101 только запрашивает MQ; relay query — на 103 после ungated 102).
         assert_chat_request_contains_all(
             wm_base,
             stub_tag,
             (
                 "PARSE ERROR",
                 "FSM locked",
-                "FORMAL REASON GATE",
-                E2E_MATRIX_MEMORY_QUERY_TEXT,
+                "Gate retry counter:",
                 E2E_MATRIX_FR_FATAL_REASONING,
                 "<conversation_delta>",
             ),
             gate_only=True,
+            exclude=(
+                "QUERY ERROR",
+                E2E_MATRIX_FR_QUERY_ERR_REASONING,
+                E2E_MATRIX_MEMORY_QUERY_TEXT,
+            ),
         )
-        # После 2-го formal_reason (QUERY ERROR): оба hop'а formal_reason + MQ в одном промпте.
+        # Поздний gated hop: PARSE + QUERY + оба formal_reason tool-call + MQ в одном промпте.
         assert_gated_formal_reason_history_accumulated(
             wm_base,
             stub_tag,
@@ -175,11 +183,8 @@ def test_formal_reason_gate_recovery_matrix_full_pipeline(
             wm_base, stub_tag, needle="query_result:"
         )
     except Exception:
-        dump_failure_artifacts(
-            FORMAL_REASON_GATE_MATRIX_SPEC,
-            project=project,
-            raw_id=raw_id,
-            nm_inner=nm_inner,
-            repo_root=REPO_ROOT,
+        log.error(
+            "formal_reason_gate_matrix_failed",
+            body=clip_log_body(dump_failure_artifacts(project, repo_root=REPO_ROOT)),
         )
         raise
