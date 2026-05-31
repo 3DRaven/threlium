@@ -2,6 +2,9 @@
 # E2E group_vars — docker-SUT (ansible/inventory/e2e/hosts.yml).
 ansible_user: root
 
+# SUT: подробные structlog/journald при отладке e2e (см. threlium.yaml + env/threlium.env).
+threlium_log_level: "DEBUG"
+
 threlium_bundle_enabled: false
 threlium_ssh_hardening_enabled: false
 threlium_agent_login_password: "threlium"

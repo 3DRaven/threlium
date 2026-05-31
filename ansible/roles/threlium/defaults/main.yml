@@ -6,7 +6,7 @@ threlium_user: "threlium"
 threlium_bundle_enabled: true
 
 # Уровень логирования: DEBUG, INFO, WARNING, ERROR
-threlium_log_level: "DEBUG"
+threlium_log_level: "INFO"
 
 # Каналы: какие systemd bridge unit'ы создаются. bridge_*_enabled выводится автоматически.
 threlium_channels:
