@@ -18,15 +18,15 @@
         "contains": "\"tools\""
       },
       {
-        "contains": "user did not confirm the CLI command"
+        "contains": "E2e deterministic nested task"
       }
     ],
     "customMatcher": {
       "name": "state-matcher",
       "parameters": {
         "hasContext": "stub-mailflow-live-hitl-mx-no-01::{{request.headers.[x-threlium-thread-root]}}",
-        "hasProperty": "live_hitl_h03",
-        "hasNotProperty": "live_hitl_h03_ledger_done"
+        "hasProperty": "live_hitl_h03_open",
+        "hasNotProperty": "live_hitl_h03_straggler_absorbed"
       }
     }
   },
@@ -36,7 +36,7 @@
       "Content-Type": "application/json"
     },
     "jsonBody": {
-      "id": "chatcmpl-e2e-tasks-ledger-live_hitl_h03_ledger_done",
+      "id": "chatcmpl-e2e-hitl-resume-no-absorb-straggler",
       "object": "chat.completion",
       "created": 0,
       "model": "gpt-4o-mini",
@@ -49,11 +49,11 @@
             "content": null,
             "tool_calls": [
               {
-                "id": "call_e2e_tasks_ledger_live_hitl_h03_ledger_done",
+                "id": "call_hitl_resume_no_absorb_straggler",
                 "type": "function",
                 "function": {
-                  "name": "tasks_upsert",
-                  "arguments": "{\"reasoning\": \"e2e: record task completion before finalize\",\"new_subtasks\": [{\"text\": \"Complete the user request\",\"status\": \"done\"}]}"
+                  "name": "subagent_end",
+                  "arguments": "{\"reasoning\": \"e2e: absorb subagent straggler after cli_intent (resume no).\"}"
                 }
               }
             ]
@@ -68,7 +68,7 @@
       "parameters": {
         "context": "stub-mailflow-live-hitl-mx-no-01::{{request.headers.[x-threlium-thread-root]}}",
         "state": {
-          "live_hitl_h03_ledger_done": "1"
+          "live_hitl_h03_straggler_absorbed": "1"
         }
       }
     }

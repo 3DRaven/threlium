@@ -65,7 +65,8 @@
       "parameters": {
         "context": "stub-mailflow-live-hitl-mx-no-01::{{request.headers.[x-threlium-thread-root]}}",
         "state": {
-          "live_hitl_h03": "1"
+          "live_hitl_h03": "1",
+          "live_hitl_h03_open": "1"
         }
       }
     }
