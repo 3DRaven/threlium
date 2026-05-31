@@ -119,3 +119,83 @@ def test_cli_discovery_chain_full_pipeline(
             body=clip_log_body(dump_failure_artifacts(project, repo_root=REPO_ROOT)),
         )
         raise
+
+
+E2E_CLI_ROUTE_COLLISION_BODY = "E2E-CLI-ROUTE-COLLISION-BODY"
+E2E_ROUTE_COLLISION_OBSERVATION = "FSM reasoning route exposed as a separate tool"
+
+CLI_ROUTE_COLLISION_SPEC = MailflowScenarioSpec(
+    label="cli_route_collision",
+    raw_id_prefix="e2e-cli-route-coll-",
+    stub_dir=_WIREMOCK_STUBS_ROOT / "test_cli_route_collision_e2e",
+    stub_tag="stub-cli-route-collision-01",
+    body_head=f"{E2E_CLI_ROUTE_COLLISION_BODY}\ne2e cli route collision test",
+    min_chat_completion_posts=3,
+    min_embedding_posts=1,
+    min_rerank_posts=0,
+    expect_notmuch_stage_folders=(
+        FsmStage.INGRESS.value,
+        FsmStage.ENRICH.value,
+        FsmStage.REASONING.value,
+        FsmStage.CLI_INTENT.value,
+        FsmStage.ENRICH_FAST.value,
+        FsmStage.TASKS_UPSERT.value,
+        FsmStage.RESPONSE_FINALIZE.value,
+        FsmStage.EGRESS_ROUTER.value,
+        FsmStage.EGRESS_EMAIL.value,
+        FsmStage.ARCHIVE.value,
+    ),
+    reply_body_needle="e2e-cli-route-collision-verified",
+)
+
+
+def _assert_route_collision_observation_in_journal(project: str, stub_tag: str) -> None:
+    rt = discover_runtime(project, repo_root=REPO_ROOT)
+    wm_base = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
+    matches = find_wiremock_requests_by_body_contains(
+        wm_base, E2E_ROUTE_COLLISION_OBSERVATION, stub_tag=stub_tag
+    )
+    chat = [
+        e
+        for e in matches
+        if "/chat/completions" in (e.get("request", {}).get("url") or "")
+    ]
+    assert chat, (
+        f"expected route-collision observation {E2E_ROUTE_COLLISION_OBSERVATION!r} "
+        "in reasoning journal after enrich_fast relay"
+    )
+    log.info("cli_route_collision_observation_verified", hits=len(chat))
+
+
+@pytest.fixture()
+def cli_route_collision_processed_stack(deployed_stack: str) -> object:
+    with mailflow_inject_and_wait(CLI_ROUTE_COLLISION_SPEC, deployed_stack) as ids:
+        yield ids
+
+
+@pytest.mark.e2e
+@pytest.mark.e2e_live
+@pytest.mark.mailflow
+def test_cli_route_collision_enrich_fast_not_cli_exec(
+    cli_route_collision_processed_stack: tuple[str, str, str, str, str, str],
+) -> None:
+    """``argv[0]=memory_query`` → ``CliRouteCollision`` → enrich_fast observation, not cli_exec."""
+    project, raw_id, _canonical_id, nm_inner, stub_tag, correlation_key = (
+        cli_route_collision_processed_stack
+    )
+    try:
+        assert_full_mailflow_pipeline(
+            CLI_ROUTE_COLLISION_SPEC,
+            project=project,
+            raw_id=raw_id,
+            nm_inner=nm_inner,
+            stub_tag=stub_tag,
+            correlation_key=correlation_key,
+        )
+        _assert_route_collision_observation_in_journal(project, stub_tag)
+    except Exception:
+        log.debug(
+            "failure_artifacts",
+            body=clip_log_body(dump_failure_artifacts(project, repo_root=REPO_ROOT)),
+        )
+        raise
