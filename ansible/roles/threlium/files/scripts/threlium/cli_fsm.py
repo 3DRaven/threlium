@@ -8,7 +8,6 @@ import shlex
 
 import msgspec
 
-from threlium.settings import ThreliumSettings
 from threlium.types import (
     CliExecDecision,
     CliIntentDecision,
