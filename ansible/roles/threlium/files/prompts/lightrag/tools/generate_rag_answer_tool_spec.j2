@@ -3,14 +3,14 @@
   "type": "function",
   "function": {
     "name": "generate_rag_answer",
-    "description": "Generate the final RAG answer from the provided context and query.",
+    "description": "Tool-only: call once; no assistant text outside tool_calls. Generate the final RAG answer from context and the retrieval query (English, for the reasoning stage).",
     "parameters": {
       "type": "object",
       "properties": {
         "answer": {
           "type": "string",
           "minLength": 1,
-          "description": "Final answer text for the user query."
+          "description": "Final answer text in English for the reasoning stage (not user-facing egress)."
         }
       },
       "required": ["answer"],

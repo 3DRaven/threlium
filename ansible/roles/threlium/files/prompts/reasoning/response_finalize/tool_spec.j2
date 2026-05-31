@@ -5,7 +5,7 @@
   "type": "function",
   "function": {
     "name": "response_finalize",
-    "description": "Maze move — EXIT the labyrinth: only after the corridors on the path are verified (verification_summary required, ledger gate enforced). Send final reply. Short answer: full text in content. Built via response_append: omit content or add closing fragment. For long responses built with response_append, prefer using response_observe first to verify completeness. subject required. Match user message language; factual; Markdown when helpful; never fabricate. When NOT to use: not for a partial draft with sub-questions still open or a buffer not yet verified — keep appending / observe first; not while an unverified assumption can still be resolved — verify a non-trivial logical claim with formal_reason before finalizing it as fact.",
+    "description": "Tool-only: call once; no assistant text outside tool_calls. Maze move — EXIT the labyrinth: only after the corridors on the path are verified (verification_summary required, ledger gate enforced). Send final reply. Short answer: full text in content. Built via response_append: omit content or add closing fragment. For long responses built with response_append, prefer using response_observe first to verify completeness. subject required. Match ``## User reply language`` (distill), not ``## User intent`` language; factual; Markdown when helpful; never fabricate. When NOT to use: not for a partial draft with sub-questions still open or a buffer not yet verified — keep appending / observe first; not while an unverified assumption can still be resolved — verify a non-trivial logical claim with formal_reason before finalizing it as fact.",
     "parameters": {
       "type": "object",
       "properties": {

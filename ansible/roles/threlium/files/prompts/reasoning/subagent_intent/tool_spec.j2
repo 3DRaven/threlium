@@ -5,7 +5,7 @@
   "type": "function",
   "function": {
     "name": "subagent_intent",
-    "description": "Maze move — send a scout down a separate branch (its own IRT subtree); use inventory-only tasks to survey without polluting the parent thread. Delegate a subtask to a child agent with its own isolated context. Use when: (1) the task needs multi-step reasoning or exploration better handled in a separate context; (2) the subtask is logically separable (own goal and success criteria); (3) parallel or isolated context reduces risk of polluting the parent thread. For anti-duplication: delegate inventory-only surveys ('Survey only: list existing files, modules, and patterns for [X]; do not implement; return paths and a reuse recommendation'). Do NOT use for: a single shell command (cli_intent), a fact to remember (thread_memory/global_memory), or when you can answer from current enrich context (response_finalize). Return via IRT chain (subagent_end, see SUBAGENT_TABLE).",
+    "description": "Tool-only: call once; no assistant text outside tool_calls. Maze move — send a scout down a separate branch (its own IRT subtree); use inventory-only tasks to survey without polluting the parent thread. Delegate a subtask to a child agent with its own isolated context. Use when: (1) the task needs multi-step reasoning or exploration better handled in a separate context; (2) the subtask is logically separable (own goal and success criteria); (3) parallel or isolated context reduces risk of polluting the parent thread. For anti-duplication: delegate inventory-only surveys ('Survey only: list existing files, modules, and patterns for [X]; do not implement; return paths and a reuse recommendation'). Do NOT use for: a single shell command (cli_intent), a fact to remember (thread_memory/global_memory), or when you can answer from current enrich context (response_finalize). Return via IRT chain (subagent_end, see SUBAGENT_TABLE).",
     "parameters": {
       "type": "object",
       "properties": {
@@ -19,7 +19,7 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 8000,
-          "description": "Exact task for the subagent: goal, success criteria, constraints. No parent state assumptions — starts fresh in its own thread. For discovery, state explicitly: survey/inventory only, list existing implementations and canonical paths, no file edits."
+          "description": "Exact task for the subagent in English operational terms (like parent ## User intent): goal, success criteria, constraints. No parent state assumptions — starts fresh in its own thread. User reply language / egress is not the subagent's scope. For discovery, state explicitly: survey/inventory only, list existing implementations and canonical paths, no file edits."
         }
       },
       "required": ["reasoning", "task"],

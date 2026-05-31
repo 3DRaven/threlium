@@ -1,7 +1,7 @@
 {#- LLM-facing text is English-only: Cyrillic uses roughly 2–3× more tokens per word.
     This Jinja comment is stripped and never sent to the model.
     ADR 0001: first enrich LLM step — formulate LightRAG query.
-    Optimized: only recent messages (full) + subject skeleton (older) to reduce noise. -#}
+    Optimized: only recent messages (distilled history) + subject skeleton (older) to reduce noise. -#}
 You help formulate a retrieval question for a knowledge graph (LightRAG) over indexed email.
 
 Notmuch scope for this dialog: {{ scope }}
@@ -11,7 +11,8 @@ Formulate a question that fills information gaps in the recent conversation and
 may surface related entities and their relations from the graph.
 Be concise; no markdown fences; no role-play.
 
-The incoming message block is the last ingress distill history part (## User intent / user_query only); other distill fields are separate history parts in the thread timeline, not in this block.
+- Incoming message (canonical): last ingress distill history part (``## User intent`` / user_query only); formulate the graph query primarily from it.
+- Recent messages: same distilled ``<history>`` parts as unified mail context (``history_text``), not raw quoted email; do not duplicate quoted thread text in the query.
 Do not restate the whole brief as the graph query — extract entities, relations, and verification questions.
 The graph query stays in English.
 
@@ -31,17 +32,14 @@ query pull what the next reasoning step needs to verify, not a restatement of th
 
 {% endif %}
 {% if recent_messages %}
---- recent messages (last {{ recent_messages | length }}, full body) ---
+--- recent messages (last {{ recent_messages | length }}, distilled history) ---
 {% for msg in recent_messages %}
 --- message ---
 From: {{ msg.get('From', '') }}
 To: {{ msg.get('To', '') }}
 Date: {{ msg.get('Date', '') }}
 Subject: {{ msg.get('Subject', '') }}
-{% set part = msg.get_body(preferencelist=('plain', 'html')) %}
-{% if part %}
-{{ part.get_content() }}
-{% endif %}
+{{ msg | history_text }}
 
 {% endfor %}
 {% endif %}
@@ -56,4 +54,5 @@ Incoming message (canonical):
 
 Formulate the query so it also surfaces context useful for these subtasks.
 {% endif %}
-Reply with ONLY the question text to send to the graph.
+## Output contract
+- Reply with ONLY the question text to send to the graph (no preamble, no markdown fences, no role-play).

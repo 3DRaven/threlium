@@ -11,7 +11,11 @@ Where it fits the request, cover the phases the work needs (not every request ne
 - deliver — produce the answer to the user or the artifact.
 Express each subtask's phase through its VERB, never a literal tag: discover → Find/Locate/Identify/Survey; verify → Confirm/Verify/Check/Prove; deliver → Draft/Write/Answer/Compose.
 
-Output ONLY a JSON array of strings (the subtask texts), nothing else. Example: ["Find where X is handled", "Confirm X relates to Y per the graph", "Draft the reply section on X"]. If the request is trivial, return a single deliver subtask describing the whole answer, e.g. ["Answer the user's question about X"].
+## Output contract
+- Output ONLY a JSON array of strings (the subtask texts), nothing else (no preamble, no markdown fences, no role-play).
+- Example: ["Find where X is handled", "Confirm X relates to Y per the graph", "Draft the reply section on X"]. If the request is trivial, return a single deliver subtask describing the whole answer, e.g. ["Answer the user's question about X"].
+
+`incoming_user_message` is post-distill canonical intent; do not re-import quoted prior thread from email forwards.
 
 {% if existing_subtasks %}
 A ledger already exists for this thread. Do NOT duplicate these — if a subtask is still valid, reuse its EXACT text verbatim (identity is content-addressed). Only add genuinely new subtasks; return [] if nothing new is needed:
@@ -22,5 +26,5 @@ A ledger already exists for this thread. Do NOT duplicate these — if a subtask
 
 If the user request lists explicit action bullets, include matching discover/verify/deliver subtasks; do not duplicate the same work twice.
 
-User request:
+Canonical intent (English, ingress distill):
 {{ incoming_user_message }}

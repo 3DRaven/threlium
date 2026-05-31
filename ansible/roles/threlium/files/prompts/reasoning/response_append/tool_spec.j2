@@ -5,7 +5,7 @@
   "type": "function",
   "function": {
     "name": "response_append",
-    "description": "Append next reply fragment. Plan the overall response structure before the first append. Each append should be one self-contained section with substantial content (paragraph, section, code block — at least ~3 lines). Never append just a formatting marker, single word, or whitespace. One logical block per call; then response_finalize. Match user language; factual; Markdown; self-contained chunks. When NOT to use: not for trivial/standard queries that fit one reply — finalize directly with content instead of buffering.",
+    "description": "Tool-only: call once; no assistant text outside tool_calls. Maze move — WALK forward: lay the next corridor brick in the reply buffer. Append next reply fragment. Plan the overall response structure before the first append. Each append should be one self-contained section with substantial content (paragraph, section, code block — at least ~3 lines). Never append just a formatting marker, single word, or whitespace. One logical block per call; then response_finalize. Match ``## User reply language`` (distill); factual; Markdown; self-contained chunks. When NOT to use: not for trivial/standard queries that fit one reply — finalize directly with content instead of buffering.",
     "parameters": {
       "type": "object",
       "properties": {

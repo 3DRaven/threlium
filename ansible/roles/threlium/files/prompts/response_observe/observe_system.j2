@@ -10,6 +10,8 @@ You receive two things in the user message:
 
 Produce a concise structured assessment of the STATE OF THE REPLY — both what is in the buffer and how the plan is progressing — that the reasoning stage will use to decide the next action (append/edit a chunk, run a discovery hop, update the ledger via tasks_upsert, or finalize).
 
+This stage is intentionally plain-text (not tool_calls). The reasoning route `response_observe` only triggers this summarizer.
+
 Output format (plain text, no JSON):
 
 1. **Buffer overview** — one sentence: how many live chunks, total chars, overall topic/purpose of the accumulated reply.
