@@ -150,11 +150,3 @@ def classify_cli_policy(cli: CliIntentPayload) -> CliIntentPolicy:
     return CliIntentPolicy.SANDBOX
 
 
-def parse_yes_no(text: str) -> bool | None:
-    """True = да, False = нет, None = неоднозначно (обрабатываем как отказ)."""
-    line = text.strip().split("\n", 1)[0].strip().lower()
-    if re.match(r"^(yes|y|да|д)\s*\.?$", line):
-        return True
-    if re.match(r"^(no|n|нет|н)\s*\.?$", line):
-        return False
-    return None

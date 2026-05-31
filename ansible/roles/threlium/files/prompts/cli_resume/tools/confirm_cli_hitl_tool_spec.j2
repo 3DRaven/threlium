@@ -1,0 +1,23 @@
+{#- tool_spec for cli_resume HITL classifier (score 0, tool_choice=required) -#}
+{
+  "type": "function",
+  "function": {
+    "name": "confirm_cli_hitl",
+    "description": "Classify the user's reply to a privileged CLI confirmation prompt. Set confirmed=true only if the user clearly approves running the command; otherwise confirmed=false (ambiguous, refusal, or unrelated).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "confirmed": {
+          "type": "boolean",
+          "description": "true if the user approves execution; false for no, unclear, or off-topic replies."
+        },
+        "interpretation": {
+          "type": "string",
+          "description": "Brief one-line summary of how you read the user's reply (audit only)."
+        }
+      },
+      "required": ["confirmed"],
+      "additionalProperties": false
+    }
+  }
+}

@@ -55,6 +55,9 @@ class PromptPath(StrEnum):
     CLI_RESUME_BAD_INTENT_SUBJECT = "cli_resume/bad_intent_subject.j2"
     CLI_RESUME_NOT_CONFIRMED = "cli_resume/not_confirmed.j2"
     CLI_RESUME_NOT_CONFIRMED_SUBJECT = "cli_resume/not_confirmed_subject.j2"
+    CLI_RESUME_CONFIRM_CLI_HITL_TOOL_SPEC = "cli_resume/tools/confirm_cli_hitl_tool_spec.j2"
+    CLI_RESUME_CLASSIFY_SYSTEM = "cli_resume/classify_system.j2"
+    CLI_RESUME_CLASSIFY_USER = "cli_resume/classify_user.j2"
 
     SUBAGENT_INTENT_BUDGET_EXHAUSTED = "subagent_intent/budget_exhausted.j2"
     SUBAGENT_INTENT_BUDGET_EXHAUSTED_SUBJECT = (
@@ -176,6 +179,19 @@ class PromptPath(StrEnum):
     )
     LIGHTRAG_KEYWORDS_EXTRACTION = (
         f"lightrag/{LightragPromptLibraryKey.KEYWORDS_EXTRACTION.value}.j2"
+    )
+
+    LIGHTRAG_EXTRACT_KNOWLEDGE_GRAPH_TOOL_SPEC = (
+        "lightrag/tools/extract_knowledge_graph_tool_spec.j2"
+    )
+    LIGHTRAG_SUMMARIZE_DESCRIPTIONS_TOOL_SPEC = (
+        "lightrag/tools/summarize_descriptions_tool_spec.j2"
+    )
+    LIGHTRAG_EXTRACT_QUERY_KEYWORDS_TOOL_SPEC = (
+        "lightrag/tools/extract_query_keywords_tool_spec.j2"
+    )
+    LIGHTRAG_GENERATE_RAG_ANSWER_TOOL_SPEC = (
+        "lightrag/tools/generate_rag_answer_tool_spec.j2"
     )
     LIGHTRAG_KEYWORDS_EXTRACTION_EXAMPLES = (
         f"lightrag/{LightragPromptLibraryKey.KEYWORDS_EXTRACTION_EXAMPLES.value}.j2"

@@ -60,10 +60,19 @@ threlium_litellm:
       model: "openai/threlium_e2e_l0"
       api_base: "http://wiremock:8080"
       api_key: "e2e-test-key"
-      timeout: 90
+      timeout: 30
+      max_tokens: 512
       chat_template_kwargs:
         enable_thinking: false
     - score: 1.0
+      enabled: true
+      model: "openai/threlium_e2e_l0"
+      api_base: "http://wiremock:8080"
+      api_key: "e2e-test-key"
+      timeout: 90
+      chat_template_kwargs:
+        enable_thinking: false
+    - score: 2.0
       enabled: true
       model: "openai/threlium_e2e_l0"
       api_base: "http://wiremock:8080"
@@ -85,14 +94,18 @@ threlium_litellm:
       timeout: 30
       top_n: 5
   targets:
+    cli_hitl_resume:
+      target_score: 0.0
     reasoning:
-      target_score: 1.0
+      target_score: 2.0
     enrich_plan:
-      target_score: 0.0
+      target_score: 1.0
     summarize_context:
-      target_score: 0.0
+      target_score: 1.0
+    response_observe:
+      target_score: 1.0
     lightrag_llm:
-      target_score: 0.0
+      target_score: 1.0
     lightrag_embedding:
       target_embedding_score: 0.0
     lightrag_rerank:

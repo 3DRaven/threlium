@@ -268,6 +268,10 @@ class RerankSiteTarget(BaseModel):
 class RoutingTargets(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
+    cli_hitl_resume: LlmSiteTarget = Field(
+        default_factory=LlmSiteTarget,
+        description="Маршрут LLM-классификатора ответа пользователя на HITL (score 0).",
+    )
     reasoning: LlmSiteTarget = Field(default_factory=LlmSiteTarget, description="Маршрут стадии reasoning.")
     enrich_plan: LlmSiteTarget = Field(default_factory=LlmSiteTarget, description="Маршрут LLM плана enrich.")
     response_observe: LlmSiteTarget = Field(default_factory=LlmSiteTarget, description="Маршрут LLM суммаризации response_observe.")
@@ -303,7 +307,9 @@ def resolve_llm_endpoint(
     if not enabled:
         raise RuntimeError("litellm routing: no enabled llm_endpoints")
 
-    if site == LitellmRoutingSite.REASONING:
+    if site == LitellmRoutingSite.CLI_HITL_RESUME:
+        target = settings.targets.cli_hitl_resume.target_score
+    elif site == LitellmRoutingSite.REASONING:
         target = settings.targets.reasoning.target_score
     elif site == LitellmRoutingSite.ENRICH_PLAN:
         target = settings.targets.enrich_plan.target_score
@@ -311,8 +317,10 @@ def resolve_llm_endpoint(
         target = settings.targets.response_observe.target_score
     elif site == LitellmRoutingSite.SUMMARIZE_CONTEXT:
         target = settings.targets.summarize_context.target_score
-    else:
+    elif site == LitellmRoutingSite.LIGHTRAG_LLM:
         target = settings.targets.lightrag_llm.target_score
+    else:
+        raise ValueError(f"resolve_llm_endpoint: unsupported site {site!r}")
 
     return min(enabled, key=lambda e: (abs(e.score - target), e.score))
 
@@ -487,11 +495,6 @@ class LightragSettings(BaseModel):
         description="QueryParam.response_type — формат ответа LightRAG LLM.",
     )
     enable_rerank: bool = Field(default=True, description="QueryParam.enable_rerank — использовать rerank чанков.")
-    llm_max_tokens: int = Field(
-        default=0,
-        ge=0,
-        description="Лимит токенов LLM внутри LightRAG; 0 — без лимита (семантика раннера).",
-    )
 
     @field_validator("query_api", mode="after")
     @classmethod

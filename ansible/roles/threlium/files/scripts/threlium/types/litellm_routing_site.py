@@ -7,6 +7,7 @@ from enum import StrEnum
 class LitellmRoutingSite(StrEnum):
     """Ключи ``targets`` в JSON маршрутизации и точки вызова в коде."""
 
+    CLI_HITL_RESUME = "cli_hitl_resume"
     REASONING = "reasoning"
     ENRICH_PLAN = "enrich_plan"
     RESPONSE_OBSERVE = "response_observe"

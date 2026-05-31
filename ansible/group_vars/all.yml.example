@@ -64,7 +64,6 @@ threlium_egress:
 # LightRAG — partial override (остальное из _threlium_lightrag_base):
 # threlium_lightrag:
 #   insert_batch: 16
-#   llm_max_tokens: 8192
 
 # Enrich — partial override:
 # threlium_enrich:
