@@ -68,6 +68,17 @@ def _history_text(msg: object) -> str:
     return "\n\n---\n\n".join(chunks)
 
 
+def _last_history_text(msg: object) -> str:
+    """Jinja: canonical user turn = последняя непустая ``<history>`` (ingress distill)."""
+    from email.message import EmailMessage
+
+    from threlium.mime_reform import last_history_part_text
+
+    if not isinstance(msg, EmailMessage):
+        return ""
+    return last_history_part_text(msg)
+
+
 def init_prompts_root(home: Path) -> None:
     global _PROMPTS_ROOT, _PROMPTS_ENV
     _PROMPTS_ROOT = home / "prompts"
@@ -93,6 +104,7 @@ def _prompts_env() -> Environment:
         _PROMPTS_ENV.policies["json.dumps_function"] = json.dumps
         _PROMPTS_ENV.filters["tojson"] = _plain_text_tojson
         _PROMPTS_ENV.filters["history_text"] = _history_text
+        _PROMPTS_ENV.filters["last_history_text"] = _last_history_text
     return _PROMPTS_ENV
 
 

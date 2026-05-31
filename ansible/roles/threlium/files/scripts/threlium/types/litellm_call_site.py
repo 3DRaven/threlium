@@ -22,6 +22,7 @@ class LitellmCallSite(StrEnum):
     FSM = "fsm"
     CLI_HITL_RESUME = "cli_hitl_resume"
     SUMMARIZE_CONTEXT = "summarize_context"
+    INGRESS_DISTILL = "ingress_distill"
 
     LIGHTRAG_INDEX = "lightrag_index"
     LIGHTRAG_INDEX_ENTITY = "lightrag_index_entity"

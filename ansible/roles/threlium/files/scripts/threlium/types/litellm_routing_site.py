@@ -15,3 +15,4 @@ class LitellmRoutingSite(StrEnum):
     LIGHTRAG_EMBEDDING = "lightrag_embedding"
     LIGHTRAG_RERANK = "lightrag_rerank"
     SUMMARIZE_CONTEXT = "summarize_context"
+    INGRESS_DISTILL = "ingress_distill"

@@ -276,6 +276,10 @@ class RoutingTargets(BaseModel):
     enrich_plan: LlmSiteTarget = Field(default_factory=LlmSiteTarget, description="Маршрут LLM плана enrich.")
     response_observe: LlmSiteTarget = Field(default_factory=LlmSiteTarget, description="Маршрут LLM суммаризации response_observe.")
     summarize_context: LlmSiteTarget = Field(default_factory=LlmSiteTarget, description="Маршрут LLM суммаризации контекста (score 0).")
+    ingress_distill: LlmSiteTarget = Field(
+        default_factory=lambda: LlmSiteTarget(target_score=1.0),
+        description="Маршрут LLM ingress distill (нормализация внешнего входа, score 1).",
+    )
     lightrag_llm: LlmSiteTarget = Field(
         default_factory=LlmSiteTarget,
         description="Маршрут LLM внутри LightRAG (не embedding).",
@@ -317,6 +321,8 @@ def resolve_llm_endpoint(
         target = settings.targets.response_observe.target_score
     elif site == LitellmRoutingSite.SUMMARIZE_CONTEXT:
         target = settings.targets.summarize_context.target_score
+    elif site == LitellmRoutingSite.INGRESS_DISTILL:
+        target = settings.targets.ingress_distill.target_score
     elif site == LitellmRoutingSite.LIGHTRAG_LLM:
         target = settings.targets.lightrag_llm.target_score
     else:
@@ -771,6 +777,21 @@ class KnowledgeSettings(BaseModel):
     )
 
 
+class IngressDistillSettings(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    distill_max_chars: int = Field(
+        default=8000,
+        ge=256,
+        description="maxLength tool field user_query и лимит brief в history.",
+    )
+    distill_fallback_max_chars: int = Field(
+        default=12000,
+        ge=256,
+        description="Усечение full_body в history при fail-safe без LLM.",
+    )
+
+
 class HopSettings(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -864,6 +885,7 @@ class ThreliumSettings(BaseSettings):
     history: HistorySettings = Field(default_factory=HistorySettings)
     knowledge: KnowledgeSettings = Field(default_factory=KnowledgeSettings)
     cli: CliSettings = Field(default_factory=CliSettings)
+    ingress: IngressDistillSettings = Field(default_factory=IngressDistillSettings)
     hop: HopSettings = Field(default_factory=HopSettings)
     egress: EgressSettings = Field(default_factory=EgressSettings)
     e2e: E2eSettings = Field(default_factory=E2eSettings)

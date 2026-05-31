@@ -102,6 +102,8 @@ threlium_litellm:
       target_score: 1.0
     summarize_context:
       target_score: 1.0
+    ingress_distill:
+      target_score: 1.0
     response_observe:
       target_score: 1.0
     lightrag_llm:

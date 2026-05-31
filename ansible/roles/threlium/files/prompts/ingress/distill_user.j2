@@ -1,0 +1,16 @@
+{#- Variables: channel, from_hdr, to_hdr, subject, date, message_id, in_reply_to, orphan_notice, full_body -#}
+Channel: {{ channel }}
+From: {{ from_hdr }}
+To: {{ to_hdr }}
+Subject: {{ subject }}
+Date: {{ date }}
+Message-ID: {{ message_id }}
+{% if in_reply_to %}In-Reply-To: {{ in_reply_to }}
+{% endif %}
+{% if orphan_notice %}
+ORPHAN_NOTICE:
+{{ orphan_notice }}
+
+{% endif %}
+--- FULL_MESSAGE_BODY (may include quoted prior messages; extract only the new user turn) ---
+{{ full_body }}

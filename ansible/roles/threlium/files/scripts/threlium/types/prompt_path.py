@@ -26,6 +26,15 @@ class PromptPath(StrEnum):
     """
 
     INGRESS_ORPHAN_NOTICE = "ingress/orphan_notice.j2"
+    INGRESS_DISTILL_SYSTEM = "ingress/distill_system.j2"
+    INGRESS_DISTILL_USER = "ingress/distill_user.j2"
+    INGRESS_DISTILL_TOOL_SPEC = "ingress/tools/ingress_distill_tool_spec.j2"
+    INGRESS_DISTILL_HISTORY_USER_REPLY_LANGUAGE = (
+        "ingress/distill_history_user_reply_language.j2"
+    )
+    INGRESS_DISTILL_HISTORY_STEP_BACK_NOTES = "ingress/distill_history_step_back_notes.j2"
+    INGRESS_DISTILL_HISTORY_OPEN_GAPS = "ingress/distill_history_open_gaps.j2"
+    INGRESS_DISTILL_HISTORY_USER_QUERY = "ingress/distill_history_user_query.j2"
 
     CLI_EXEC_OBSERVATION = "cli_exec/observation.j2"
 

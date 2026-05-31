@@ -15,6 +15,7 @@ import msgspec
 
 from threlium.logutil import logger
 from threlium.mail_header_names import MailHeaderName
+from threlium.types.bridge_raw import RawIngressCaptureAttachmentFilename
 
 if TYPE_CHECKING:
     from threlium.types.content_score import ThreliumContentScoreWire
@@ -204,6 +205,30 @@ def _extract_plain_body_from_message(msg: Message) -> str:
 def extract_plain_body(msg: EmailMessage) -> str:
     """Текстовое тело EmailMessage: первый text/plain, иначе raw payload."""
     return _extract_plain_body_from_message(msg)
+
+
+def ingress_external_body_text(msg: EmailMessage) -> "IngressExternalBodyText":
+    """Полное внешнее тело для ingress distill (без raw-capture attachment).
+
+    Предпочитает ``text/plain``, затем ``text/html``; пропускает attachment
+    ``threlium-raw-ingress.txt``.
+    """
+    from threlium.types.ingress_distill import IngressExternalBodyText
+
+    raw_fn = RawIngressCaptureAttachmentFilename.canonical().value
+    if msg.is_multipart():
+        for part in msg.walk():
+            if part.is_multipart():
+                continue
+            fn = part.get_filename()
+            if fn and str(fn) == raw_fn:
+                continue
+            ctype = part.get_content_type()
+            if ctype in ("text/plain", "text/html"):
+                text = _leaf_part_text(part)  # type: ignore[arg-type]
+                if text.strip():
+                    return IngressExternalBodyText.parse(text)
+    return IngressExternalBodyText.parse(extract_plain_body(msg))
 
 
 def ingress_raw_email_capture(incoming: EmailMessage) -> str:
@@ -410,6 +435,22 @@ def iter_history_parts(msg: EmailMessage) -> list[tuple[EnrichContentId, EmailMe
         for cid, part in _iter_relay_leaf_parts(msg)
         if cid.family is EnrichPartId.HISTORY
     ]
+
+
+def last_history_part_text(msg: EmailMessage) -> str:
+    """Текст последней непустой ``<history>``-части (canonical user turn для enrich)."""
+    parts = iter_history_parts(msg)
+    last: str | None = None
+    for _cid, part in parts:
+        text = history_part_text(part).strip()
+        if text:
+            last = text
+    if last is None:
+        raise RuntimeError(
+            "FSM-инвариант: ожидалась хотя бы одна непустая <history>-часть "
+            "(ingress distill brief)"
+        )
+    return last
 
 
 def message_has_history(msg: EmailMessage) -> bool:

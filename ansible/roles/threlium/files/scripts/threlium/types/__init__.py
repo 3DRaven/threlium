@@ -143,6 +143,20 @@ from .lightrag_tool_wire import (
 )
 from .cli_hitl_tool_args import ConfirmCliHitlToolArgs
 from .cli_hitl_tool_function import CliHitlBridgeError, CliHitlToolFunctionName
+from .ingress_distill import (
+    IngressDistillBriefText,
+    IngressDistillEnvelope,
+    IngressDistillResult,
+    IngressExternalBodyText,
+    bridge_channel_from_email,
+    ingress_distill_fallback_history_parts,
+    ingress_distill_history_parts_from_tool_args,
+)
+from .ingress_distill_tool_args import IngressDistillToolArgs
+from .ingress_distill_tool_function import (
+    IngressDistillBridgeError,
+    IngressDistillToolFunctionName,
+)
 from .litellm_call_site import LitellmCallSite
 from .litellm_correlation_header import LitellmCorrelationHeader
 from .litellm_routing_site import LitellmRoutingSite
@@ -270,12 +284,22 @@ __all__ = [
     "HitlParentRouting",
     "HitlParentWithIntent",
     "HitlParentWithoutIntent",
+    "IngressDistillBriefText",
+    "IngressDistillBridgeError",
+    "IngressDistillEnvelope",
+    "IngressDistillHistoryPart",
+    "IngressDistillHistoryPartKind",
+    "IngressDistillResult",
+    "IngressDistillToolArgs",
+    "IngressDistillToolFunctionName",
+    "IngressExternalBodyText",
     "IngressRoute",
     "IngressRouteB62Wire",
     "IngressRouterChildMsg",
     "IngressRouterResolvedChannelSlug",
     "IrtHashWire",
     "ThreliumContentScoreWire",
+    "bridge_channel_from_email",
     "ingress_route_from_json_str",
     "LightragChunkRecord",
     "LightragDocumentHeader",
@@ -421,6 +445,8 @@ __all__ = [
     "truncate_rfc_references_wire",
     "UnionNotmuchFromHeaderWire",
     "UnionNotmuchRouteHeaderWire",
+    "ingress_distill_fallback_history_parts",
+    "ingress_distill_history_parts_from_tool_args",
 ]
 
 # PEP 562 lazy: символы ``.reasoning`` (тянет litellm) грузятся при первом обращении,

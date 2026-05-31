@@ -1,0 +1,37 @@
+{#- tool_spec for ingress distill (tool_choice=required, score 1) -#}
+{
+  "type": "function",
+  "function": {
+    "name": "ingress_distill",
+    "description": "Normalize one incoming user turn into structured fields for the agent pipeline.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "user_query": {
+          "type": "string",
+          "maxLength": {{ distill_max_chars }},
+          "description": "English operational brief of the NEW user content only (no quoted prior thread)."
+        },
+        "user_reply_language": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Language for eventual user-facing replies (e.g. Russian, English)."
+        },
+        "open_gaps": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 300 },
+          "maxItems": 3,
+          "description": "Blocking unknowns for internal agent; empty array if none."
+        },
+        "step_back_notes": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 300 },
+          "maxItems": 5,
+          "description": "Implicit goals/constraints inferred from the message only."
+        }
+      },
+      "required": ["user_query", "user_reply_language"],
+      "additionalProperties": false
+    }
+  }
+}

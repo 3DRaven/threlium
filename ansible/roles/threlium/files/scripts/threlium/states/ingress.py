@@ -9,7 +9,7 @@ Fail-fast матрица (`docs/INDEX.md` §8):
 
   * Case 1 (parent не виден в notmuch) — graceful: новый внешний тред
     идёт в ``enrich`` (единственный legal-вход в ``reasoning``,
-    `docs/FSM.md §2.1`); orphan-notice префиксуется в начало body.
+    `docs/FSM.md §2.1`); orphan-notice префиксуется в distill envelope.
   * HITL — обход предков по IRT (1–N шагов) до From: cli_hitl_out →
     ``cli_resume``.
 """
@@ -17,9 +17,14 @@ from email.message import EmailMessage
 
 from threlium.settings import ThreliumSettings
 from threlium.fsm_emit import build_fsm_step_to_stage
+from threlium.fsm_emit_semantic import emit_transition_simple_step_preserving_payload
+from threlium.ingress_distill import ingress_distill_llm
 from threlium.logutil import logger
 from threlium.mime_reform import (
+    EnrichContentId,
+    _make_inline_text_part,
     extract_plain_body,
+    ingress_external_body_text,
     ingress_pipeline_email,
     require_unique_threading_rfc822_headers,
 )
@@ -32,10 +37,14 @@ from threlium.types.ingress_hitl import (
 from threlium.types import (
     FsmStage,
     FsmTransitionPlainSubjectLine,
+    IngressDistillEnvelope,
+    IngressExternalBodyText,
     IngressRouterChildMsg,
     MailHeaderName,
     OrphanNoticePrefixLine,
+    bridge_channel_from_email,
 )
+from threlium.types.content_score import ThreliumContentScoreWire
 
 log = logger.bind(stage="ingress")
 
@@ -46,78 +55,55 @@ ORPHAN_NOTICE = (
 )
 
 
-def _prefix_plain_body_in_message(
-    incoming: EmailMessage,
-    prefix_text: str,
-    *,
-    stage: FsmStage,
-) -> EmailMessage:
-    """Префикс в начало plain-body сообщения; результат — text/plain; charset=utf-8.
-
-    `docs/INDEX.md` §8 Case 1: orphan-notice вставляется первой строкой тела
-    для LLM. Для multipart — берётся первый ``text/plain`` через
-    :func:`extract_plain_body`. Заголовки переносятся целиком, кроме MIME
-    Content-* (тело пересобирается как ``text/plain``).
-    """
-    p = OrphanNoticePrefixLine.parse(prefix_text).value
-    user_body = extract_plain_body(incoming).strip()
+def _prefix_body_for_distill(
+    full_body: str,
+    prefix_text: str | None,
+) -> str:
+    p = OrphanNoticePrefixLine.parse(prefix_text).value if prefix_text else ""
+    user_body = full_body.strip()
     if not p:
-        return incoming
-    new_body = p + "\n\n" + user_body
-    out = EmailMessage()
-    skip = frozenset(
-        {
-            "content-type",
-            "content-transfer-encoding",
-            "mime-version",
-            "content-disposition",
-        }
-    )
-    for k, v in incoming.items():
-        if k.lower() in skip:
-            continue
-        if k in out:
-            out.add_header(k, v)
-        else:
-            out[k] = v
-    out.set_content(new_body, subtype="plain", charset="utf-8")
-    log.info("prefixed_notice")
-    return out
-
-
-def _preserved_subject(msg: EmailMessage) -> FsmTransitionPlainSubjectLine | None:
-    """Сохранить исходный Subject входа (без ``Re:``-префикса билдера) для enrich-шаблона."""
-    raw = msg.get(MailHeaderName.SUBJECT)
-    return FsmTransitionPlainSubjectLine.parse(raw) if raw else None
+        return user_body
+    return p + "\n\n" + user_body
 
 
 def _emit_to_enrich(
     msg: EmailMessage, stage: FsmStage, *, orphan: bool = False, settings: ThreliumSettings,
 ) -> EmailMessage:
-    if orphan:
-        msg = _prefix_plain_body_in_message(msg, ORPHAN_NOTICE, stage=stage)
-    msg = ingress_pipeline_email(msg)
-    # Ход пользователя входит в долгую память как <history>-часть (origin поставит
-    # enrich_fast), а тело-команда для enrich едет в <system>. enrich читает текст
-    # через get_body (часть text/plain; inline).
-    user_body = extract_plain_body(msg).strip()
-    return build_fsm_step_to_stage(
+    body_vo = ingress_external_body_text(msg)
+    orphan_notice = OrphanNoticePrefixLine.parse(ORPHAN_NOTICE) if orphan else None
+    distill_body = _prefix_body_for_distill(
+        body_vo.value,
+        orphan_notice.value if orphan_notice else None,
+    )
+    envelope = IngressDistillEnvelope.from_email(
+        msg,
+        channel=bridge_channel_from_email(msg),
+        full_body=IngressExternalBodyText.parse(distill_body),
+        orphan_notice=orphan_notice,
+    )
+    result = ingress_distill_llm(envelope, msg, config=settings)
+    out = emit_transition_simple_step_preserving_payload(
         msg,
         to_addr=FsmStage.ENRICH,
         from_stage=stage,
-        history=user_body,
-        system=user_body,
-        subject_line=_preserved_subject(msg),
         settings=settings,
     )
+    score = ThreliumContentScoreWire.from_score(settings.history.score_for(stage))
+    for hp in result.parts:
+        out.attach(
+            _make_inline_text_part(
+                EnrichContentId.from_history_body(hp.text),
+                hp.text,
+                score=score,
+            )
+        )
+    return out
 
 
 def _emit_to_cli_resume(
     msg: EmailMessage, stage: FsmStage, *, settings: ThreliumSettings,
 ) -> EmailMessage:
     msg = ingress_pipeline_email(msg)
-    # HITL-ответ пользователя — управляющий сигнал (yes/no): только <system> (cli_resume
-    # читает его через system_part_text). Содержательная история возникнет ниже по потоку.
     return build_fsm_step_to_stage(
         msg,
         to_addr=FsmStage.CLI_RESUME,
@@ -126,6 +112,12 @@ def _emit_to_cli_resume(
         subject_line=_preserved_subject(msg),
         settings=settings,
     )
+
+
+def _preserved_subject(msg: EmailMessage) -> FsmTransitionPlainSubjectLine | None:
+    """Сохранить исходный Subject входа (без ``Re:``-префикса билдера) для enrich-шаблона."""
+    raw = msg.get(MailHeaderName.SUBJECT)
+    return FsmTransitionPlainSubjectLine.parse(raw) if raw else None
 
 
 def main(

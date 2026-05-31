@@ -69,6 +69,8 @@ _threlium_litellm_base:
       target_rerank_score: 0.0
     summarize_context:
       target_score: 0.0
+    ingress_distill:
+      target_score: 1.0
 
 _threlium_lightrag_base:
   language: "Russian"
@@ -249,6 +251,13 @@ threlium_required_prompts:
   - reasoning/memory_query/tool_spec.j2
   - reasoning/memory_query/email_body.j2
   - reasoning/memory_query/email_subject.j2
+  - ingress/distill_system.j2
+  - ingress/distill_user.j2
+  - ingress/distill_history_user_reply_language.j2
+  - ingress/distill_history_step_back_notes.j2
+  - ingress/distill_history_open_gaps.j2
+  - ingress/distill_history_user_query.j2
+  - ingress/tools/ingress_distill_tool_spec.j2
   - ingress/response_not_formed.j2
   - ingress/task_incomplete.j2
   - ingress/tasks_upsert_error.j2
