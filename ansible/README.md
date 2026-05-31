@@ -133,7 +133,7 @@ threlium_cli:
   privileged_hitl_enabled: false
 ```
 
-`cli_exec` при `privileged: true` в payload вызывает `systemd-run --wait --pipe --uid=0` (system manager). Обычные команды — sandbox через `systemd-run --user --scope` с `ProtectSystem=strict`. Polkit **не** заменяет HITL в `cli_intent`.
+`cli_exec` при `privileged: true` в payload вызывает `systemd-run --wait --pipe --uid=0` (system manager). Обычные команды — sandbox через `systemd-run --user --wait --pipe` с `ProtectSystem=strict`. Polkit **не** заменяет HITL в `cli_intent`.
 
 Ручная проверка на target: `sudo -u threlium systemd-run --wait --pipe --uid=0 -- systemctl daemon-reload`.
 

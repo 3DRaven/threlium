@@ -1,6 +1,6 @@
 ---
 # Acceptance: user-scope systemd sandbox (ProtectSystem=strict) for cli_exec.
-# Runs after linger; needs systemd >= 248 and loginctl enable-linger for threlium_user.
+# Runs after mail_archive_web.yml (dbus-user-session, restart user@) and linger; needs systemd >= 248.
 
 - name: Assert systemd version supports sandbox properties
   ansible.builtin.command:

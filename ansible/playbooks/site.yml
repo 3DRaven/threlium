@@ -170,10 +170,6 @@
       when: threlium_polkit_agent_systemd_enabled | default(false) | bool
       tags: [deploy]
 
-    - name: CLI sandbox acceptance (user scope ProtectSystem=strict)
-      ansible.builtin.import_tasks: tasks/cli_sandbox_acceptance.yml
-      tags: [deploy]
-
     # Cockpit (и любой PAM-login) использует системного пользователя threlium_user + пароль из shadow.
     - name: Set agent UNIX password for PAM login (Cockpit; optional)
       ansible.builtin.user:
@@ -249,6 +245,12 @@
     # Почтовый веб-архив (apt + шаблоны Caddy/Cockpit/Roundcube/Dovecot): только deploy — не входит в refresh.
     - name: Deploy mail-archive web stack (Caddy, Cockpit, Roundcube, Dovecot)
       ansible.builtin.import_tasks: tasks/mail_archive_web.yml
+      when: threlium_mail_archive_web_enabled | bool
+      tags: [deploy]
+
+    # После mail_archive_web: apt dbus-user-session + restart user@ (нужен /run/user/<uid>/bus для systemd-run --user).
+    - name: CLI sandbox acceptance (user scope ProtectSystem=strict)
+      ansible.builtin.import_tasks: tasks/cli_sandbox_acceptance.yml
       when: threlium_mail_archive_web_enabled | bool
       tags: [deploy]
 
