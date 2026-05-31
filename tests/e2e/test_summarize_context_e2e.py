@@ -1,4 +1,4 @@
-"""E2e: overflow unified → summarize_context → summarize_memory → enrich → reasoning."""
+"""E2e: overflow unified weight (``estimate_unified_weight``) → summarize_context → enrich → reasoning."""
 from __future__ import annotations
 
 import uuid

@@ -102,6 +102,7 @@ from .helpers import (
 )
 from .wiremock_client import (
     assert_wiremock_zero_unmatched_requests,
+    find_wiremock_requests_by_body_contains,
     prepare_wiremock_scenario,
     wiremock_admin_base,
     wiremock_public_base,
@@ -122,6 +123,11 @@ LIVE_TWO_TURN_SUBJECT2 = "Re: e2e reply turn2 partb-marker"
 LIVE_SUBAGENT_SHALLOW_STUB_TAG = "stub-mailflow-live-sat-shallow-01"
 LIVE_SUBAGENT_SHALLOW_SUBJECT = "e2e_subagent_table_chain live sat-shallow-01"
 LIVE_SUBAGENT_SHALLOW_STUB_DIR = _LIVE_ONLY_ROOT / "subagent_table_shallow"
+
+LIVE_SUBAGENT_BUDGET_EXHAUSTED_STUB_TAG = "stub-mailflow-live-sat-budget-exhausted-01"
+LIVE_SUBAGENT_BUDGET_EXHAUSTED_SUBJECT = "e2e_subagent_budget_exhausted live sat-budget-exhausted-01"
+LIVE_SUBAGENT_BUDGET_EXHAUSTED_STUB_DIR = _LIVE_ONLY_ROOT / "subagent_budget_exhausted"
+E2E_SUBAGENT_BUDGET_EXHAUSTED_NOTICE = "X-Threlium-Hop-Budget exhausted"
 
 LIVE_MEMORY_THREAD_STUB_TAG = "stub-mailflow-live-mem-thread-01"
 LIVE_MEMORY_THREAD_SUBJECT = "e2e_memory_thread_live live mem-thread-01"
@@ -226,6 +232,10 @@ def _decode_subject(raw: str) -> str:
 _LIVE_KIND_TO_STUB: dict[str, tuple[Path, str]] = {
     "two_turn": (LIVE_TWO_TURN_STUB_DIR, LIVE_TWO_TURN_STUB_TAG),
     "subagent_shallow": (LIVE_SUBAGENT_SHALLOW_STUB_DIR, LIVE_SUBAGENT_SHALLOW_STUB_TAG),
+    "subagent_budget_exhausted": (
+        LIVE_SUBAGENT_BUDGET_EXHAUSTED_STUB_DIR,
+        LIVE_SUBAGENT_BUDGET_EXHAUSTED_STUB_TAG,
+    ),
     "memory_thread": (LIVE_MEMORY_THREAD_STUB_DIR, LIVE_MEMORY_THREAD_STUB_TAG),
     "global_memory": (LIVE_GLOBAL_MEMORY_STUB_DIR, LIVE_GLOBAL_MEMORY_STUB_TAG),
     "reflect_cycle": (LIVE_REFLECT_CYCLE_STUB_DIR, LIVE_REFLECT_CYCLE_STUB_TAG),
@@ -619,6 +629,85 @@ def test_live_subagent_table_shallow_chain_on_running_stack(live_mailflow_runtim
         )
     finally:
         # Контекст WM не удалять здесь — см. two_turn finally.
+        assert_wiremock_zero_unmatched_requests(wm_base)
+
+
+@pytest.mark.e2e
+@pytest.mark.e2e_live
+def test_live_subagent_budget_exhausted_on_running_stack(live_mailflow_runtime) -> None:
+    """L1 ``subagent_intent`` when hop budget exhausted → ingress notice (``budget_exhausted.j2``)."""
+    rt = live_mailflow_runtime
+    user_mid = f"e2e-sat-budget-{uuid.uuid4().hex}@localhost"
+    correlation_key = e2e_thread_root_mid_for_message_id(user_mid)
+    wm_base = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
+    try:
+        _live_prepare_wiremock(rt, kind="subagent_budget_exhausted", correlation_key=correlation_key)
+        smtp_h, smtp_p = rt.greenmail_smtp_host, rt.greenmail_smtp_port
+        imap_h, imap_p = rt.greenmail_imap_host, rt.greenmail_imap_port
+        to_addr = e2e_greenmail_mailbox_address(E2E_FETCHMAIL_USER)
+        from_addr = e2e_greenmail_mailbox_address("pytest")
+        imap_user = E2E_GREENMAIL_REPLY_USER
+        imap_pass = E2E_FETCHMAIL_PASS
+
+        subj = LIVE_SUBAGENT_BUDGET_EXHAUSTED_SUBJECT
+        baseline_uid = _pytest_inbox_max_uid(imap_h, imap_p, user=imap_user, password=imap_pass)
+
+        m = EmailMessage()
+        m["From"] = from_addr
+        m["To"] = to_addr
+        m["Subject"] = subj
+        m["Message-ID"] = f"<{user_mid}>"
+        m.set_content(
+            e2e_dense_threlium_ctx_body(
+                head="SUBAGENT_TABLE budget exhausted body sat-budget-exhausted-01",
+                correlation_key=correlation_key,
+            )
+        )
+        _smtp_send(smtp_h, smtp_p, m)
+
+        uinner = user_mid.strip().strip("<>")
+        nm_root = email_ingress_notmuch_id_inner(user_mid)
+
+        def _agent_reply() -> bool | None:
+            rows = _pytest_inbox_rows(
+                imap_h, imap_p, user=imap_user, password=imap_pass,
+                since_uid=baseline_uid, subject="", in_reply_to=uinner,
+            )
+            if not rows:
+                return None
+            for row in reversed(rows):
+                _, _, _, _, _, body = row
+                if E2E_REPLY_BODY_SNIPPET.lower() not in body.lower():
+                    continue
+                return True
+            return None
+
+        poll_until(
+            _agent_reply,
+            timeout=TIMEOUT_POLL_SHORT,
+            desc="live SUBAGENT_TABLE: agent reply after budget exhausted nested frame",
+        )
+        matches = find_wiremock_requests_by_body_contains(
+            wm_base,
+            E2E_SUBAGENT_BUDGET_EXHAUSTED_NOTICE,
+            stub_tag=LIVE_SUBAGENT_BUDGET_EXHAUSTED_STUB_TAG,
+        )
+        chat = [
+            e for e in matches
+            if "/chat/completions" in (e.get("request", {}).get("url") or "")
+        ]
+        assert chat, "budget exhausted notice must reach L1 reasoning prompt via enrich_fast relay"
+        assert_notmuch_thread_has_messages_in_folders(
+            rt.project_name,
+            anchor_message_id=nm_root,
+            stage_folder_ids=(
+                FsmStage.SUBAGENT_INTENT.value,
+                FsmStage.ENRICH_FAST.value,
+                FsmStage.RESPONSE_FINALIZE.value,
+                FsmStage.EGRESS_EMAIL.value,
+            ),
+        )
+    finally:
         assert_wiremock_zero_unmatched_requests(wm_base)
 
 

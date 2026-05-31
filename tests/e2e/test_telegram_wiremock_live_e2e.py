@@ -590,3 +590,66 @@ def test_live_telegram_wiremock_private_tail_307_second_message(
             wiremock_telegram_unregister_update(base, update_id=uid)
         except Exception:  # noqa: BLE001
             pass
+
+
+def _wait_bridge_telegram_duplicate_skip(project: str, *, message_id: int) -> None:
+    jc = e2e_threlium_user_unit_journalctl_bash(
+        "threlium-bridge@telegram.service", 120, shell_redirect="2>/dev/null"
+    )
+    inner = (
+        "if "
+        + jc
+        + f" | grep -q 'duplicate_skip' && {jc} | grep -q 'message_id={message_id}'; then echo OK; fi"
+    )
+
+    def _probe() -> bool | None:
+        r = service_exec(project, "sut", ["bash", "-lc", inner], repo_root=REPO_ROOT, timeout=30)
+        return True if r.returncode == 0 and "OK" in (r.stdout or "") else None
+
+    poll_until(
+        _probe,
+        timeout=TIMEOUT_POLL_SHORT,
+        desc=f"telegram bridge duplicate_skip for message_id={message_id}",
+    )
+
+
+@pytest.mark.e2e
+@pytest.mark.e2e_live
+def test_live_telegram_bridge_duplicate_skip_on_running_stack(
+    live_telegram_wiremock_runtime: E2EComposeRuntime,
+) -> None:
+    """Повторная регистрация того же Telegram update → ``duplicate_skip`` в journal telegram-бриджа."""
+    rt = live_telegram_wiremock_runtime
+    base = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
+    chat_id, message_id, update_id, mtid = e2e_telegram_generate_update_bundle(with_forum_topic=False)
+    try:
+        wiremock_telegram_register_update(
+            base,
+            update_id=update_id,
+            chat_id=chat_id,
+            message_id=message_id,
+            text="e2e telegram duplicate_skip probe",
+            message_thread_id=mtid,
+        )
+        poll_until(
+            lambda: True
+            if journal_has_request(base, method="GET", url_contains="getUpdates")
+            else None,
+            timeout=TIMEOUT_POLL_SHORT,
+            interval=2.0,
+            desc="telegram getUpdates after first register",
+        )
+        wiremock_telegram_register_update(
+            base,
+            update_id=update_id,
+            chat_id=chat_id,
+            message_id=message_id,
+            text="e2e telegram duplicate_skip probe",
+            message_thread_id=mtid,
+        )
+        _wait_bridge_telegram_duplicate_skip(rt.project_name, message_id=message_id)
+    finally:
+        try:
+            wiremock_telegram_unregister_update(base, update_id=update_id)
+        except Exception:  # noqa: BLE001
+            pass

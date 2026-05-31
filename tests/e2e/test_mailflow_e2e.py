@@ -5,7 +5,8 @@
 
 **Цель.** Внешнее письмо принято, проиндексировано, обработано конечным автоматом с вызовом подмены
 LLM через общий сервис WireMock, тред дошёл до ожидаемых стадий, пользователю ушёл ответ обратно на
-тестовый почтовый сервер.
+тестовый почтовый сервер. Happy-path использует **response_finalize Mode 1** (пустой response buffer,
+только ``content`` из tool call → ``egress_email`` без сборки из буфера).
 
 1. **Стек.** Фикстура ``deployed_stack`` зависит от session ``compose_stack`` (autouse в ``conftest.py``):
    стек поднимается или переиспользуется как в ``docs/TESTING.md``. Этот модуль **никогда** не вызывает
@@ -47,10 +48,11 @@ from threlium.types import FsmStage
 
 from .helpers import (
     MailflowScenarioSpec,
+    REPO_ROOT,
     assert_full_mailflow_pipeline,
+    discover_runtime,
     dump_failure_artifacts,
     mailflow_inject_and_wait,
-    REPO_ROOT,
 )
 
 _WIREMOCK_STUBS_ROOT = Path(__file__).resolve().parent / "wiremock_stubs"
@@ -73,7 +75,78 @@ MAILFLOW_SPEC = MailflowScenarioSpec(
         FsmStage.EGRESS_EMAIL.value,
         FsmStage.ARCHIVE.value,
     ),
+    reply_body_needle="ok from llm-mock",
 )
+
+
+def _assert_egress_reply_excludes_internal_mime(project: str, *, raw_id: str) -> None:
+    """External SMTP reply must not leak ``@history`` / ``@system`` MIME parts (egress_email purity)."""
+    rt = discover_runtime(project, repo_root=REPO_ROOT)
+    from .helpers import (
+        E2E_FETCHMAIL_PASS,
+        E2E_GREENMAIL_REPLY_USER,
+        greenmail_wait_agent_reply_message_id,
+        poll_until,
+    )
+    import imaplib
+    from email import message_from_bytes
+
+    agent_mid = greenmail_wait_agent_reply_message_id(
+        rt.greenmail_imap_host,
+        rt.greenmail_imap_port,
+        in_reply_to_anchor=raw_id,
+    )
+    inner = agent_mid.strip().strip("<>")
+
+    def _fetch_body() -> str | None:
+        with imaplib.IMAP4(rt.greenmail_imap_host, rt.greenmail_imap_port, timeout=30) as imap:
+            imap.login(E2E_GREENMAIL_REPLY_USER, E2E_FETCHMAIL_PASS)
+            typ, _ = imap.select("INBOX", readonly=True)
+            if typ != "OK":
+                return None
+            typ, data = imap.search(None, "ALL")
+            if typ != "OK" or not data or not data[0]:
+                return None
+            for num in reversed(data[0].split()):
+                typ, msg_data = imap.fetch(num, "(RFC822)")
+                if typ != "OK" or not msg_data:
+                    continue
+                raw = msg_data[0][1]
+                if not isinstance(raw, bytes):
+                    continue
+                msg = message_from_bytes(raw)
+                irt = (msg.get("In-Reply-To") or "").lower()
+                if inner.lower() not in irt:
+                    continue
+                if msg.is_multipart():
+                    parts = []
+                    for p in msg.walk():
+                        if p.get_content_type() == "text/plain":
+                            pl = p.get_payload(decode=True)
+                            parts.append(
+                                pl.decode("utf-8", errors="replace")
+                                if isinstance(pl, bytes)
+                                else str(pl or "")
+                            )
+                    body = "\n".join(parts)
+                else:
+                    pl = msg.get_payload(decode=True)
+                    body = (
+                        pl.decode("utf-8", errors="replace")
+                        if isinstance(pl, bytes)
+                        else str(pl or "")
+                    )
+                return body
+        return None
+
+    body = poll_until(_fetch_body, timeout=30, desc="fetch GreenMail agent reply body")
+    assert body is not None
+    lowered = body.lower()
+    for forbidden in ("@history", "@system", "content-id:", "multipart/mixed"):
+        assert forbidden not in lowered, (
+            f"external SMTP reply leaked internal MIME marker {forbidden!r}"
+        )
+    log.info("egress_email_purity_verified", body_len=len(body))
 
 
 @pytest.fixture()
@@ -93,7 +166,7 @@ def mailflow_processed_stack(deployed_stack: str) -> object:
 def test_full_mailflow_deploy_and_pipeline(
     mailflow_processed_stack: tuple[str, str, str, str, str, str],
 ) -> None:
-    """Живой стек → SMTP → IMAP bridge (IDLE) → notmuch → WireMock → архив (тред) → ответ в GreenMail."""
+    """Mode 1 happy-path: SMTP → FSM → WireMock → egress without response buffer."""
     project, raw_id, _canonical_id, nm_inner, stub_tag, correlation_key = (
         mailflow_processed_stack
     )
@@ -106,6 +179,8 @@ def test_full_mailflow_deploy_and_pipeline(
             stub_tag=stub_tag,
             correlation_key=correlation_key,
         )
+        _assert_egress_reply_excludes_internal_mime(project, raw_id=raw_id)
+        assert FsmStage.RESPONSE_APPEND.value not in MAILFLOW_SPEC.expect_notmuch_stage_folders
     except Exception:
         log.debug(
             "failure_artifacts",

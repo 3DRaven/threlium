@@ -5,6 +5,9 @@
     "headers": {
       "X-Threlium-Call-Site": {
         "equalTo": "fsm"
+      },
+      "To": {
+        "contains": "reasoning@localhost"
       }
     },
     "bodyPatterns": [
@@ -18,19 +21,14 @@
         "contains": "\"tools\""
       },
       {
-        "contains": "E2E-REASONING-LITELLM-BODY-MARKER"
-      },
-      {
-        "doesNotMatch": "(?s).*\"enable_thinking\"\\s*:\\s*false.*"
-      },
-      {
-        "contains": "finish_reason=length"
+        "contains": "sat-budget-exhausted-01"
       }
     ],
     "customMatcher": {
       "name": "state-matcher",
       "parameters": {
-        "hasContext": "stub-reasoning-litellm-live-01::{{request.headers.[x-threlium-thread-root]}}",
+        "hasContext": "stub-mailflow-live-sat-budget-exhausted-01::{{request.headers.[x-threlium-thread-root]}}",
+        "hasProperty": "phase_l1_done",
         "hasNotProperty": "phase_tasks_ledger_done"
       }
     }
@@ -58,7 +56,7 @@
                 "type": "function",
                 "function": {
                   "name": "tasks_upsert",
-                  "arguments": "{\"reasoning\": \"e2e: record task completion before finalize\",\"new_subtasks\": [{\"text\": \"Complete the user request\",\"status\": \"done\"}]}"
+                  "arguments": "{\"reasoning\": \"e2e L0: record task completion before finalize\",\"new_subtasks\": [{\"text\": \"Complete the user request\",\"status\": \"done\"}]}"
                 }
               }
             ]
@@ -71,7 +69,7 @@
     {
       "name": "recordState",
       "parameters": {
-        "context": "stub-reasoning-litellm-live-01::{{request.headers.[x-threlium-thread-root]}}",
+        "context": "stub-mailflow-live-sat-budget-exhausted-01::{{request.headers.[x-threlium-thread-root]}}",
         "state": {
           "phase_tasks_ledger_done": "1"
         }

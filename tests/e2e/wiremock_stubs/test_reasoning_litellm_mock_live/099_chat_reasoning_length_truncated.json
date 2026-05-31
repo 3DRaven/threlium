@@ -1,4 +1,5 @@
 {
+  "priority": 1,
   "request": {
     "method": "POST",
     "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
@@ -21,10 +22,10 @@
         "contains": "E2E-REASONING-LITELLM-BODY-MARKER"
       },
       {
-        "doesNotMatch": "(?s).*\"enable_thinking\"\\s*:\\s*false.*"
+        "doesNotMatch": "(?s).*finish_reason=length.*"
       },
       {
-        "contains": "finish_reason=length"
+        "doesNotMatch": "(?s).*\"enable_thinking\"\\s*:\\s*false.*"
       }
     ],
     "customMatcher": {
@@ -41,41 +42,21 @@
       "Content-Type": "application/json"
     },
     "jsonBody": {
-      "id": "chatcmpl-e2e-tasks-ledger-phase_tasks_ledger_done",
+      "id": "chatcmpl-e2e-length-truncated",
       "object": "chat.completion",
       "created": 0,
       "model": "gpt-4o-mini",
       "choices": [
         {
           "index": 0,
-          "finish_reason": "tool_calls",
+          "finish_reason": "length",
           "message": {
             "role": "assistant",
-            "content": null,
-            "tool_calls": [
-              {
-                "id": "call_e2e_tasks_ledger_phase_tasks_ledger_done",
-                "type": "function",
-                "function": {
-                  "name": "tasks_upsert",
-                  "arguments": "{\"reasoning\": \"e2e: record task completion before finalize\",\"new_subtasks\": [{\"text\": \"Complete the user request\",\"status\": \"done\"}]}"
-                }
-              }
-            ]
+            "content": "E2E-LENGTH-TRUNCATED-PARTIAL-OUTPUT",
+            "tool_calls": null
           }
         }
       ]
     }
-  },
-  "serveEventListeners": [
-    {
-      "name": "recordState",
-      "parameters": {
-        "context": "stub-reasoning-litellm-live-01::{{request.headers.[x-threlium-thread-root]}}",
-        "state": {
-          "phase_tasks_ledger_done": "1"
-        }
-      }
-    }
-  ]
+  }
 }

@@ -204,3 +204,59 @@ def test_live_matrix_wiremock_full_contour_on_running_stack(
         body_token=matrix_room_token,
         repo_root=REPO_ROOT,
     )
+
+
+def _wait_bridge_matrix_duplicate_skip(project: str, *, event_id: str) -> None:
+    jc = e2e_threlium_user_unit_journalctl_bash(
+        "threlium-bridge@matrix.service", 120, shell_redirect="2>/dev/null"
+    )
+    inner = (
+        "if "
+        + jc
+        + f" | grep -q 'duplicate_skip' && {jc} | grep -q {event_id!r}; then echo OK; fi"
+    )
+    def _probe() -> bool | None:
+        r = service_exec(project, "sut", ["bash", "-lc", inner], repo_root=REPO_ROOT, timeout=30)
+        return True if r.returncode == 0 and "OK" in (r.stdout or "") else None
+
+    poll_until(_probe, timeout=TIMEOUT_POLL_SHORT, desc=f"matrix bridge duplicate_skip for {event_id!r}")
+
+
+@pytest.mark.e2e
+@pytest.mark.e2e_live
+def test_live_matrix_bridge_duplicate_skip_on_running_stack(
+    live_matrix_wiremock_runtime: E2EComposeRuntime,
+) -> None:
+    """Повторная доставка того же Matrix event → ``duplicate_skip`` в journal matrix-бриджа."""
+    rt = live_matrix_wiremock_runtime
+    base = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
+    room_id, event_id = e2e_matrix_generate_room_ids()
+    try:
+        wiremock_matrix_register_room(
+            base,
+            room_id=room_id,
+            event_id=event_id,
+            event_body="e2e matrix duplicate_skip probe",
+            room_name="E2E Matrix Dup Room",
+        )
+        poll_until(
+            lambda: True
+            if journal_has_request(base, method="GET", url_contains="/sync")
+            else None,
+            timeout=TIMEOUT_POLL_SHORT,
+            interval=2.0,
+            desc="matrix /sync activity after first register",
+        )
+        wiremock_matrix_register_room(
+            base,
+            room_id=room_id,
+            event_id=event_id,
+            event_body="e2e matrix duplicate_skip probe",
+            room_name="E2E Matrix Dup Room",
+        )
+        _wait_bridge_matrix_duplicate_skip(rt.project_name, event_id=str(event_id))
+    finally:
+        try:
+            wiremock_matrix_unregister_room(base, room_id=room_id)
+        except Exception:  # noqa: BLE001
+            pass
