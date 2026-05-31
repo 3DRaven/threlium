@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""cli_exec → enrich_fast@localhost: исполнение в transient ``systemd-run --scope``.
+"""cli_exec → enrich_fast@localhost: исполнение через transient ``systemd-run``.
 
-SANDBOX (``privileged: false``): ``systemd-run --user --scope`` + ProtectSystem=strict, …
+SANDBOX (``privileged: false``): ``systemd-run --user --wait --pipe`` + ProtectSystem=strict, …
 PRIVILEGED: ``systemd-run --wait --pipe --uid=0`` (Polkit на хосте при необходимости).
 """
+import os
 import subprocess
 from email.message import EmailMessage
 
@@ -16,6 +17,21 @@ from threlium.settings import ThreliumSettings
 from threlium.types import FsmStage, PromptPath
 
 log = logger.bind(stage="cli_exec")
+
+
+def _subprocess_env_for_systemd_user() -> dict[str, str]:
+    """Ensure ``XDG_RUNTIME_DIR`` for ``systemd-run --user`` (user session bus)."""
+    env = dict(os.environ)
+    if env.get("XDG_RUNTIME_DIR"):
+        return env
+    try:
+        uid = os.getuid()
+    except AttributeError:
+        return env
+    runtime = f"/run/user/{uid}"
+    if os.path.isdir(runtime):
+        env["XDG_RUNTIME_DIR"] = runtime
+    return env
 
 
 def _build_scope_cmd(
@@ -52,7 +68,8 @@ def _build_scope_cmd(
     return [
         "systemd-run",
         "--user",
-        "--scope",
+        "--wait",
+        "--pipe",
         "--quiet",
         *sandbox_props,
         *props,
@@ -99,6 +116,7 @@ def main(
             timeout=config.cli.exec_timeout,
             text=True,
             cwd=cli.cwd or None,
+            env=_subprocess_env_for_systemd_user(),
         )
         observation = (
             f"exit_code={result.returncode}\n"
