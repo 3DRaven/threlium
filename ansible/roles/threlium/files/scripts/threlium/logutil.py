@@ -29,7 +29,19 @@ _FOREIGN_PRE_CHAIN = [
 ]
 
 _LITELLM_LOGGER_NAMES: tuple[str, ...] = ("LiteLLM", "LiteLLM Proxy", "LiteLLM Router")
-_FOREIGN_LOGGER_NAMES: tuple[str, ...] = ("httpx", "lightrag")
+# Шумные HTTP/Docker-клиенты e2e harness: при root=DEBUG каждый docker exec / WireMock Admin
+# даёт десятки строк в секунду → переполнение QueueHandler и «зависание» pytest/collect.
+_FOREIGN_LOGGER_NAMES: tuple[str, ...] = (
+    "httpx",
+    "httpcore",
+    "httpcore.connection",
+    "httpcore.http11",
+    "urllib3",
+    "docker",
+    "requests",
+    "charset_normalizer",
+    "lightrag",
+)
 
 _LOG_CLIP_SUFFIX = "…"
 _DEFAULT_LOG_TEXT_MAX_LEN = 128

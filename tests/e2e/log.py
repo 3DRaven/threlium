@@ -1,12 +1,10 @@
 """E2e harness logging — тот же structlog-контракт, что в threlium.logutil."""
 from __future__ import annotations
 
-import os
+from threlium.logutil import logger
 
-from threlium.logutil import logger, setup_logging
-
-# Импорт модуля может произойти до pytest_configure — setup сразу.
-setup_logging(os.environ.get("THRELIUM_LOG_LEVEL", "DEBUG"))
+# setup_logging — только в conftest.py::pytest_configure (не при import: иначе root=DEBUG
+# до pytest и шум urllib3/docker/httpcore ломает collect-only / run_individual_e2e.sh).
 
 log = logger.bind(stage="e2e")
 
