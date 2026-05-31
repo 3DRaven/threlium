@@ -258,6 +258,10 @@ E2E_SUT_NOTMUCH_BASH_EXPORT = (
 E2E_WIREMOCK_CONTAINER_PORT: int = 8080
 E2E_FETCHMAIL_USER = os.environ.get("THRELIUM_E2E_FETCHMAIL_USER", "test")
 E2E_FETCHMAIL_PASS = os.environ.get("THRELIUM_E2E_FETCHMAIL_PASS", "secret")
+# Папка UID MOVE после обработки email-bridge (``group_vars/e2e.yml`` → ``Threlium.Processed``).
+E2E_IMAP_PROCESSED_FOLDER = os.environ.get(
+    "THRELIUM_E2E_IMAP_PROCESSED_FOLDER", "Threlium.Processed"
+)
 # Ответ агента msmtp шлёт на ``EmailIngressRoute.origin`` (для smtp_inject — ``pytest@localhost``).
 E2E_GREENMAIL_REPLY_USER = os.environ.get("THRELIUM_E2E_GREENMAIL_REPLY_USER", "pytest")
 # Общий флаг с live-сценариями: пропуск очистки Maildir на SUT (отладка).
@@ -559,8 +563,22 @@ class E2EComposeRuntime:
     sut_fresh_bake: bool = False
 
 
+def _greenmail_imap_expunge_folder(imap: imaplib.IMAP4, folder: str) -> int:
+    """Удалить все письма в ``folder`` (``\\Deleted`` + ``EXPUNGE``). Папки нет → 0."""
+    typ, _ = imap.select(folder)
+    if typ != "OK":
+        return 0
+    _, data = imap.search(None, "ALL")
+    uids = data[0].split() if data and data[0] else []
+    for uid in uids:
+        imap.store(uid, "+FLAGS", "\\Deleted")
+    if uids:
+        imap.expunge()
+    return len(uids)
+
+
 def e2e_flush_greenmail_inboxes(rt: E2EComposeRuntime) -> None:
-    """EXPUNGE all messages from GreenMail IMAP inboxes (``test@``, ``pytest@``).
+    """EXPUNGE GreenMail IMAP: ``INBOX`` (``test@``, ``pytest@``) и ``Threlium.Processed`` (``test@``).
 
     Without this, ``threlium-bridge@email`` picks up stale messages from previous
     runs after SUT Maildir/notmuch flush.  The bridge now drops replies whose
@@ -569,24 +587,32 @@ def e2e_flush_greenmail_inboxes(rt: E2EComposeRuntime) -> None:
     enrich worker no longer enters a restart loop.  Flushing is still required:
     stale root messages would otherwise be re-delivered as duplicates and the
     IMAP UID watermark must be reset between independent test sessions.
+
+    ``Threlium.Processed`` (UID MOVE после fetch) тоже чистится: после wipe
+    notmuch мост стартует с ``effective_start=1`` и иначе снова обрабатывает
+    всё, что осталось в INBOX или накопилось в processed-папке между сессиями.
     """
-    accounts = [
-        (E2E_FETCHMAIL_USER, E2E_FETCHMAIL_PASS),
-        (E2E_GREENMAIL_REPLY_USER, E2E_FETCHMAIL_PASS),
-    ]
     host, port = rt.greenmail_imap_host, rt.greenmail_imap_port
-    for user, password in accounts:
+    flush_specs: list[tuple[str, str, tuple[str, ...]]] = [
+        (E2E_FETCHMAIL_USER, E2E_FETCHMAIL_PASS, ("INBOX", E2E_IMAP_PROCESSED_FOLDER)),
+        (E2E_GREENMAIL_REPLY_USER, E2E_FETCHMAIL_PASS, ("INBOX",)),
+    ]
+    for user, password, folders in flush_specs:
         try:
             with imaplib.IMAP4(host, port, timeout=int(TIMEOUT_POLL_SHORT)) as imap:
                 imap.login(user, password)
-                imap.select("INBOX")
-                _, data = imap.search(None, "ALL")
-                uids = data[0].split() if data[0] else []
-                for uid in uids:
-                    imap.store(uid, "+FLAGS", "\\Deleted")
-                imap.expunge()
+                for folder in folders:
+                    try:
+                        n = _greenmail_imap_expunge_folder(imap, folder)
+                        log.info("greenmail_flush", user=user, folder=folder, expunged=n)
+                    except Exception as folder_exc:
+                        log.warning(
+                            "greenmail_flush_folder_skipped",
+                            user=user,
+                            folder=folder,
+                            error=repr(folder_exc),
+                        )
                 imap.logout()
-            log.info("greenmail_flush", user=user, expunged=len(uids))
         except Exception as exc:
             log.warning("greenmail_flush_skipped", user=user, error=repr(exc))
 
@@ -684,6 +710,116 @@ echo "[e2e] deterministic knowledge corpus: $(find "$KN" -name '*.md' | wc -l) d
         )
     else:
         log.info("sut_knowledge_corpus_deterministic", detail=(completed.stdout or "").strip())
+
+
+E2E_BOOTSTRAP_THREAD_ROOT = "e2e-bootstrap"
+_E2E_LIGHTRAG_DOC_STATUS = f"{E2E_REMOTE_THRELIUM_HOME}/lightrag/kv_store_doc_status.json"
+
+
+def e2e_wait_engine_active(
+    project: str,
+    *,
+    repo_root: Path | None = None,
+    timeout: float = 60.0,
+) -> None:
+    """Poll until ``threlium-engine.service`` is active on SUT."""
+    cmd = [
+        "bash",
+        "-lc",
+        f"runuser -u {E2E_THRELIUM_USER} -- env "
+        f"XDG_RUNTIME_DIR=/run/user/$(id -u {E2E_THRELIUM_USER}) "
+        "systemctl --user is-active threlium-engine.service",
+    ]
+    root = repo_root or REPO_ROOT
+
+    def _check() -> str | None:
+        r = service_exec(project, "sut", cmd, repo_root=root, timeout=15)
+        if (r.stdout or "").strip() == "active":
+            return "active"
+        return None
+
+    poll_until(_check, timeout=timeout, interval=2.0, desc="threlium-engine.service active")
+
+
+def bootstrap_embedding_entries(wm_base: str) -> list[dict]:
+    """WireMock journal: bootstrap embedding requests (``X-Threlium-Thread-Root: e2e-bootstrap``)."""
+    from .wiremock_client import (  # noqa: PLC0415
+        THRELIUM_WIREMOCK_COMPOSE_BOOTSTRAP_STUB_TAG,
+        journal_entries_for_stub_tag_with_header,
+    )
+
+    return journal_entries_for_stub_tag_with_header(
+        wm_base,
+        stub_tag=THRELIUM_WIREMOCK_COMPOSE_BOOTSTRAP_STUB_TAG,
+        header_name="X-Threlium-Thread-Root",
+        header_value=E2E_BOOTSTRAP_THREAD_ROOT,
+        url_contains="/embeddings",
+    )
+
+
+def bootstrap_embedding_entry_ids(wm_base: str) -> set[str]:
+    return {
+        str(e.get("id") or "")
+        for e in bootstrap_embedding_entries(wm_base)
+        if e.get("id")
+    }
+
+
+def _wait_bootstrap_embeddings_in_wiremock(wm_base: str) -> None:
+    def _seen() -> bool | None:
+        return True if bootstrap_embedding_entries(wm_base) else None
+
+    poll_until(
+        _seen,
+        timeout=TIMEOUT_POLL_SHORT,
+        interval=2.0,
+        desc=f"bootstrap embeddings (X-Threlium-Thread-Root={E2E_BOOTSTRAP_THREAD_ROOT!r})",
+    )
+
+
+def e2e_clear_doc_status_and_restart_engine(
+    project: str,
+    *,
+    repo_root: Path | None = None,
+) -> None:
+    """Remove LightRAG doc_status and restart engine (forces knowledge bootstrap re-index)."""
+    root = repo_root or REPO_ROOT
+    service_exec(
+        project,
+        "sut",
+        ["bash", "-lc", f"rm -f {_E2E_LIGHTRAG_DOC_STATUS}"],
+        repo_root=root,
+        timeout=10,
+    )
+    restart_cmd = [
+        "bash",
+        "-lc",
+        f"runuser -u {E2E_THRELIUM_USER} -- env "
+        f"XDG_RUNTIME_DIR=/run/user/$(id -u {E2E_THRELIUM_USER}) "
+        "systemctl --user restart threlium-engine.service",
+    ]
+    service_exec(project, "sut", restart_cmd, repo_root=root, timeout=30)
+    e2e_wait_engine_active(project, repo_root=root, timeout=90.0)
+
+
+def e2e_bootstrap_reindex_and_wait(rt: E2EComposeRuntime) -> None:
+    """Clean WM journal, force bootstrap re-index of probe corpus, wait for embedding in journal."""
+    from .wiremock_client import reset_request_journal, wiremock_public_base  # noqa: PLC0415
+
+    wm_base = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
+    reset_request_journal(wm_base)
+    e2e_clear_doc_status_and_restart_engine(rt.project_name, repo_root=rt.repo_root)
+    _wait_bootstrap_embeddings_in_wiremock(wm_base)
+
+
+@contextlib.contextmanager
+def e2e_bootstrap_scenario(rt: E2EComposeRuntime) -> Iterator[E2EComposeRuntime]:
+    """Bootstrap reindex in test body; start full pipeline on exit."""
+    e2e_bootstrap_reindex_and_wait(rt)
+    try:
+        yield rt
+    finally:
+        e2e_start_threlium_user_pipeline_services(rt)
 
 
 def e2e_stop_threlium_user_pipeline_services(rt: E2EComposeRuntime) -> None:
@@ -3721,7 +3857,7 @@ def _inject_rag_warmup(
 @contextlib.contextmanager
 def mailflow_inject_and_wait(
     spec: MailflowScenarioSpec,
-    deployed_stack: str,
+    project_name: str,
 ) -> Iterator[tuple[str, str, str, str, str, str]]:
     """Arrange phase: prepare WireMock → inject email → wait bridge pickup (gone from INBOX) + FSM activity.
 
@@ -3747,10 +3883,10 @@ def mailflow_inject_and_wait(
     canonical_id = canonical_external_msgid(raw_id)
     t0 = time.monotonic()
     mailflow_log_phase(
-        f"{spec.label}: start (project={deployed_stack}) "
+        f"{spec.label}: start (project={project_name}) "
         f"message_id={raw_id!r} correlation_key={correlation_key!r}"
     )
-    rt = discover_runtime(deployed_stack, repo_root=REPO_ROOT)
+    rt = discover_runtime(project_name, repo_root=REPO_ROOT)
     wm_base = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
     prepare_wiremock_scenario(
         wm_base,
@@ -3761,7 +3897,7 @@ def mailflow_inject_and_wait(
 
     if spec.min_rerank_posts > 0:
         _inject_rag_warmup(
-            deployed_stack,
+            project_name,
             rt=rt,
             wm_base=wm_base,
             stub_tag=spec.stub_tag,
@@ -3773,7 +3909,7 @@ def mailflow_inject_and_wait(
             f"{spec.label}: lightrag vectordb has indexed data (+{time.monotonic() - t0:.1f}s)"
         )
 
-    reset_maildrop_debug_log(deployed_stack, repo_root=REPO_ROOT)
+    reset_maildrop_debug_log(project_name, repo_root=REPO_ROOT)
 
     if seed_id is not None:
         if spec.summarize_overflow_body:
@@ -3792,7 +3928,7 @@ def mailflow_inject_and_wait(
                 correlation_key=correlation_key,
             )
         smtp_inject_inbound(
-            deployed_stack,
+            project_name,
             checkout="/unused",
             repo_root=REPO_ROOT,
             message_id=seed_id,
@@ -3808,23 +3944,23 @@ def mailflow_inject_and_wait(
         )
         seed_nm_inner = email_ingress_notmuch_id_inner(seed_id)
         mailflow_wait_fsm_maildir_activity(
-            deployed_stack,
+            project_name,
             repo_root=REPO_ROOT,
             message_id=seed_nm_inner,
         )
         wait_for_notmuch_message(
-            deployed_stack, message_id=seed_nm_inner, repo_root=REPO_ROOT
+            project_name, message_id=seed_nm_inner, repo_root=REPO_ROOT
         )
         mailflow_log_phase(
             f"{spec.label}: prior-turn seed indexed mid={seed_id!r} (+{time.monotonic() - t0:.1f}s)"
         )
         wait_for_greenmail_user_reply(
-            deployed_stack,
+            project_name,
             raw_id=seed_id,
             repo_root=REPO_ROOT,
         )
         assert_notmuch_thread_fully_in_stages(
-            deployed_stack,
+            project_name,
             anchor_message_id=seed_nm_inner,
             repo_root=REPO_ROOT,
         )
@@ -3871,7 +4007,7 @@ def mailflow_inject_and_wait(
             head=spec.body_head, correlation_key=correlation_key
         )
     smtp_inject_inbound(
-        deployed_stack,
+        project_name,
         checkout="/unused",
         repo_root=REPO_ROOT,
         message_id=raw_id,
@@ -3887,19 +4023,19 @@ def mailflow_inject_and_wait(
     mailflow_log_phase(
         f"{spec.label}: after wait_for_greenmail_inbox_message_gone_host (+{time.monotonic() - t0:.1f}s)"
     )
-    snap = mailflow_fsm_maildir_systemd_snapshot(deployed_stack, repo_root=REPO_ROOT)
+    snap = mailflow_fsm_maildir_systemd_snapshot(project_name, repo_root=REPO_ROOT)
     mailflow_diag_block(
         f"{spec.label}: fsm maildir + systemd snapshot after IMAP IDLE pickup",
         snap,
         max_chars=30000,
     )
     mailflow_wait_fsm_maildir_activity(
-        deployed_stack,
+        project_name,
         repo_root=REPO_ROOT,
         message_id=nm_inner,
     )
     try:
-        yield deployed_stack, raw_id, canonical_id, nm_inner, spec.stub_tag, correlation_key
+        yield project_name, raw_id, canonical_id, nm_inner, spec.stub_tag, correlation_key
     finally:
         teardown_wiremock_scenario(
             wm_base, correlation_key=correlation_key, stub_tag=spec.stub_tag
@@ -3979,8 +4115,6 @@ def assert_full_mailflow_pipeline(
 # ---------------------------------------------------------------------------
 # IMAP processed-folder helpers (email bridge UID MOVE)
 # ---------------------------------------------------------------------------
-
-E2E_IMAP_PROCESSED_FOLDER = "Threlium.Processed"
 
 
 def imap_list_uids_in_folder(

@@ -69,6 +69,13 @@ def e2e_stop_threlium_user_pipeline_bash() -> str:
 uid=$(id -u {u})
 export XDG_RUNTIME_DIR=/run/user/$uid
 runuser -u {u} -- systemctl --user stop threlium-engine.service 2>/dev/null || true
+for i in $(seq 1 30); do
+  st=$(runuser -u {u} -- systemctl --user is-active threlium-engine.service 2>/dev/null || true)
+  if [ "$st" = inactive ] || [ "$st" = failed ] || [ "$st" = unknown ]; then
+    break
+  fi
+  sleep 1
+done
 # Зависший/failed engine (напр. прерванный job): сбросить состояние, чтобы последующий
 # start не упёрся в "Job canceled"/failed.
 runuser -u {u} -- systemctl --user reset-failed threlium-engine.service 2>/dev/null || true
@@ -148,13 +155,27 @@ mkdir -p /etc/systemd/journald.conf.d
 printf '[Journal]\\nRateLimitIntervalSec=0\\n' > /etc/systemd/journald.conf.d/e2e-no-ratelimit.conf
 systemctl restart systemd-journald 2>/dev/null || true
 
+# Дождаться полной остановки после cold-reset stop (иначе start → "Job canceled").
+for i in $(seq 1 30); do
+  st=$(runuser -u {u} -- systemctl --user is-active threlium-engine.service 2>/dev/null || true)
+  if [ "$st" = inactive ] || [ "$st" = failed ] || [ "$st" = unknown ]; then
+    break
+  fi
+  sleep 1
+done
 # Сбросить failed-состояние перед стартом (идемпотентный рестарт на живом контейнере).
 runuser -u {u} -- systemctl --user reset-failed threlium-engine.service 2>/dev/null || true
 runuser -u {u} -- systemctl --user start threlium-engine.service
 for u in $(runuser -u {u} -- systemctl --user list-unit-files 'threlium-bridge@*.service' --no-legend 2>/dev/null | awk '$2=="enabled"{{print $1}}' || true); do
   runuser -u {u} -- systemctl --user start "$u" 2>/dev/null || true
 done
-sleep 2
+for i in $(seq 1 30); do
+  st=$(runuser -u {u} -- systemctl --user is-active threlium-engine.service 2>/dev/null || true)
+  if [ "$st" = active ]; then
+    break
+  fi
+  sleep 1
+done
 st=$(runuser -u {u} -- systemctl --user is-active threlium-engine.service || true)
 echo "[e2e] SUT threlium-engine.service is-active: ${{st}}"
 test "$st" = active

@@ -25,7 +25,7 @@
 
 ## 1. Что и почему тестируется
 
-**Политика** ([ARCHITECTURE.md §1.3](ARCHITECTURE.md#13-политика-тестирования)): **единственный** автоматизированный pytest-gate — **e2e** в `tests/e2e/` (маркеры `e2e`, `e2e_live`, при необходимости `mailflow`). Отдельных каталогов `tests/unit/` и `tests/integration/` нет. Изоляция параллельных сценариев на общем WireMock — по [E2E_ISOLATION.md](E2E_ISOLATION.md) (State Extension + ``X-Threlium-Route`` + при необходимости ``live_lane``).
+**Политика** ([ARCHITECTURE.md §1.3](ARCHITECTURE.md#13-политика-тестирования)): **единственный** автоматизированный pytest-gate — **e2e** в `tests/e2e/` (маркер `e2e` на все `test_*.py` через collection hook). Отдельных каталогов `tests/unit/` и `tests/integration/` нет. Изоляция параллельных сценариев на общем WireMock — по [E2E_ISOLATION.md](E2E_ISOLATION.md) (State Extension + ``X-Threlium-Route`` + при необходимости ``live_lane``).
 
 **Почему e2e главный:** поведение системы эмерджентно (composite из **`fdm`** + `~/.fdm.conf` (`match` + `pipe` → `notmuch insert... && threlium-dispatch.sh`), `notmuch`, FSM, **RAG-loop внутри** `threlium-engine`, LLM); единица изоляции в проде — связка **submit** `threlium-work@` ↔ долгоживущий **`threlium-engine`** (`threlium.runners.engine`; handler стадии — **in-process** в движке); инварианты оркестрации (`serial-per-thread`, форк треда, fdm `insert && dispatch`, `threlium-sweep@` backstop) надёжнее всего видны при живом `systemd --user` в SUT.
 
@@ -101,7 +101,7 @@ flowchart LR
 
 **Ожидание сервисов — `tenacity`.** Все poll'ы (`wait_for_greenmail_ready`, `wait_for_notmuch_message`, `wait_for_wiremock_ready` и т.д.) реализованы через [`tenacity`](https://tenacity.readthedocs.io/) (`@retry` / `wait_exponential` / `stop_after_delay`) — обёртки `poll_until` (fixed) и `poll_until_backoff` (exponential) в `helpers.py`.
 
-**`site.yml` на живом `sut`.** Сценарные e2e-тесты с маркером `e2e_live` **не** вызывают `ansible-playbook`. Идемпотентный прогон `site.yml` (или ручной деплой) — до прогона сценариев, если работаете с **уже поднятым** стеком без свежего rebake, например `pytest -n0 tests/e2e/wipe_sync.py` или отдельный CI-шаг; **после** `wipe_bake` отдельный `wipe_sync` не нужен (полная выкатка уже в bake — §3). Только код `scripts/threlium` и `prompts/` на уже запущенном SUT без плейбука — см. [FSTS_SYNC.md](FSTS_SYNC.md).
+**`site.yml` на живом `sut`.** Сценарные e2e-тесты **не** вызывают `ansible-playbook`. Идемпотентный прогон `site.yml` (или ручной деплой) — до прогона сценариев, если работаете с **уже поднятым** стеком без свежего rebake, например `pytest -n0 tests/e2e/wipe_sync.py` или отдельный CI-шаг; **после** `wipe_bake` отдельный `wipe_sync` не нужен (полная выкатка уже в bake — §3). Только код `scripts/threlium` и `prompts/` на уже запущенном SUT без плейбука — см. [FSTS_SYNC.md](FSTS_SYNC.md).
 
 **Миграция со старой раскладки.** Baked-образ или данные, собранные до введения каталога `~/threlium/{data,agent}` (например артефакты под `/root/...` или старый `THRELIUM_HOME`), **автоматически не переносятся**. Нужен полный rebake (`pytest -n0 tests/e2e/wipe_bake.py` / ручной bake) либо ручная миграция данных и конфигов на новые пути и повторный прогон плейбука.
 
@@ -122,7 +122,7 @@ flowchart LR
 
 | Команда                                                 | Что происходит                                                                                                                                                                 | Когда                                                             |
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
-| `pytest tests/e2e`                                      | Autouse поднимает или присоединяет shared compose (`compose_stack` в `conftest.py`: при отсутствии координаторов — attach к уже healthy стеку или preflight + `compose up`). Сценарные тесты с ``e2e_live`` ждут уже развёрнутый ``sut`` (часто после ``wipe_sync`` или ручного compose; после свежего ``wipe_bake`` отдельный ``wipe_sync`` не обязателен — §3). | Ежедневная работа, правки FSM / тестов.       |
+| `pytest tests/e2e`                                      | Autouse: session `compose_stack` + per-test `e2e_runtime` (attach к уже healthy стеку; подготовка — `wipe_bake` / `wipe_sync`). | Ежедневная работа, правки FSM / тестов.       |
 | `pytest tests/e2e -n 8`                                 | Параллельный стресс: 8 xdist-воркеров на один shared compose. Проверяет thread-parallel контракт FSM. | Стресс-тест параллельности, CI.                                   |
 | `pytest -n0 tests/e2e/wipe_bake.py`                     | Полный bake образа SUT (полный `site.yml` без `--skip-tags`) + сброс координаторов + `compose down`/`up` + post-up (см. модуль). | Релиз, правки `site.yml` / ролей / apt/pip-зависимостей / bootstrap-образа. |
 | `pytest -n0 tests/e2e/wipe_sync.py`                     | Только harness: `ansible-playbook … --tags refresh` (без полного deploy). | Уже поднятый `sut` без rebake: очистка mail-state + рестарт user-units. **Не** дублирует кодовый sync — для кода см. [FSTS_SYNC.md](FSTS_SYNC.md). |
@@ -150,8 +150,8 @@ flowchart LR
 
 | Фикстура                   | Скоуп     | Что делает                                                                                                                                                                                     |
 | -------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `compose_stack`            | session   | Shared compose: под `FileLock` лидер при необходимости сбрасывает «мёртвые» `ready.flag`/`runtime.json` в стабильном каталоге под `/tmp`, затем либо **attach** к уже healthy стеку (`discover_live_e2e_project_name`), либо prereq-check → preflight cleanup → `ensure_e2e_sut_image_exists` → `DockerCompose.start()` → write `runtime.json` + `ready.flag`. Фолловеры — read `project_name` из JSON. Общий путь: `discover_runtime` → `wait_for_wiremock_ready` (tenacity). Для тестов в `tests/e2e/test_*.py` фикстура подтягивается **autouse**. После `yield` стек **не** гасится (reuse). |
-| `mailflow_processed_stack` | function (`test_mailflow_e2e.py`) | SMTP inject, ожидание IMAP \\Seen и FSM; якоря — ``Message-ID`` и correlation/route (notmuch/GreenMail без subject); ``deployed_stack`` — только live ``project_name``. |
+| `compose_stack` | session | Shared compose (attach-only): journal reset WireMock, `runtime.json`. |
+| `e2e_runtime`   | function (autouse для `test_*.py`) | Per-test: reset WM → pipeline → idle → reset WM; bootstrap-модуль — только `discover_runtime` (reindex — helper в теле теста). |
 
 ### 4.3. Helpers (`tests/e2e/helpers.py`)
 

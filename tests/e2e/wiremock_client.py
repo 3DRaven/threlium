@@ -1093,6 +1093,23 @@ def journal_has_request(
     return False
 
 
+def journal_has_compose_bootstrap_request(
+    public_base: str,
+    *,
+    method: str,
+    url_contains: str,
+    timeout: float = TIMEOUT_POLL_SHORT,
+) -> bool:
+    """Журнал запросов, обслуженных ``compose_bootstrap`` (Matrix ``/sync``, Telegram ``getUpdates``, …)."""
+    return journal_has_request(
+        public_base,
+        stub_tag=THRELIUM_WIREMOCK_COMPOSE_BOOTSTRAP_STUB_TAG,
+        method=method,
+        url_contains=url_contains,
+        timeout=timeout,
+    )
+
+
 def journal_entries_for_stub_tag_with_header(
     public_base: str,
     *,

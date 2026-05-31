@@ -28,14 +28,15 @@ Prereq — **hard failure, не skip**. Отсутствие Linux / Docker daem
 
 **Журнал unmatched** (``GET /__admin/requests/unmatched``): один раз за инвокацию pytest
 (при ``-n N`` — один раз на все воркеры через маркер в session-unique ``tmp_path_factory`` dir)
-выполняется «холодный старт»: остановка user-scope pipeline на SUT,
-:func:`~tests.e2e.helpers.e2e_sut_threlium_user_journal_rotate_and_vacuum` (ротация + vacuum user journald),
-``DELETE /__admin/mappings`` и ``DELETE /__admin/requests``, сброс Store State Extension, очистка Maildir
-(:func:`~tests.e2e.helpers.e2e_flush_sut_fsm_maildirs`), upsert только ``compose_bootstrap/`` и снова
-запуск engine. Триггер — :func:`_e2e_wiremock_journal_reset_once` при первом разрешении session-фикстуры
-``compose_stack`` (после ``wait_for_wiremock_ready``). ``tmp_path_factory.getbasetemp().parent`` уникален
-для каждого запуска pytest (``/tmp/pytest-of-user/pytest-42/`` → ``pytest-43/``), поэтому маркер от
-прерванной/упавшей предыдущей сессии не может «протухнуть» и заблокировать cold reset.
+выполняется сброс журнала WireMock (``DELETE /__admin/requests``) и idempotent upsert
+``compose_bootstrap/`` стабов. Стабы, State-контексты и pipeline **не трогаются** —
+изоляция обеспечивается ``state-matcher`` + ``composite_context_key`` (см.
+``docs/E2E_ISOLATION.md``): каждый тест/запуск генерирует уникальный ``correlation_key``
+(UUID в ``Message-ID``), поэтому стабы, контексты и сообщения **не пересекаются** между
+тестами и между запусками. Стале сообщения из прошлых запусков тихо обрабатываются
+существующими стабами/контекстами и не создают unmatched. Тяжёлая чистка
+(Maildir/notmuch/LightRAG/GreenMail) — только при провижининге стека
+(``wipe_bake.py`` / ``wipe_sync.py``), не при каждом запуске pytest.
 Дальше журнал **не** чистится автоматически — при любых
 несматченных записях падает guard в :func:`pytest_runtest_call` до и после **тела** каждого
 ``tests/e2e/test_*.py`` (глобально по инстансу; без локов на сам хук и без повторного
@@ -84,13 +85,9 @@ from .helpers import (
     e2e_controller_hint_cleanup,
     e2e_controller_hint_read,
     e2e_controller_hint_write,
-    e2e_flush_sut_fsm_maildirs,
-    e2e_flush_greenmail_inboxes,
-    e2e_install_deterministic_knowledge_corpus,
-    e2e_sut_threlium_user_journal_rotate_and_vacuum,
+    e2e_shared_compose_stack_is_healthy,
     e2e_start_threlium_user_pipeline_services,
     e2e_stop_threlium_user_pipeline_services,
-    e2e_shared_compose_stack_is_healthy,
     resolve_e2e_sut_image,
     run_greenmail_host_readiness_probe,
     wait_for_sut_threlium_user_workers_idle,
@@ -99,11 +96,9 @@ from .helpers import (
 from .wiremock_client import (
     assert_wiremock_unmatched_journal_empty,
     assert_wiremock_zero_unmatched_requests,
-    reset_non_bootstrap_wiremock_mappings,
     reset_request_journal,
     upsert_wiremock_compose_bootstrap_stubs,
     wiremock_public_base,
-    wiremock_state_reset_all_contexts,
 )
 
 _ACTIVE_E2E_PROJECT: str | None = None
@@ -123,7 +118,8 @@ _THRELIUM_E2E_SESSION_TMP_DIR = pytest.StashKey[Path]()
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    setup_logging(os.environ.get("THRELIUM_LOG_LEVEL", "DEBUG"))
+    # e2e harness: INFO по умолчанию (DEBUG — только явно через THRELIUM_LOG_LEVEL).
+    setup_logging(os.environ.get("THRELIUM_LOG_LEVEL", "INFO"))
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
@@ -131,7 +127,7 @@ def pytest_unconfigure(config: pytest.Config) -> None:
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Флаг: в прогон попали тесты из ``tests/e2e`` (для session-start WM и sessionfinish State)."""
+    """Auto-mark ``tests/e2e/test_*.py``; флаг sessionfinish для e2e harness."""
     will = False
     for it in items:
         p = getattr(it, "path", None)
@@ -142,7 +138,8 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         except ValueError:
             continue
         will = True
-        break
+        if _e2e_py_file_is_scenario_module(Path(p)) and not it.get_closest_marker("e2e"):
+            it.add_marker(pytest.mark.e2e)
     config._threlium_e2e_will_run = will  # type: ignore[attr-defined]
 
 
@@ -150,7 +147,17 @@ def _e2e_wiremock_journal_reset_once(
     session: pytest.Session,
     session_tmp: Path,
 ) -> None:
-    """Один раз за **инвокацию pytest** (все xdist-процессы): холодный старт SUT + WireMock.
+    """Один раз за **инвокацию pytest** (все xdist-процессы): сброс журнала WireMock.
+
+    Стабы, State-контексты и pipeline **не трогаются**. Изоляция между тестами
+    и между запусками обеспечивается ``state-matcher`` + ``composite_context_key``
+    (см. ``docs/E2E_ISOLATION.md``): каждый запуск генерирует уникальный
+    ``correlation_key`` (UUID в ``Message-ID``), поэтому стабы, контексты и
+    сообщения не пересекаются. Стале сообщения из прошлых запусков тихо
+    обрабатываются существующими стабами/контекстами без unmatched.
+
+    Тяжёлая чистка (Maildir/notmuch/LightRAG/GreenMail/State) — только при
+    провижининге стека (``wipe_bake.py`` / ``wipe_sync.py``).
 
     *session_tmp* уникален на каждый запуск pytest:
 
@@ -158,35 +165,29 @@ def _e2e_wiremock_journal_reset_once(
       (``getbasetemp()`` = ``…/pytest-42/worker-gwN/``).
     - **non-xdist:** ``getbasetemp()`` = ``/tmp/pytest-of-user/pytest-42/`` напрямую.
 
-    Маркер ``e2e_wm_cold_reset.done`` в этой директории физически не может
+    Маркер ``e2e_wm_journal_reset.done`` в этой директории физически не может
     существовать от предыдущей сессии — новый запуск получает ``pytest-43/``.
-    Если предыдущая сессия была прервана (Ctrl+C, OOM), стухший маркер остаётся
-    в старой директории и не мешает новому запуску.
 
     При ``pytest -n N`` xdist-воркеры разделяют один ``session_tmp``
     (``pytest-42/``), поэтому первый воркер, захвативший ``FileLock``, выполняет
-    cold reset и создаёт маркер; остальные видят маркер и пропускают.
+    сброс и создаёт маркер; остальные видят маркер и пропускают.
 
-    Порядок: остановка user-scope pipeline на SUT →
-    :func:`~tests.e2e.helpers.e2e_sut_threlium_user_journal_rotate_and_vacuum` (ротация + vacuum user journal) →
-    :func:`~tests.e2e.wiremock_client.reset_non_bootstrap_wiremock_mappings` (bootstrap стабы остаются) →
-    ``DELETE /__admin/requests`` → :func:`~tests.e2e.wiremock_client.wiremock_state_reset_all_contexts` →
-    flush Maildir → flush GreenMail IMAP inboxes (EXPUNGE ``test@`` + ``pytest@``) →
-    :func:`~tests.e2e.wiremock_client.upsert_wiremock_compose_bootstrap_stubs` (idempotent) →
-    запуск engine + bridges → assert unmatched пуст.
+    Порядок: ``DELETE /__admin/requests`` (журнал) →
+    :func:`~tests.e2e.wiremock_client.upsert_wiremock_compose_bootstrap_stubs`
+    (idempotent PUT по UUID).
     """
     if session.config.stash.get(_THRELIUM_E2E_WM_JOURNAL_RESET_STASH, False):
         return
 
     pn = discover_live_e2e_project_name()
     if not pn or not e2e_shared_compose_stack_is_healthy(pn):
-        log.info("cold_reset_skip", project_name=pn)
+        log.info("journal_reset_skip", project_name=pn)
         return
 
-    marker = session_tmp / "e2e_wm_cold_reset.done"
-    ipc_lock = session_tmp / "e2e_wm_cold_reset.lock"
+    marker = session_tmp / "e2e_wm_journal_reset.done"
+    ipc_lock = session_tmp / "e2e_wm_journal_reset.lock"
     log.debug(
-        "cold_reset_marker",
+        "journal_reset_marker",
         marker_exists=marker.is_file(),
         session_tmp=str(session_tmp),
     )
@@ -197,48 +198,23 @@ def _e2e_wiremock_journal_reset_once(
             return
         try:
             rt = discover_runtime(pn)
-            e2e_stop_threlium_user_pipeline_services(rt)
-            e2e_sut_threlium_user_journal_rotate_and_vacuum(rt)
             wm = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
-            reset_non_bootstrap_wiremock_mappings(wm)
             reset_request_journal(wm)
-            wiremock_state_reset_all_contexts(wm)
-            e2e_flush_sut_fsm_maildirs(rt)
-            e2e_flush_greenmail_inboxes(rt)
-            # Детерминированный bootstrap-корпус (один probe-док) — flush уже стёр lightrag,
-            # engine при старте проиндексирует ровно probe. Постоянно (тестовая среда, без бэкапа).
-            e2e_install_deterministic_knowledge_corpus(rt)
             upsert_wiremock_compose_bootstrap_stubs(wm)
         except Exception as e:
             log.warning(
-                "cold_reset_skipped",
+                "journal_reset_skipped",
                 error=repr(e),
                 detail="will retry after compose if needed",
             )
             return
-        e2e_start_threlium_user_pipeline_services(rt)
-        # GreenMail inboxes expunged above; bridges should start clean.
-        # Wait for any residual workers to settle, then reset WM journal.
-        try:
-            wait_for_sut_threlium_user_workers_idle(
-                rt.project_name, timeout=TIMEOUT_POLL_SHORT,
-            )
-        except Exception as e:
-            # Часто n>0 (остаются threlium-work@* / sweep) при гонке с xdist; до 30 с backoff
-            # без успеха — не блокируем cold reset, но фиксируем в логе (см. journald / list-units на SUT).
-            log.warning("cold_reset_workers_idle_skipped", error=repr(e))
-        reset_request_journal(wm)
-        assert_wiremock_unmatched_journal_empty(
-            wm,
-            phase="e2e pre-run after cold reset (mappings+journal+state+maildir+bootstrap+engine)",
-        )
         try:
             marker.touch()
         except OSError:  # pragma: no cover
             pass
 
     session.config.stash[_THRELIUM_E2E_WM_JOURNAL_RESET_STASH] = True
-    log.info("cold_reset_done")
+    log.info("journal_reset_done")
 
 
 def _e2e_py_file_is_scenario_module(path: Path) -> bool:
@@ -320,55 +296,48 @@ def _compose_prereq_failure_message() -> str | None:
     return None
 
 
-# Раньше «live-only» модули пропускали session cold reset (работали на грязном стеке,
-# полагаясь на ручной wipe_sync). Теперь поведение ЕДИНОЕ: все сценарные модули
-# ``tests/e2e/test_*.py`` проходят через ``compose_stack`` (attach-only) → session cold reset
-# (flush Maildir/notmuch/LightRAG + рестарт зависших user-сервисов + сброс WireMock + bootstrap).
-# Пустой набор = исключений нет. Подъём/запекание — только wipe_bake; синхронизация — wipe_sync.
-_E2E_COMPOSE_AUTOUSE_SKIP_MODULES: frozenset[str] = frozenset()
+# Bootstrap-модуль: ``e2e_runtime`` только discover (reindex — helper из тела теста).
+_E2E_BOOTSTRAP_MODULE = "test_knowledge_bootstrap_live_e2e.py"
 
 
-@pytest.fixture(scope="module")
-def live_e2e_project_name(compose_stack: E2EComposeRuntime) -> str:
-    """Имя healthy compose-проекта на УЖЕ поднятом стеке.
-
-    Зависит от ``compose_stack`` (attach-only), поэтому session cold reset (flush
-    Maildir/notmuch/LightRAG + рестарт user-сервисов + сброс WireMock + bootstrap) уже
-    отработал к моменту инициализации live-фикстур. Подъём/bake — wipe_bake, sync — wipe_sync.
-    """
-    return compose_stack.project_name
+def _e2e_request_is_bootstrap_module(request: pytest.FixtureRequest) -> bool:
+    p = getattr(request.node, "path", None)
+    return p is not None and Path(p).name == _E2E_BOOTSTRAP_MODULE
 
 
-@pytest.fixture(scope="module")
-def live_e2e_stack_ready(live_e2e_project_name: str) -> str:
-    """Live stack с запущенными engine + bridges (после ``sessionfinish`` они могут быть остановлены)."""
+@pytest.fixture(scope="function")
+def e2e_runtime(
+    compose_stack: E2EComposeRuntime,
+    request: pytest.FixtureRequest,
+) -> Generator[E2EComposeRuntime, None, None]:
+    """Per-test runtime: mailflow prep (pipeline + drain) или тихий discover для bootstrap-модуля."""
     global _ACTIVE_E2E_PROJECT
-    _ACTIVE_E2E_PROJECT = live_e2e_project_name
-    os.environ["COMPOSE_PROJECT_NAME"] = live_e2e_project_name
-    rt = discover_runtime(live_e2e_project_name)
+    project_name = compose_stack.project_name
+    _ACTIVE_E2E_PROJECT = project_name
+    os.environ["COMPOSE_PROJECT_NAME"] = project_name
+
+    if _e2e_request_is_bootstrap_module(request):
+        yield discover_runtime(project_name)
+        return
+
+    rt = discover_runtime(project_name)
     wm = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
     reset_request_journal(wm)
     e2e_start_threlium_user_pipeline_services(rt)
-    wait_for_sut_threlium_user_workers_idle(live_e2e_project_name, timeout=120.0)
+    wait_for_sut_threlium_user_workers_idle(project_name, timeout=120.0)
     reset_request_journal(wm)
-    return live_e2e_project_name
+    yield discover_runtime(project_name)
 
 
 @pytest.fixture(autouse=True, scope="function")
-def _e2e_autouse_compose_stack(request: pytest.FixtureRequest) -> None:
-    """Для сценарных модулей ``tests/e2e/test_*.py`` поднимает/присоединяет shared compose один раз на сессию."""
+def _e2e_autouse_runtime(request: pytest.FixtureRequest) -> None:
+    """Для ``tests/e2e/test_*.py``: session ``compose_stack`` + per-test ``e2e_runtime``."""
     p = getattr(request.node, "path", None)
     if p is None:
         return
-    path = Path(p)
-    parts = path.parts
-    if len(parts) < 3 or parts[-2] != "e2e" or parts[-3] != "tests":
+    if not _e2e_py_file_is_scenario_module(Path(p)):
         return
-    if not (path.name.startswith("test_") and path.suffix == ".py"):
-        return
-    if path.name in _E2E_COMPOSE_AUTOUSE_SKIP_MODULES:
-        return
-    request.getfixturevalue("compose_stack")
+    request.getfixturevalue("e2e_runtime")
 
 
 @pytest.fixture(scope="session")
@@ -493,12 +462,6 @@ def compose_stack(request: pytest.FixtureRequest, tmp_path_factory: pytest.TempP
     # No compose down: stack stays up for reuse (policy).
 
 
-@pytest.fixture(scope="module")
-def deployed_stack(compose_stack: E2EComposeRuntime) -> str:
-    """Project name after compose_stack is healthy and WireMock poll passed."""
-    return compose_stack.project_name
-
-
 def _leader_post_up(project_name: str) -> str:
     """Post-compose-up readiness checks run by the leader under FileLock.
 
@@ -577,7 +540,9 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
                 compose_down_project(project_name)
             except Exception as e:  # pragma: no cover
                 log.warning("compose_down_failed", error=repr(e))
-    elif getattr(session.config, "_threlium_e2e_will_run", False):
+    elif getattr(session.config, "_threlium_e2e_will_run", False) and not getattr(
+        session.config.option, "collectonly", False
+    ):
         pn_fin = _ACTIVE_E2E_PROJECT or project_name or discover_live_e2e_project_name()
         if pn_fin and e2e_shared_compose_stack_is_healthy(pn_fin):
             try:
@@ -590,14 +555,15 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
                     E2E_LEAVE_STACK_RUNNING_ENV, ""
                 ).strip().lower() in ("1", "true", "yes", "on")
                 if leave_running:
-                    # Тесты идут последовательно, изоляцию обеспечивает чистка на СТАРТЕ
-                    # (cold reset + prepare_wiremock_scenario). После прогона WireMock-журнал
-                    # и State НЕ трогаем — иначе теряется отладочный контекст упавшего теста
-                    # (запросы/несовпадения/State); pipeline оставляем работать.
+                    # Изоляцию обеспечивает state-matcher + composite_context_key
+                    # (docs/E2E_ISOLATION.md). После прогона WireMock-журнал, State и
+                    # pipeline НЕ трогаем — контексты нужны для обработки стале сообщений
+                    # и для пост-mortem отладки.
                     log.info("wiremock_sessionfinish_left_running")
                 else:
                     # Pipeline останавливаем (освобождаем стек), но журнал/State WireMock
-                    # сохраняем для пост-mortem: следующий старт всё равно делает cold reset.
+                    # сохраняем — контексты обеспечивают изоляцию стале сообщений при
+                    # следующем запуске.
                     e2e_stop_threlium_user_pipeline_services(rt)
                     log.info("wiremock_sessionfinish_pipeline_stopped")
             except Exception as e:  # pragma: no cover
