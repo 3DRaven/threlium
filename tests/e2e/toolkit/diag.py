@@ -13,6 +13,7 @@ from tests.e2e.sut_user_systemd import (
 from .bridges.email import notmuch_id_search_term
 from .constants import (
     E2E_FSM_MAILBOX_STAGE_IDS,
+    E2E_WIREMOCK_CONTAINER_PORT,
     E2E_REMOTE_POSIX_HOME,
     E2E_REMOTE_REPO_PATH,
     E2E_REMOTE_THRELIUM_HOME,

@@ -4,8 +4,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from .bridges.email import notmuch_id_search_term
-from .constants import REPO_ROOT, TIMEOUT_POLL_SHORT
+from .constants import E2E_WIREMOCK_CONTAINER_PORT, REPO_ROOT, TIMEOUT_POLL_SHORT
 from .diag import mailflow_pipeline_diag
+from .poll import poll_until_backoff
+from .runtime import _mapped_port
 
 def wait_for_wiremock_global_unmatched_zero(
     project_name: str,

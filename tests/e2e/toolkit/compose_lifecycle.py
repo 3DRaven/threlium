@@ -20,6 +20,7 @@ from .constants import (
     E2E_COMPOSE_FILE,
     E2E_DEFAULT_SUT_IMAGE,
     E2E_PROJECT,
+    E2E_WIREMOCK_CONTAINER_PORT,
     E2E_REBUILD_BAKED_IMAGE_ENV,
     E2E_SHARED_COMPOSE_SERVICES,
     E2E_SUT_IMAGE_ENV,
@@ -27,7 +28,7 @@ from .constants import (
     TIMEOUT_ANSIBLE_PLAYBOOK,
     TIMEOUT_POLL_SHORT,
 )
-from .poll import _diag
+from .poll import _diag, poll_until
 from .runtime import (
     E2EComposeRuntime,
     _compose_container,
