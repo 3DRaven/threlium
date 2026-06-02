@@ -20,9 +20,15 @@ from threlium.runners.lightrag._lifecycle import (
     start_rag_loop_thread,
     stop_rag_loop_thread,
 )
+from threlium.runners.lightrag.aquery import (
+    build_lightrag_query_param,
+    run_lightrag_aquery,
+)
 
 __all__ = [
+    "build_lightrag_query_param",
     "daemon_lightrag",
+    "run_lightrag_aquery",
     "run_rag_coroutine",
     "schedule_bootstrap_knowledge",
     "schedule_index_pending",

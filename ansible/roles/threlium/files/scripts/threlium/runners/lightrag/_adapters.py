@@ -8,7 +8,8 @@ import jsonschema
 import numpy as np
 from litellm.types.utils import Embedding
 
-from threlium.litellm_client import litellm_acompletion, litellm_aembedding, litellm_arerank
+from threlium.litellm_client import litellm_aembedding, litellm_arerank
+from threlium.litellm_required_tool import ainvoke_with_bridge_retries, build_site_call
 from threlium.litellm_tool_completion import acompletion_required_tool
 from threlium.litellm_tool_response import LiteLlmToolResponseError
 from threlium.litellm_tool_spec import load_tool_spec
@@ -21,7 +22,6 @@ from threlium.settings import (
 )
 from threlium.types import (
     LitellmCallSite,
-    LiteLlmAcompletionKwargs,
     LiteLlmArerankKwargs,
     LiteLlmAembeddingKwargs,
     LiteLlmChatMessage,
@@ -56,8 +56,7 @@ def build_llm_func(
     chat_template_kwargs: dict[str, Any] | None = None,
 ) -> Callable[..., Awaitable[str]]:
     closure_max_tokens = llm_ep.max_tokens
-    closure_ctk = chat_template_kwargs
-    llm_timeout = float(llm_ep.timeout)
+    closure_ctk = chat_template_kwargs or llm_ep.chat_template_kwargs or None
 
     async def llm_func(
         prompt: str,
@@ -122,58 +121,53 @@ def build_llm_func(
         tool_spec = load_tool_spec(phase.tool_spec_path)
         tools = [tool_spec]
 
-        mr = llm_ep.max_retries if llm_ep.max_retries is not None else default_max_retries
-        call = LiteLlmAcompletionKwargs(
-            model=llm_ep.model,
-            messages=litellm_messages,
-            timeout=llm_timeout,
-            max_retries=mr,
-            api_key=llm_ep.api_key,
-            api_base=llm_ep.api_base,
+        call = build_site_call(
+            settings,
+            None,
+            litellm_messages,
+            endpoint=llm_ep,
             max_tokens=effective_max,
             chat_template_kwargs=closure_ctk,
         )
 
-        last_bridge_error: BaseException | None = None
-        for bridge_attempt in range(_MAX_LIGHTRAG_TOOL_BRIDGE_RETRIES + 1):
-            try:
-                resp = await acompletion_required_tool(
-                    settings=settings,
-                    call=call,
-                    tools=tools,
-                    correlation_override=correlation,
-                )
-                msg_obj = resp.choices[0].message
-                if msg_obj is None:
-                    raise RuntimeError("LightRAG LLM bridge: empty assistant message")
+        async def _attempt() -> str:
+            resp = await acompletion_required_tool(
+                settings=settings,
+                call=call,
+                tools=tools,
+                correlation_override=correlation,
+            )
+            msg_obj = resp.choices[0].message
+            if msg_obj is None:
+                raise RuntimeError("LightRAG LLM bridge: empty assistant message")
+            args_struct = parse_tool_call_for_phase(msg_obj, phase)
+            wire = struct_to_lightrag_wire(phase, args_struct)
+            result = to_lightrag_return_value(wire)
+            log.debug(
+                "lightrag_tool_call",
+                phase=phase.call_site.value,
+                tool_name=phase.tool_name.value,
+            )
+            return result
 
-                args_struct = parse_tool_call_for_phase(msg_obj, phase)
-                wire = struct_to_lightrag_wire(phase, args_struct)
-                result = to_lightrag_return_value(wire)
+        def _on_retry(attempt_no: int, exc: BaseException) -> None:
+            log.warning(
+                "lightrag_tool_bridge_retry",
+                attempt=attempt_no,
+                call_site=call_site_wire,
+                error=str(exc),
+            )
 
-                log.debug(
-                    "lightrag_tool_call",
-                    phase=phase.call_site.value,
-                    tool_name=phase.tool_name.value,
-                )
-                return result
-            except (
+        return await ainvoke_with_bridge_retries(
+            max_attempts=_MAX_LIGHTRAG_TOOL_BRIDGE_RETRIES + 1,
+            attempt=_attempt,
+            retry_errors=(
                 LiteLlmToolResponseError,
                 LightragToolBridgeError,
                 jsonschema.ValidationError,
-            ) as exc:
-                last_bridge_error = exc
-                if bridge_attempt >= _MAX_LIGHTRAG_TOOL_BRIDGE_RETRIES:
-                    raise
-                log.warning(
-                    "lightrag_tool_bridge_retry",
-                    attempt=bridge_attempt + 1,
-                    call_site=call_site_wire,
-                    error=str(exc),
-                )
-        if last_bridge_error is not None:
-            raise last_bridge_error
-        raise RuntimeError("LightRAG LLM bridge: unreachable retry loop exit")
+            ),
+            on_retry=_on_retry,
+        )
 
     return llm_func
 

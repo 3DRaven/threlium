@@ -12,11 +12,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import itertools
-import logging
 import time
 from collections.abc import Iterator, Sequence
 from email.message import EmailMessage
 
+from threlium.logutil import logger
 from threlium.mail import serialize_rfc822_for_wire
 from threlium.mime_reform import EnrichContentId, _make_inline_text_part
 from pathlib import Path
@@ -28,7 +28,7 @@ from threlium.systemd_notify import notify_status
 from threlium.types.lightrag_document_header import LightragDocumentHeader
 from threlium.types.systemd_status import SystemdStatusBody
 
-log = logging.getLogger(__name__)
+log = logger.bind(component="lightrag_bootstrap")
 
 _ALLOWED_SUFFIXES = frozenset((".md", ".txt", ".ttl", ".json", ".yaml", ".yml"))
 

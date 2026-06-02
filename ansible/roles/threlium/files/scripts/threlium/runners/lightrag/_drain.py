@@ -33,6 +33,7 @@ from threlium.types import (
     FsmStage,
     LightragDrainSkipReason,
     LitellmCallSite,
+    LitellmCorrelationSnapshot,
     LitellmRoutingSite,
     MailHeaderName,
     NotmuchMessageIdInner,
@@ -41,7 +42,6 @@ from threlium.types import (
     NotmuchTag,
     NotmuchThreadScopeId,
 )
-from threlium.types.litellm_correlation_header import LitellmCorrelationHeader
 from threlium.types.systemd_status import SystemdStatusBody
 
 log = logger.bind(stage="lightrag")
@@ -98,16 +98,15 @@ async def _ainsert_with_correlation(
         corr = build_litellm_correlation_headers_from_notmuch(
             db, nm_msg, call_site=LitellmCallSite.LIGHTRAG_INDEX
         )
-    route_v = corr.get(MailHeaderName.ROUTE.value)
-    rt = route_v if isinstance(route_v, str) else None
+    snap = LitellmCorrelationSnapshot.from_mapping(corr)
     log.debug(
         "drain_e2e_ainsert",
         batch_size=len(ids),
-        route_tail=e2e_route_wire_tail(rt),
-        call_site=corr.get(LitellmCorrelationHeader.CALL_SITE.value),
+        route_tail=e2e_route_wire_tail(snap.route_wire),
+        call_site=snap.call_site,
         first_mid=ids[0],
     )
-    token = set_litellm_correlation_ctxvar(corr)
+    token = set_litellm_correlation_ctxvar(snap.as_dict())
     try:
         t0 = time.monotonic()
         await rag.ainsert(texts, ids=ids, file_paths=file_paths)

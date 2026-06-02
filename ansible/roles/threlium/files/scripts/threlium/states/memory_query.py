@@ -5,12 +5,13 @@
 """
 from email.message import EmailMessage
 
-from threlium.fsm_emit import build_fsm_step_to_stage
+from threlium.fsm_emit_semantic import emit_to_enrich_fast
 from threlium.knowledge_fsm import parse_memory_query_payload
 from threlium.litellm_route_context import get_litellm_http_correlation
 from threlium.mime_reform import system_part_text
 from threlium.prompts import render_prompt
-from threlium.runners.lightrag import daemon_lightrag, run_rag_coroutine
+
+from threlium.runners.lightrag.aquery import build_lightrag_query_param, run_lightrag_aquery
 from threlium.settings import ThreliumSettings
 from threlium.types import FsmStage, LitellmCallSite, PromptPath
 from threlium.types.litellm_correlation_header import LitellmCorrelationHeader
@@ -23,10 +24,6 @@ def main(
     if payload is None:
         raise RuntimeError("memory_query: invalid payload")
 
-    rag = daemon_lightrag()
-    if rag is None:
-        raise RuntimeError("memory_query: LightRAG not ready")
-
     rag_correlation: dict[str, str] | None = None
     if config.e2e.litellm_route_correlation:
         snap = get_litellm_http_correlation()
@@ -36,13 +33,13 @@ def main(
                 LitellmCallSite.LIGHTRAG_QUERY.value
             )
 
-    from lightrag import QueryParam
-
-    query_param = QueryParam(mode="hybrid", top_k=config.lightrag.query_top_k)
-    result = run_rag_coroutine(
-        rag.aquery(payload.query, param=query_param),
+    query_param = build_lightrag_query_param(config)
+    result = run_lightrag_aquery(
+        payload.query,
         settings=config,
         correlation=rag_correlation,
+        param=query_param,
+        query_api=config.lightrag.query_api,
     )
 
     answer = str(result) if result else ""
@@ -60,10 +57,9 @@ def main(
     # предштампом origin=reasoning) и ОТВЕТ (observation: RAG-результат, origin=memory_query).
     # Иначе сама формулировка запроса терялась бы из истории (reasoning шлёт её только в
     # <system>). Разные тела → разные <hash@history>.
-    return build_fsm_step_to_stage(
+    return emit_to_enrich_fast(
         msg,
-        to_addr=FsmStage.ENRICH_FAST,
-        from_stage=stage,
+        stage,
         history=observation,
         request_echo=payload.query,
         settings=config,
