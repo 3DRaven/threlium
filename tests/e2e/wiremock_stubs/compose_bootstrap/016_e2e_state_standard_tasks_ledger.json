@@ -1,0 +1,28 @@
+{
+  "id": "c4e8f2a1-9b3d-4f6e-a7c2-1d5e8f0a3b6c",
+  "request": {
+    "method": "POST",
+    "urlPath": "/__threlium/e2e/state/standard_tasks_ledger"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "ok": true,
+      "context": "{{jsonPath request.body '$.correlation_key'}}"
+    }
+  },
+  "serveEventListeners": [
+    {
+      "name": "recordState",
+      "parameters": {
+        "context": "{{jsonPath request.body '$.correlation_key'}}",
+        "state": {
+          "phase_standard_tasks_ledger": "1"
+        }
+      }
+    }
+  ]
+}

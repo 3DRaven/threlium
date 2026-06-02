@@ -16,9 +16,6 @@
       },
       {
         "contains": "\"tools\""
-      },
-      {
-        "contains": "E2E-RESP-FIN-MODE3-MARKER"
       }
     ],
     "customMatcher": {

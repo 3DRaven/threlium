@@ -49,7 +49,7 @@
                 "type": "function",
                 "function": {
                   "name": "tasks_upsert",
-                  "arguments": "{\"reasoning\": \"e2e: record task completion before finalize\",\"new_subtasks\": [{\"text\": \"Complete the user request\",\"status\": \"done\"}]}"
+                  "arguments": "{\"reasoning\": \"e2e: close enrich_task_plan seed before finalize\",\"new_subtasks\": [{\"text\": \"Summarize the user request for the mailflow smoke\",\"status\": \"done\"},{\"text\": \"Complete the user request\",\"status\": \"done\"}]}"
                 }
               }
             ]

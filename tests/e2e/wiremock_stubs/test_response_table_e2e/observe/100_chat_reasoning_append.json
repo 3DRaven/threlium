@@ -16,9 +16,6 @@
       },
       {
         "contains": "\"tools\""
-      },
-      {
-        "contains": "E2E-RESP-OBSERVE-MARKER"
       }
     ],
     "customMatcher": {
