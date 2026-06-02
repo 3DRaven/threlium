@@ -1,6 +1,7 @@
 """Mailflow scenario DSL: inject, assert, RAG warmup."""
 from __future__ import annotations
 
+import contextlib
 import time
 import uuid
 from collections.abc import Iterator
@@ -14,8 +15,9 @@ from .bridges.email import (
     email_ingress_notmuch_id_inner,
     e2e_thread_root_mid_for_message_id,
 )
-from .constants import E2E_SUT_NOTMUCH_BASH_EXPORT, REPO_ROOT, TIMEOUT_POLL_SHORT
+from .constants import E2E_SUT_NOTMUCH_BASH_EXPORT, REPO_ROOT, TIMEOUT_POLL_LIVE_MAIL, TIMEOUT_POLL_SHORT
 from .diag import (
+    mailflow_fsm_maildir_systemd_snapshot,
     mailflow_pipeline_diag,
     mailflow_wait_fsm_maildir_activity,
     reset_maildrop_debug_log,
@@ -46,7 +48,7 @@ from .greenmail import (
     wait_for_greenmail_inbox_message_gone_host,
     wait_for_greenmail_user_reply,
 )
-from .poll import mailflow_log_phase, poll_until
+from .poll import mailflow_diag_block, mailflow_log_phase, poll_until
 from .runtime import E2EComposeRuntime, discover_runtime, service_exec
 from .smtp_ingress import smtp_inject_inbound
 
@@ -187,6 +189,7 @@ def _inject_rag_warmup(
     mailflow_log_phase(f"{label}: rag warmup indexed in vectordb")
 
 
+@contextlib.contextmanager
 def mailflow_inject_and_wait(
     spec: MailflowScenarioSpec,
     project_name: str,

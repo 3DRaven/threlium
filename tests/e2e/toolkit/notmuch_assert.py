@@ -1,7 +1,12 @@
 """Notmuch remote asserts on SUT."""
 from __future__ import annotations
 
+import json
+import shlex
 from pathlib import Path
+from typing import Any, Sequence
+
+from threlium.types import NotmuchTag
 
 from .bridges.email import notmuch_id_search_term
 from .constants import (
@@ -13,6 +18,7 @@ from .constants import (
     REPO_ROOT,
     TIMEOUT_POLL_SHORT,
 )
+from .diag import mailflow_pipeline_diag
 from .poll import poll_until, poll_until_backoff
 from .remote_boot import REMOTE_PROBE_LOGGER_BOOT
 from .runtime import service_exec
@@ -183,7 +189,7 @@ def _first_thread(raw: str) -> str:
         tid = ""
     if not tid:
         return ""
-    return tid if tid.startswith("thread:") else f"thread:{tid}"
+    return tid if tid.startswith("thread:") else f"thread:{{tid}}"
 p = subprocess.run(
     ["notmuch", "search", "--limit=1", "--output=threads", "--format=json", id_q],
     capture_output=True,
@@ -288,7 +294,7 @@ def _first_thread(raw: str) -> str:
         tid = ""
     if not tid:
         return ""
-    return tid if tid.startswith("thread:") else f"thread:{tid}"
+    return tid if tid.startswith("thread:") else f"thread:{{tid}}"
 p = subprocess.run(
     ["notmuch", "search", "--limit=1", "--output=threads", "--format=json", id_q],
     capture_output=True,
@@ -384,7 +390,7 @@ def _first_thread(raw: str) -> str:
         tid = ""
     if not tid:
         return ""
-    return tid if tid.startswith("thread:") else f"thread:{tid}"
+    return tid if tid.startswith("thread:") else f"thread:{{tid}}"
 p = subprocess.run(
     ["notmuch", "search", "--limit=1", "--output=threads", "--format=json", id_q],
     capture_output=True,

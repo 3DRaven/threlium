@@ -1,18 +1,27 @@
 """SUT / GreenMail cleanup between scenarios."""
 from __future__ import annotations
 
+import imaplib
 import json
+import os
 import re
 import shlex
 import time
 
 from tests.e2e.log import log
+from tests.e2e.sut_user_systemd import E2E_THRELIUM_USER
 
+from .bridges.email import notmuch_id_search_term
 from .constants import (
+    E2E_FETCHMAIL_PASS,
+    E2E_FETCHMAIL_USER,
+    E2E_GREENMAIL_REPLY_USER,
+    E2E_IMAP_PROCESSED_FOLDER,
     E2E_REMOTE_POSIX_HOME,
     E2E_REMOTE_THRELIUM_HOME,
     E2E_SUT_NOTMUCH_BASH_EXPORT,
     THRELIUM_E2E_SKIP_SUT_MAILDIR_FLUSH_ENV,
+    TIMEOUT_POLL_SHORT,
     _MATRIX_E2E_STUB_TAGS,
     _STUB_TAG_TO_PREFIXES,
 )

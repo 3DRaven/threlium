@@ -1,6 +1,7 @@
 """SUT user systemd pipeline stop/start."""
 from __future__ import annotations
 
+from tests.e2e.log import clip_log_body, log
 from tests.e2e.sut_user_systemd import (
     e2e_start_threlium_user_pipeline_bash,
     e2e_stop_threlium_user_pipeline_bash,

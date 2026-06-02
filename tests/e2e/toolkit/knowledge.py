@@ -2,12 +2,28 @@
 from __future__ import annotations
 
 import os
+import shlex
 import time
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
-from .constants import E2E_REMOTE_REPO_PATH, REPO_ROOT, TIMEOUT_POLL_SHORT
+from tests.e2e.log import log
+from tests.e2e.sut_user_systemd import E2E_THRELIUM_USER
+
+from .constants import (
+    E2E_BOOTSTRAP_THREAD_ROOT,
+    E2E_KNOWLEDGE_PROBE_FILENAME,
+    E2E_REMOTE_REPO_PATH,
+    E2E_REMOTE_THRELIUM_HOME,
+    REPO_ROOT,
+    TIMEOUT_POLL_SHORT,
+    _E2E_KNOWLEDGE_PROBE_CONTENT,
+    _E2E_LIGHTRAG_DOC_STATUS,
+)
+from .poll import poll_until
+from .pipeline import e2e_start_threlium_user_pipeline_services
 from .runtime import E2EComposeRuntime, service_exec
 
 def e2e_install_deterministic_knowledge_corpus(rt: E2EComposeRuntime) -> None:

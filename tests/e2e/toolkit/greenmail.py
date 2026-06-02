@@ -5,14 +5,22 @@ import email
 import imaplib
 import re
 import shlex
+import smtplib
 import time
+import uuid
 from email.header import decode_header
 from email.message import EmailMessage
+from pathlib import Path
 from typing import Any
 
 from tests.e2e.log import clip_log_body, log
+from tests.e2e.mail_wire import e2e_parse_rfc822, e2e_smtp_send
 
-from .bridges.email import notmuch_id_search_term, rfc_first_message_id_in_in_reply_to_header
+from .bridges.email import (
+    e2e_thread_root_mid_for_message_id,
+    notmuch_id_search_term,
+    rfc_first_message_id_in_in_reply_to_header,
+)
 from .constants import (
     E2E_FETCHMAIL_PASS,
     E2E_FETCHMAIL_USER,
@@ -22,10 +30,12 @@ from .constants import (
     E2E_REPLY_BODY,
     E2E_REPLY_BODY_SNIPPET,
     E2E_REPLY_SUBJECT,
+    REPO_ROOT,
     TIMEOUT_POLL_SHORT,
 )
 from .poll import poll_until, poll_until_backoff
-from .runtime import service_exec, _compose_container
+from .remote_boot import REMOTE_PROBE_LOGGER_BOOT, REMOTE_RFC822_PARSER_BOOT
+from .runtime import _compose_container, _mapped_port, discover_runtime, service_exec
 
 def _decoded_email_subject(msg: Any) -> str:
     """Subject из заголовка письма в виде строки (RFC 2047 decode)."""
@@ -370,7 +380,7 @@ def wait_for_greenmail_inbox_message(
             "    if not isinstance(cell, tuple) or len(cell) < 2: continue\n"
             "    hdr = cell[1]\n"
             "    if not isinstance(hdr, (bytes, bytearray)): continue\n"
-            + _E2E_REMOTE_RFC822_PARSER_BOOT
+            + REMOTE_RFC822_PARSER_BOOT
             + "    msg = parse_rfc822(hdr)\n"
             f"    {mid_check}"
             f"    {subj_check}"
@@ -463,7 +473,7 @@ def wait_for_greenmail_inbox_message_gone(
             "    if not isinstance(cell, tuple) or len(cell) < 2: continue\n"
             "    hdr = cell[1]\n"
             "    if not isinstance(hdr, (bytes, bytearray)): continue\n"
-            + _E2E_REMOTE_RFC822_PARSER_BOOT
+            + REMOTE_RFC822_PARSER_BOOT
             + "    msg = parse_rfc822(hdr)\n"
             f"    {mid_check}"
             f"    {subj_check}"
@@ -578,7 +588,7 @@ def wait_for_greenmail_user_reply(
     py_body = f"""import imaplib
 import re
 import sys
-{REMOTE_PROBE_LOGGER_BOOT}{_E2E_REMOTE_RFC822_PARSER_BOOT}from email.header import decode_header
+{REMOTE_PROBE_LOGGER_BOOT}{REMOTE_RFC822_PARSER_BOOT}from email.header import decode_header
 
 def _decode_subject(raw: str) -> str:
     if not raw:

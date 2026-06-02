@@ -4,7 +4,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from tests.e2e.log import clip_log_body, log
-from tests.e2e.sut_user_systemd import e2e_sut_threlium_user_workers_stall_diag_bash
+from tests.e2e.sut_user_systemd import (
+    e2e_sut_threlium_user_workers_idle_probe_bash,
+    e2e_sut_threlium_user_workers_stall_diag_bash,
+)
 
 from .constants import REPO_ROOT, TIMEOUT_POLL_SHORT
 from .poll import poll_until_backoff

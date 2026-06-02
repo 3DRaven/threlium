@@ -1,9 +1,14 @@
 """IMAP processed-folder / email bridge checkpoint."""
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 
-from .constants import TIMEOUT_POLL_SHORT
+from threlium.types import EmailIngressRoute, IngressRouteB62Wire
+
+from .bridges.email import notmuch_id_search_term
+from .constants import E2E_SUT_NOTMUCH_BASH_EXPORT, REPO_ROOT, TIMEOUT_POLL_SHORT
+from .diag import _notmuch_mbox_show_route_b62_for_message
 from .runtime import service_exec
 
 def email_ingress_imap_checkpoint_from_notmuch(

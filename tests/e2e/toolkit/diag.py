@@ -2,13 +2,19 @@
 from __future__ import annotations
 
 import subprocess
+import re
+from collections.abc import Iterator
+from email.message import EmailMessage
 from pathlib import Path
 
+from tests.e2e.mail_wire import e2e_parse_rfc822
 from tests.e2e.sut_user_systemd import (
     E2E_SUT_THRELIUM_USER_UNIT_JOURNAL,
     E2E_THRELIUM_USER,
     e2e_threlium_user_unit_journalctl_bash,
 )
+
+from threlium.types import NotmuchMessageIdInner, RfcMessageIdWire
 
 from .bridges.email import notmuch_id_search_term
 from .constants import (
@@ -306,7 +312,7 @@ def _first_thread(raw: str) -> str:
         tid = ""
     if not tid:
         return ""
-    return tid if tid.startswith("thread:") else f"thread:{tid}"
+    return tid if tid.startswith("thread:") else f"thread:{{tid}}"
 p = subprocess.run(
     ["notmuch", "search", "--limit=30", "--output=files", "--format=json", id_q],
     capture_output=True,

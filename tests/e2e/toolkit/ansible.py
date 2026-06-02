@@ -1,12 +1,21 @@
 """Ansible site playbook runner for e2e."""
 from __future__ import annotations
 
+import json
 import os
+import shutil
 import subprocess
+import sys
+import tempfile
+import time
 from pathlib import Path
+from typing import Any
 
 from tests.e2e.log import log
-from tests.e2e.sut_user_systemd import e2e_patch_hop_budget_in_threlium_yaml_bash
+from tests.e2e.sut_user_systemd import (
+    e2e_patch_hop_budget_in_threlium_yaml_bash,
+    e2e_restart_threlium_engine_bash,
+)
 
 from .constants import (
     E2E_ANSIBLE_CONFIG_NAME,
@@ -15,8 +24,12 @@ from .constants import (
     E2E_REMOTE_THRELIUM_HOME,
     REPO_ROOT,
     TIMEOUT_ANSIBLE_PLAYBOOK,
+    TIMEOUT_POLL_SHORT,
+    _E2E_DEFAULT_HOP_BUDGET,
 )
-from .runtime import service_exec
+from .diag import dump_failure_artifacts
+from .poll import _diag
+from .runtime import _compose_container, service_exec
 
 def ensure_e2e_ansible_collections(*, repo_root: Path | None = None) -> None:
     """Ставит Galaxy-коллекции для e2e.
