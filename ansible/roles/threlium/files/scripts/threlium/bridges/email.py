@@ -54,11 +54,13 @@ from threlium.logutil import logger
 from threlium.mail import canonicalize_mime, imap_fetch_rfc822_bytes, parse_rfc822
 from threlium.mime_reform import ingress_raw_email_capture
 from threlium.bridges import attach_raw_ingress_capture
+from threlium.bridges.checkpoint import latest_route_checkpoint
 from threlium.systemd_notify import notify_status
 from threlium.types.systemd_status import SystemdStatusBody
 from threlium.settings import ThreliumSettings
 from threlium.types import (
     BridgeEmailSubjectLine,
+    BridgeIngressChannel,
     EmailIngressRoute,
     EmailNativeId,
     ExternalRfcMidWire,
@@ -67,8 +69,6 @@ from threlium.types import (
     IrtHashWire,
     NotmuchBridgeFromLocalhost,
     NotmuchMessageIdInner,
-    NotmuchQueryConnective,
-    NotmuchTag,
     RfcInReplyToWire,
     RfcMessageIdWire,
     RfcReferencesWire,
@@ -182,13 +182,6 @@ def _origin_address(msg: EmailMessage) -> str:
     return addrs[0]
 
 
-def _first_angle_inner(s: str) -> str:
-    s = str(s).strip()
-    if s.startswith("<") and ">" in s:
-        return s[1 : s.index(">")].strip()
-    return s.strip("<>")
-
-
 def _bridge_email_native_from_angle_inner(inner: str) -> EmailNativeId:
     """Email bridge→FSM: ``EmailNativeId(v=1)`` из inner угловых скобок (MESSAGES §2, email)."""
     s = str(inner).strip()
@@ -218,7 +211,7 @@ def _build_canonical(
     mid_w = RfcMessageIdWire.parse_present_from_email(msg, _HDR.MESSAGE_ID)
     if mid_w is None:
         raise ValueError("incoming email has no Message-ID")
-    prev_inner = mid_w.value.strip("<>")
+    prev_inner = NotmuchMessageIdInner.from_present_wire(mid_w).value
 
     wire_mid = _bridge_wire_from_angle_inner(prev_inner).value
 
@@ -255,7 +248,7 @@ def _build_canonical(
 
     reply_tgt = ExternalRfcMidWire.parse_optional(mid_w.value)
     route_struct = EmailIngressRoute(
-        channel="email",
+        channel=BridgeIngressChannel.EMAIL,
         origin=origin,
         reply_target_rfc_message_id=reply_tgt,
         imap_uid=imap_uid,
@@ -275,9 +268,8 @@ def _build_canonical(
     if refs_canon.value.strip():
         out[_HDR.REFERENCES] = refs_canon.value
     if irt_w is not None:
-        irt_val = _bridge_wire_from_angle_inner(
-            _first_angle_inner(irt_w.value)
-        ).value
+        irt_inner = NotmuchMessageIdInner.from_present_mid_header_wire(irt_w).value
+        irt_val = _bridge_wire_from_angle_inner(irt_inner).value
         out[_HDR.IN_REPLY_TO] = irt_val
         out[_HDR.IRT_HASH] = IrtHashWire.from_irt_header_value(irt_val).value
 
@@ -335,43 +327,19 @@ def _imap_rfc822_by_uid(
     )
 
 
-def _parse_email_routing(route_wire: IngressRouteB62Wire | None) -> EmailIngressRoute:
-    """Wire ``X-Threlium-Route`` → ``EmailIngressRoute`` (строго: нет wire / не email → ошибка FSM)."""
-    r = IngressRouteB62Wire.parse_route_from_optional_header(route_wire)
-    if r is None:
-        raise RuntimeError(
-            "FSM-инвариант: письмо из выборки notmuch с X-Threlium-Route "
-            "не содержит непустого заголовка X-Threlium-Route"
-        )
-    if not isinstance(r, EmailIngressRoute):
-        raise RuntimeError(
-            f"FSM-инвариант: ожидался EmailIngressRoute, получен {type(r).__name__} (channel={r.channel!r})"
-        )
-    return r
-
-
 def _max_imap_checkpoint_from_notmuch() -> tuple[int | None, int]:
-    """``(imap_uidvalidity, imap_uid)`` из новейшего ``tag:route from:email`` письма с непустым uid.
+    """``(imap_uidvalidity, imap_uid)`` из newest ``from:email`` с непустым uid."""
+    def _pick(route: EmailIngressRoute) -> tuple[int | None, int] | None:
+        if route.imap_uid is None:
+            return None
+        return route.imap_uidvalidity, int(route.imap_uid)
 
-    Аналог ``telegram._max_update_id`` / ``matrix._sync_since_from_index``. Исходящие письма
-    агента (egress) и legacy без ``imap_uid`` пропускаются; пустой результат → ``(None, 0)``.
-    """
-    q = NotmuchQueryConnective.join_and(
-        NotmuchTag.ROUTE.as_tag_query_term(),
-        NotmuchBridgeFromLocalhost.EMAIL.as_from_query_term(),
+    picked = latest_route_checkpoint(
+        NotmuchBridgeFromLocalhost.EMAIL,
+        EmailIngressRoute,
+        _pick,
     )
-    with nm.notmuch_database(write=False) as db:
-        for nm_msg in db.messages(q, sort=notmuch2.Database.SORT.NEWEST_FIRST):
-            route_w = IngressRouteB62Wire.parse_present_from_nm_message(
-                nm_msg, MailHeaderName.ROUTE.value
-            )
-            if route_w is None:
-                continue
-            r = _parse_email_routing(route_w)
-            if r.imap_uid is None:
-                continue
-            return r.imap_uidvalidity, int(r.imap_uid)
-    return None, 0
+    return picked if picked is not None else (None, 0)
 
 
 def _folder_uidvalidity(mailbox: BaseMailBox) -> int:
@@ -406,9 +374,7 @@ def _incoming_inner_mid(head: EmailMessage, uid: ImapFolderUid) -> str:
     mid_w = RfcMessageIdWire.parse_present_from_email(head, _HDR.MESSAGE_ID)
     if mid_w is None:
         raise RuntimeError(f"FSM-инвариант: UID {uid_s} без Message-ID")
-    prev_inner = mid_w.value.strip("<>")
-    if not prev_inner:
-        raise RuntimeError(f"FSM-инвариант: UID {uid_s} с пустым Message-ID")
+    prev_inner = NotmuchMessageIdInner.from_present_wire(mid_w).value
     return prev_inner
 
 
@@ -422,7 +388,9 @@ def _incoming_canonical_irt_inner(head: EmailMessage) -> NotmuchMessageIdInner |
     irt_w = RfcInReplyToWire.parse_present_from_email(head, _HDR.IN_REPLY_TO)
     if irt_w is None:
         return None
-    canon_mid = _bridge_wire_from_angle_inner(_first_angle_inner(irt_w.value))
+    canon_mid = _bridge_wire_from_angle_inner(
+        NotmuchMessageIdInner.from_present_mid_header_wire(irt_w).value
+    )
     return NotmuchMessageIdInner.from_present_wire(canon_mid)
 
 

@@ -12,6 +12,7 @@ from email.utils import formatdate
 
 from threlium.fsm_emit import HDR_ROUTE
 from threlium.types import (
+    BridgeIngressChannel,
     IngressRoute,
     IngressRouteB62Wire,
     IrtHashWire,
@@ -43,15 +44,10 @@ def _bridge_in_reply_to_header_value(v: BridgeInReplyTo) -> str | None:
         return None
     if isinstance(v, NotmuchMessageIdInner):
         return v.as_angle_bracket_header()
-    s = v.value.strip()
-    if not s:
+    inner = NotmuchMessageIdInner.from_optional_raw(v.value)
+    if inner is None:
         return None
-    if not (s.startswith("<") and s.endswith(">")):
-        inner = s.strip("<>")
-        if not inner:
-            return None
-        return f"<{inner}>"
-    return s
+    return inner.as_angle_bracket_header()
 
 
 def attach_raw_ingress_capture(msg: EmailMessage, raw_capture: str) -> None:
@@ -67,10 +63,10 @@ def attach_raw_ingress_capture(msg: EmailMessage, raw_capture: str) -> None:
 
 def build_bridge_ingress_email(
     *,
-    channel: str,
+    channel: BridgeIngressChannel,
     body: str,
     route: IngressRoute,
-    message_id: str,
+    message_id: RfcMessageIdWire,
     in_reply_to: BridgeInReplyTo = None,
     subject: RfcSubjectWire | None = None,
     raw_capture: str | None = None,
@@ -83,10 +79,13 @@ def build_bridge_ingress_email(
     """
     msg = EmailMessage()
     route_wire = IngressRouteB62Wire.from_ingress_route(route).value
-    msg[_HDR.FROM] = f"{channel}@localhost"
+    msg[_HDR.FROM] = f"{channel.value}@localhost"
     msg[_HDR.TO] = "ingress@localhost"
     msg[_HDR.DATE] = formatdate(localtime=True)
-    msg[_HDR.MESSAGE_ID] = message_id
+    mid_wire = message_id
+    if not mid_wire.value.strip():
+        raise ValueError("build_bridge_ingress_email: empty message_id")
+    msg[_HDR.MESSAGE_ID] = mid_wire.value
     if subject is not None:
         msg[_HDR.SUBJECT] = subject.value
     irt = _bridge_in_reply_to_header_value(in_reply_to)

@@ -23,6 +23,8 @@ from telegram import Bot as TelegramBot, Message, ReplyParameters  # type: ignor
 
 import threlium.nm as nm
 from threlium.bridges import BridgeInReplyTo, build_bridge_ingress_email
+from threlium.bridges.checkpoint import latest_route_checkpoint
+from threlium.bridges.dedup import filter_known_message_ids_in_db
 from threlium.bridges.notmuch_space_anchor import resolve_bridge_tail_mid_for_space
 from threlium.invisible_task_mid import is_egress_placeholder_message
 from threlium.logutil import logger
@@ -30,12 +32,10 @@ from threlium.systemd_notify import notify_status
 from threlium.types.systemd_status import SystemdStatusBody
 from threlium.settings import ThreliumSettings
 from threlium.types import (
-    IngressRouteB62Wire,
+    BridgeIngressChannel,
     MailHeaderName,
     NotmuchBridgeFromLocalhost,
     NotmuchMessageIdInner,
-    NotmuchQueryConnective,
-    NotmuchTag,
     RfcMessageIdWire,
     TelegramBridgeInboundCaptionOrText,
     TelegramIngressRoute,
@@ -185,7 +185,7 @@ def telegram_effective_message_bridge_in_reply_to(
         )
         return RfcMessageIdWire.from_native(parent_native)
     route_stub = TelegramIngressRoute(
-        channel="telegram", v=1,
+        channel=BridgeIngressChannel.TELEGRAM, v=1,
         chat_id=chat_id, message_id=0, message_thread_id=mtid_norm, update_id=0,
     )
     space = telegram_space_from_ingress_route(route_stub)
@@ -195,36 +195,14 @@ def telegram_effective_message_bridge_in_reply_to(
     )
 
 
-def _parse_telegram_routing(route_wire: IngressRouteB62Wire | None) -> TelegramIngressRoute:
-    """Wire ``X-Threlium-Route`` → ``TelegramIngressRoute`` (строго: нет wire / не telegram → ошибка FSM)."""
-    r = IngressRouteB62Wire.parse_route_from_optional_header(route_wire)
-    if r is None:
-        raise RuntimeError(
-            "FSM-инвариант: письмо из выборки notmuch с X-Threlium-Route "
-            "не содержит непустого заголовка X-Threlium-Route"
-        )
-    if not isinstance(r, TelegramIngressRoute):
-        raise RuntimeError(
-            f"FSM-инвариант: ожидался TelegramIngressRoute, получен {type(r).__name__} (channel={r.channel!r})"
-        )
-    return r
-
-
 def _max_update_id() -> int:
-    """Последний ``update_id`` из самого нового ``tag:route from:telegram`` письма."""
-    q = NotmuchQueryConnective.join_and(
-        NotmuchTag.ROUTE.as_tag_query_term(),
-        NotmuchBridgeFromLocalhost.TELEGRAM.as_from_query_term(),
+    """Последний ``update_id`` из newest ``from:telegram``."""
+    picked = latest_route_checkpoint(
+        NotmuchBridgeFromLocalhost.TELEGRAM,
+        TelegramIngressRoute,
+        lambda route: int(route.update_id),
     )
-    with nm.notmuch_database(write=False) as db:
-        for nm_msg in db.messages(q, sort=notmuch2.Database.SORT.NEWEST_FIRST):
-            route_w = IngressRouteB62Wire.parse_present_from_nm_message(
-                nm_msg, MailHeaderName.ROUTE.value
-            )
-            if route_w is None:
-                continue
-            return int(_parse_telegram_routing(route_w).update_id)
-    return 0
+    return picked if picked is not None else 0
 
 
 async def _poll_loop(
@@ -232,6 +210,8 @@ async def _poll_loop(
     *,
     settings: ThreliumSettings,
 ) -> None:
+    # Long-lived getUpdates loop: PTB Application держится на весь poll (не telegram_bot()
+    # context manager — тот на одну egress-send операцию).
     token_val = telegram_token(settings)
     offset = _max_update_id() + 1
 
@@ -245,7 +225,7 @@ async def _poll_loop(
         message_thread_id: int | None,
     ) -> None:
         r = TelegramIngressRoute(
-            channel="telegram",
+            channel=BridgeIngressChannel.TELEGRAM,
             v=1,
             chat_id=int(chat_id),
             update_id=update_id,
@@ -254,7 +234,7 @@ async def _poll_loop(
         )
         native = TelegramNativeId(v=1, chat_id=int(chat_id), message_id=msg_id,
                                    message_thread_id=message_thread_id)
-        mid = RfcMessageIdWire.from_native(native).value
+        mid_wire = RfcMessageIdWire.from_native(native)
         raw_obj: dict[str, object] = {
             "route": msgspec.to_builtins(r),
             "body": t,
@@ -268,10 +248,10 @@ async def _poll_loop(
         space = telegram_space_from_ingress_route(r)
         sw = ThreliumSpaceB62Wire.from_threlium_space(space)
         msg = build_bridge_ingress_email(
-            channel="telegram",
+            channel=BridgeIngressChannel.TELEGRAM,
             body=t,
             route=r,
-            message_id=mid,
+            message_id=mid_wire,
             in_reply_to=in_reply_to,
             raw_capture=raw_capture,
             space_wire=sw,
@@ -319,9 +299,7 @@ async def _poll_loop(
 
                 known_mids: set[NotmuchMessageIdInner] = set()
                 with nm.notmuch_database(write=False) as db:
-                    for mid_nm in candidate_mids:
-                        if nm.notmuch_index_has_message_id_in_db(db, mid_nm):
-                            known_mids.add(mid_nm)
+                    known_mids = filter_known_message_ids_in_db(db, candidate_mids)
 
                 for update in updates:
                     offset = update.update_id + 1
