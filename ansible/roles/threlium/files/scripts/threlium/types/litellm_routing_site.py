@@ -10,6 +10,7 @@ class LitellmRoutingSite(StrEnum):
     CLI_HITL_RESUME = "cli_hitl_resume"
     REASONING = "reasoning"
     ENRICH_PLAN = "enrich_plan"
+    ENRICH_TASK_HYPOTHESES = "enrich_task_hypotheses"
     RESPONSE_OBSERVE = "response_observe"
     LIGHTRAG_LLM = "lightrag_llm"
     LIGHTRAG_EMBEDDING = "lightrag_embedding"

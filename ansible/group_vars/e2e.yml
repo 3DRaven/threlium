@@ -103,6 +103,8 @@ threlium_litellm:
       target_score: 2.0
     enrich_plan:
       target_score: 1.0
+    enrich_task_hypotheses:
+      target_score: 1.0
     summarize_context:
       target_score: 1.0
     ingress_distill:

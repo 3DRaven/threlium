@@ -147,7 +147,11 @@ from .lightrag_tool_wire import (
 )
 from .cli_hitl_tool_args import ConfirmCliHitlToolArgs
 from .cli_hitl_tool_function import CliHitlBridgeError, CliHitlToolFunctionName
-from .enrich_tool_args import EnrichQueryPlanToolArgs, EnrichTaskPlanToolArgs
+from .enrich_tool_args import (
+    EnrichQueryPlanToolArgs,
+    EnrichTaskHypothesesToolArgs,
+    EnrichTaskPlanToolArgs,
+)
 from .enrich_tool_function import EnrichToolBridgeError, EnrichToolFunctionName
 from .summarize_tool_args import (
     SummarizeResponseBufferToolArgs,
@@ -286,6 +290,7 @@ __all__ = [
     "EmailNativeId",
     "EnrichLightragQuestionSubjectLine",
     "EnrichQueryPlanToolArgs",
+    "EnrichTaskHypothesesToolArgs",
     "EnrichTaskPlanToolArgs",
     "EnrichToolBridgeError",
     "EnrichToolFunctionName",

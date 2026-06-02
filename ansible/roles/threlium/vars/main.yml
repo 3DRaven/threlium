@@ -61,6 +61,8 @@ _threlium_litellm_base:
       target_score: 0.0
     enrich_plan:
       target_score: 0.0
+    enrich_task_hypotheses:
+      target_score: 1.0
     lightrag_llm:
       target_score: 0.0
     lightrag_embedding:
@@ -157,6 +159,7 @@ threlium_knowledge_effective: "{{ _threlium_knowledge_base | combine(threlium_kn
 threlium_required_prompts:
   - lightrag/enrich_query_plan.j2
   - lightrag/enrich_task_plan.j2
+  - lightrag/enrich_task_hypotheses.j2
   - lightrag/enrich_incoming_user_text.j2
   - lightrag/enrich_aquery_user.j2
   - lightrag/mail_context.j2
@@ -180,6 +183,7 @@ threlium_required_prompts:
   - lightrag/tools/extract_query_keywords_tool_spec.j2
   - lightrag/tools/generate_rag_answer_tool_spec.j2
   - lightrag/tools/enrich_task_plan_tool_spec.j2
+  - lightrag/tools/enrich_task_hypotheses_tool_spec.j2
   - lightrag/tools/enrich_query_plan_tool_spec.j2
   - reflect/continue.j2
   - reflect/final.j2

@@ -1,0 +1,50 @@
+{#- LLM-facing text is English-only: Cyrillic uses roughly 2–3× more tokens per word.
+    This Jinja comment is stripped and never sent to the model.
+    enrich late hypotheses: AFTER context retrieval (graph + unified thread + memory),
+    take a step back and propose ONLY new, falsifiable verification subtasks that the
+    existing ledger does not already cover (anti-drift, content-addressed dedup downstream).
+    Variables:
+      incoming_user_message (str);
+      graph_answer (str, may be empty);
+      unified_mail_context (str | None);
+      thread_memory (str | None); global_memory (str | None);
+      existing_subtasks (list of {content_id, text, status}). -#}
+You are reviewing the retrieved context for an email-based reasoning agent BEFORE it reasons. The initial plan (seed subtasks) already exists. Your job now is a verification pass: read the retrieved graph and thread context, then propose a SMALL set (0–6) of NEW, falsifiable verification subtasks — claims the next step should confirm or refute before asserting them.
+
+Guidance:
+- Each subtask is one checkable claim, phrased with a verify verb (Confirm/Verify/Check/Prove/Refute).
+- Prefer gaps the retrieved context exposed: a relation asserted in the thread but NOT confirmed by the graph, an assumption that is still unverified, or a multi-step conclusion that needs proof.
+- Name the concrete entities/relations to check, so the next step knows exactly what to look up.
+- Do NOT restate the seed plan or any existing subtask. Do NOT add delivery or drafting tasks here.
+- If the retrieved context raises nothing new worth verifying, return an empty array.
+
+## Output contract
+- Call the `enrich_task_hypotheses` tool exactly once with the `subtasks` array (no assistant text outside tool_calls, no markdown fences, no role-play).
+- Example: ["Confirm module X actually imports Y per the graph", "Verify the deadline stated in the thread matches the project record"].
+
+{% if existing_subtasks %}
+Existing ledger for this thread — do NOT duplicate these (identity is content-addressed); add only genuinely new verification subtasks:
+{% for s in existing_subtasks %}
+- [{{ s.status }}] {{ s.text }}
+{%- endfor %}
+{% endif %}
+
+Canonical intent (English, ingress distill):
+{{ incoming_user_message }}
+
+{% if graph_answer %}
+--- graph answer (LightRAG retrieval) ---
+{{ graph_answer }}
+{% endif %}
+{% if unified_mail_context %}
+--- unified mail context ---
+{{ unified_mail_context }}
+{% endif %}
+{% if thread_memory %}
+--- thread memory ---
+{{ thread_memory }}
+{% endif %}
+{% if global_memory %}
+--- global memory ---
+{{ global_memory }}
+{% endif %}

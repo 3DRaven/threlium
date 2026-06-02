@@ -18,6 +18,7 @@ from threlium.litellm_tool_spec import (
 from threlium.types import PromptPath
 from threlium.types.enrich_tool_args import (
     EnrichQueryPlanToolArgs,
+    EnrichTaskHypothesesToolArgs,
     EnrichTaskPlanToolArgs,
 )
 from threlium.types.enrich_tool_function import (
@@ -27,6 +28,7 @@ from threlium.types.enrich_tool_function import (
 from threlium.types.litellm_tool_call import LiteLlmToolCallArgumentsWire
 
 _TASK_CONTEXT = "enrich_task_plan"
+_HYPOTHESES_CONTEXT = "enrich_task_hypotheses"
 _QUERY_CONTEXT = "enrich_query_plan"
 
 
@@ -48,6 +50,29 @@ def parse_enrich_task_plan_assistant(assistant: Message) -> EnrichTaskPlanToolAr
     except (RuntimeError, ValueError, msgspec.ValidationError) as exc:
         raise EnrichToolBridgeError(
             f"{_TASK_CONTEXT}: invalid arguments"
+        ) from exc
+
+
+def parse_enrich_task_hypotheses_assistant(
+    assistant: Message,
+) -> EnrichTaskHypothesesToolArgs:
+    tc = require_single_tool_call(assistant, context=_HYPOTHESES_CONTEXT)
+    name = EnrichToolFunctionName.parse_tool_call(tc)
+    name.assert_matches(EnrichToolFunctionName.ENRICH_TASK_HYPOTHESES)
+    spec = load_tool_spec(PromptPath.LIGHTRAG_ENRICH_TASK_HYPOTHESES_TOOL_SPEC)
+    schema = tool_spec_parameters(spec)
+    wire = LiteLlmToolCallArgumentsWire.from_tool_call(tc)
+    try:
+        args_dict = validate_tool_args_json(schema, wire)
+    except jsonschema.ValidationError as exc:
+        raise EnrichToolBridgeError(
+            f"{_HYPOTHESES_CONTEXT}: arguments failed jsonschema"
+        ) from exc
+    try:
+        return msgspec.convert(args_dict, type=EnrichTaskHypothesesToolArgs)
+    except (RuntimeError, ValueError, msgspec.ValidationError) as exc:
+        raise EnrichToolBridgeError(
+            f"{_HYPOTHESES_CONTEXT}: invalid arguments"
         ) from exc
 
 
@@ -74,5 +99,6 @@ def parse_enrich_query_plan_assistant(assistant: Message) -> EnrichQueryPlanTool
 
 __all__ = [
     "parse_enrich_query_plan_assistant",
+    "parse_enrich_task_hypotheses_assistant",
     "parse_enrich_task_plan_assistant",
 ]

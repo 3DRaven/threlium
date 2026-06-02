@@ -36,6 +36,7 @@ from threlium.context_budget import (
 from threlium.settings import ThreliumSettings
 from threlium.enrich_tool_bridge import (
     parse_enrich_query_plan_assistant,
+    parse_enrich_task_hypotheses_assistant,
     parse_enrich_task_plan_assistant,
 )
 from threlium.litellm_required_tool import (
@@ -66,7 +67,7 @@ from threlium.task import (
     reduce_task_ops,
     serialize_task_init,
 )
-from threlium.task.ops import TaskInitOp, TaskSubtaskDef
+from threlium.task.ops import TaskInitOp, TaskOp, TaskSubtaskDef
 from threlium.types import (
     EnrichGlobalMemoryText,
     EnrichGraphAnswerText,
@@ -213,20 +214,42 @@ def _collect_extra_parts(
     return parts
 
 
-def _build_task_parts(
+def _parse_subtask_defs(
+    raw_subtasks: list[str], *, name: str, exclude_ids: frozenset[str]
+) -> list[TaskSubtaskDef]:
+    """Сырые тексты подзадач → дедуплицированные ``TaskSubtaskDef`` (VO-only, content-addressed).
+
+    ``exclude_ids`` — content_id, уже присутствующие в ledger (для late-гипотез: seed
+    этого hop + существующие подзадачи); внутри батча дубли отсекаются по content_id.
+    """
+    seen: set[str] = set()
+    defs: list[TaskSubtaskDef] = []
+    for text_raw in raw_subtasks:
+        try:
+            text = TaskSubtaskText.require(name=name, raw=text_raw)
+        except ValueError:
+            continue
+        cid = TaskSubtaskContentId.from_text(text)
+        if cid.value in seen or cid.value in exclude_ids:
+            continue
+        seen.add(cid.value)
+        defs.append(TaskSubtaskDef(content_id=cid, text=text))
+    return defs
+
+
+def _build_task_seed_defs(
     *,
     config: ThreliumSettings,
     inner: NotmuchMessageIdInner,
     user_message_text: str,
-) -> tuple[list[tuple[EnrichContentId, str]], TaskLedger]:
-    """Seed-набор подзадач (``<task-init>``) + детерминированный ``<task-state>``.
+) -> tuple[list[TaskSubtaskDef], list[TaskOp], TaskLedger]:
+    """Early seed-набор подзадач (LLM ДО сбора контекста LightRAG).
 
-    Возвращает MIME-части и итоговый (``combined``) ledger: его тексты подзадач
-    подмешиваются в графовый запрос LightRAG (формируются ДО сбора контекста).
+    Возвращает seed-``defs``, существующие ops треда и ``ledger_after_seed`` (in-memory
+    reduce existing+seed) — его тексты подмешиваются в графовый запрос. MIME-части НЕ
+    пишутся здесь: финализация (один ``<task-init>``) откладывается до слияния с late-гипотезами.
 
-    Fail-open: ошибка LLM / мусор → пустой seed, ledger как есть (gate не блокирует
-    пустой ledger). ensure-exists в reduce гарантирует, что повторный enrich не сбрасывает
-    статусы и не воскрешает ``cancelled`` задачи.
+    Fail-open: ошибка LLM / мусор → пустой seed (gate не блокирует пустой ledger).
     """
     existing_ops = collect_task_ops(inner)
     existing_ledger = reduce_task_ops(existing_ops)
@@ -263,36 +286,129 @@ def _build_task_parts(
         log.warning("task_plan_llm_failed", error=str(exc))
         subtasks = []
 
+    seed_defs = _parse_subtask_defs(
+        subtasks, name="enrich_task_plan.subtask", exclude_ids=frozenset()
+    )
+    if seed_defs:
+        seed_op = TaskInitOp(subtasks=tuple(seed_defs), message_id_inner=inner)
+        ledger_after_seed = reduce_task_ops([*existing_ops, seed_op])
+    else:
+        ledger_after_seed = existing_ledger
+    log.info(
+        "task_seed",
+        seeded=len(seed_defs),
+        existing=len(existing_ledger.subtasks),
+        total=len(ledger_after_seed.subtasks),
+    )
+    return seed_defs, existing_ops, ledger_after_seed
+
+
+def _build_task_hypothesis_defs(
+    *,
+    config: ThreliumSettings,
+    user_message_text: str,
+    result: EnrichResult,
+    ledger_after_seed: TaskLedger,
+) -> list[TaskSubtaskDef]:
+    """Late-проход (LLM ПОСЛЕ RAG): новые проверяемые гипотезы на полном контексте.
+
+    Тот же каркас, что seed (другой site/prompt/tool). Гипотезы дедуплицируются против
+    seed+существующих подзадач (``ledger_after_seed``). Fail-open: ошибка LLM → ``[]``.
+    """
+    prompt = trim_context_text(
+        render_prompt(
+            PromptPath.LIGHTRAG_ENRICH_TASK_HYPOTHESES,
+            incoming_user_message=user_message_text,
+            graph_answer=result.graph_answer.value if result.graph_answer else "",
+            unified_mail_context=(
+                result.unified_mail_context.value if result.unified_mail_context else ""
+            ),
+            thread_memory=result.thread_memory.value if result.thread_memory else "",
+            global_memory=result.global_memory.value if result.global_memory else "",
+            existing_subtasks=[
+                {"content_id": s.content_id.value, "text": s.text.value, "status": s.status.value}
+                for s in ledger_after_seed.subtasks
+            ],
+        ),
+        config.enrich.context_max_chars,
+    )
+    call = build_site_call(
+        config,
+        LitellmRoutingSite.ENRICH_TASK_HYPOTHESES,
+        [LiteLlmChatMessage(role="user", content=prompt)],
+    )
+    tool_spec = load_tool_spec(PromptPath.LIGHTRAG_ENRICH_TASK_HYPOTHESES_TOOL_SPEC)
+    correlation = (
+        get_litellm_http_correlation()
+        if config.e2e.litellm_route_correlation
+        else None
+    )
+    try:
+        assistant = invoke_required_tool(
+            settings=config,
+            call=call,
+            tool_spec=tool_spec,
+            correlation_snap=correlation,
+            context="enrich_task_hypotheses",
+        )
+        subtasks = parse_enrich_task_hypotheses_assistant(assistant).subtasks
+    except Exception as exc:  # noqa: BLE001 — fail-open: гипотезы опциональны
+        log.warning("task_hypotheses_llm_failed", error=str(exc))
+        return []
+
+    hyp_defs = _parse_subtask_defs(
+        subtasks,
+        name="enrich_task_hypotheses.subtask",
+        exclude_ids=ledger_after_seed.content_ids(),
+    )
+    log.info(
+        "task_hypotheses",
+        added=len(hyp_defs),
+        ledger=len(ledger_after_seed.subtasks),
+    )
+    return hyp_defs
+
+
+def _finalize_task_mime_parts(
+    *,
+    seed_defs: list[TaskSubtaskDef],
+    hyp_defs: list[TaskSubtaskDef],
+    existing_ops: list[TaskOp],
+    fallback_ledger: TaskLedger,
+    inner: NotmuchMessageIdInner,
+) -> tuple[list[tuple[EnrichContentId, str]], TaskLedger]:
+    """Один ``<task-init>`` (seed + late-гипотезы) + детерминированный ``<task-state>``.
+
+    Слияние seed+hyp в один ``TaskInitOp`` на письмо enrich→reasoning; один reduce итогового
+    ledger. Если ничего нового — только ``<task-state>`` из ``fallback_ledger`` (== existing,
+    т.к. пустой ``all_new`` означает пустой seed).
+    """
     seen: set[str] = set()
-    defs: list[TaskSubtaskDef] = []
-    for text_raw in subtasks:
-        try:
-            text = TaskSubtaskText.require(name="enrich_task_plan.subtask", raw=text_raw)
-        except ValueError:
+    all_new: list[TaskSubtaskDef] = []
+    for d in (*seed_defs, *hyp_defs):
+        if d.content_id.value in seen:
             continue
-        cid = TaskSubtaskContentId.from_text(text)
-        if cid.value in seen:
-            continue
-        seen.add(cid.value)
-        defs.append(TaskSubtaskDef(content_id=cid, text=text))
+        seen.add(d.content_id.value)
+        all_new.append(d)
 
     parts: list[tuple[EnrichContentId, str]] = []
-    if defs:
-        init_op = TaskInitOp(subtasks=tuple(defs), message_id_inner=inner)
+    if all_new:
+        init_op = TaskInitOp(subtasks=tuple(all_new), message_id_inner=inner)
         combined = reduce_task_ops([*existing_ops, init_op])
         parts.append(
-            (EnrichContentId.from_part_id(EnrichPartId.TASK_INIT), serialize_task_init(tuple(defs)))
+            (EnrichContentId.from_part_id(EnrichPartId.TASK_INIT), serialize_task_init(tuple(all_new)))
         )
     else:
-        combined = existing_ledger
+        combined = fallback_ledger
 
     parts.append(
         (EnrichContentId.from_part_id(EnrichPartId.TASK_STATE), build_task_state_summary(combined))
     )
     log.info(
-        "task_seed",
-        seeded=len(defs),
-        existing=len(existing_ledger.subtasks),
+        "task_finalize",
+        seeded=len(seed_defs),
+        hypotheses=len(hyp_defs),
+        new_total=len(all_new),
         total=len(combined.subtasks),
     )
     return parts, combined
@@ -784,17 +900,21 @@ def main(
         EnrichPartId.GLOBAL_MEMORY: config.enrich.priority_global_mem,
     }
 
-    # План задач формируется ДО сбора контекста LightRAG: тексты всех подзадач ledger
-    # подмешиваются в графовый запрос (помимо сформулированного LLM вопроса).
+    # Early seed формируется ДО сбора контекста LightRAG: тексты подзадач ledger
+    # подмешиваются в графовый запрос (помимо сформулированного LLM вопроса). Финализация
+    # MIME (<task-init>/<task-state>) откладывается до слияния с late-гипотезами после RAG.
     task_parts: list[tuple[EnrichContentId, str]] = []
     subtask_texts: list[str] = []
+    seed_defs: list[TaskSubtaskDef] = []
+    existing_task_ops: list[TaskOp] = []
+    ledger_after_seed = TaskLedger.empty()
     if inner is not None:
-        task_parts, combined_ledger = _build_task_parts(
+        seed_defs, existing_task_ops, ledger_after_seed = _build_task_seed_defs(
             config=config,
             inner=inner,
             user_message_text=user_message_text,
         )
-        subtask_texts = [s.text.value for s in combined_ledger.subtasks]
+        subtask_texts = [s.text.value for s in ledger_after_seed.subtasks]
 
     result = asyncio.run(
         _enrich_async(
@@ -808,6 +928,22 @@ def main(
             subtask_texts=subtask_texts,
         )
     )
+
+    # Late-гипотезы: LLM на полном контексте после RAG, тот же ledger (один TaskInitOp).
+    if inner is not None:
+        hyp_defs = _build_task_hypothesis_defs(
+            config=config,
+            user_message_text=user_message_text,
+            result=result,
+            ledger_after_seed=ledger_after_seed,
+        )
+        task_parts, _ = _finalize_task_mime_parts(
+            seed_defs=seed_defs,
+            hyp_defs=hyp_defs,
+            existing_ops=existing_task_ops,
+            fallback_ledger=ledger_after_seed,
+            inner=inner,
+        )
 
     extra_parts = _collect_extra_parts(inner, budget_extra) if inner is not None else []
     extra_parts.extend(task_parts)

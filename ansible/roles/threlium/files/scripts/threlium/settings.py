@@ -274,6 +274,10 @@ class RoutingTargets(BaseModel):
     )
     reasoning: LlmSiteTarget = Field(default_factory=LlmSiteTarget, description="Маршрут стадии reasoning.")
     enrich_plan: LlmSiteTarget = Field(default_factory=LlmSiteTarget, description="Маршрут LLM плана enrich.")
+    enrich_task_hypotheses: LlmSiteTarget = Field(
+        default_factory=lambda: LlmSiteTarget(target_score=1.0),
+        description="Маршрут LLM late-гипотез enrich (после RAG, score 1).",
+    )
     response_observe: LlmSiteTarget = Field(default_factory=LlmSiteTarget, description="Маршрут LLM суммаризации response_observe.")
     summarize_context: LlmSiteTarget = Field(default_factory=LlmSiteTarget, description="Маршрут LLM суммаризации контекста (score 0).")
     ingress_distill: LlmSiteTarget = Field(
@@ -317,6 +321,8 @@ def resolve_llm_endpoint(
         target = settings.targets.reasoning.target_score
     elif site == LitellmRoutingSite.ENRICH_PLAN:
         target = settings.targets.enrich_plan.target_score
+    elif site == LitellmRoutingSite.ENRICH_TASK_HYPOTHESES:
+        target = settings.targets.enrich_task_hypotheses.target_score
     elif site == LitellmRoutingSite.RESPONSE_OBSERVE:
         target = settings.targets.response_observe.target_score
     elif site == LitellmRoutingSite.SUMMARIZE_CONTEXT:

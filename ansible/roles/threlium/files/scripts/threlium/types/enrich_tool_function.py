@@ -13,6 +13,7 @@ class EnrichToolBridgeError(RuntimeError):
 
 class EnrichToolFunctionName(StrEnum):
     ENRICH_TASK_PLAN = "enrich_task_plan"
+    ENRICH_TASK_HYPOTHESES = "enrich_task_hypotheses"
     ENRICH_QUERY_PLAN = "enrich_query_plan"
 
     @classmethod

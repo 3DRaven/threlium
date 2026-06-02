@@ -140,6 +140,10 @@ class PromptPath(StrEnum):
     LIGHTRAG_ENRICH_TASK_PLAN_TOOL_SPEC = (
         "lightrag/tools/enrich_task_plan_tool_spec.j2"
     )
+    LIGHTRAG_ENRICH_TASK_HYPOTHESES = "lightrag/enrich_task_hypotheses.j2"
+    LIGHTRAG_ENRICH_TASK_HYPOTHESES_TOOL_SPEC = (
+        "lightrag/tools/enrich_task_hypotheses_tool_spec.j2"
+    )
     LIGHTRAG_ENRICH_QUERY_PLAN_TOOL_SPEC = (
         "lightrag/tools/enrich_query_plan_tool_spec.j2"
     )

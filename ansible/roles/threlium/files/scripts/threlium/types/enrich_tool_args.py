@@ -15,10 +15,24 @@ class EnrichTaskPlanToolArgs(msgspec.Struct, frozen=True):
     subtasks: list[str]
 
 
+class EnrichTaskHypothesesToolArgs(msgspec.Struct, frozen=True):
+    """Late-проход: проверяемые гипотезы после RAG (тот же ``<task-init>`` ledger).
+
+    Отдельный VO от :class:`EnrichTaskPlanToolArgs` (DDD, ``docs/TYPES.md`` § VO):
+    другой tool-name / call-site / промпт, хотя форма аргументов совпадает.
+    """
+
+    subtasks: list[str]
+
+
 class EnrichQueryPlanToolArgs(msgspec.Struct, frozen=True):
     """Сформулированный запрос к графу LightRAG для ``aquery``."""
 
     formulated_query: str
 
 
-__all__ = ["EnrichQueryPlanToolArgs", "EnrichTaskPlanToolArgs"]
+__all__ = [
+    "EnrichQueryPlanToolArgs",
+    "EnrichTaskHypothesesToolArgs",
+    "EnrichTaskPlanToolArgs",
+]
