@@ -12,8 +12,12 @@ import docker  # type: ignore[import-not-found]
 from .constants import (
     E2E_WIREMOCK_CONTAINER_PORT,
     REPO_ROOT,
+    TIMEOUT_POLL_SHORT,
 )
+from .poll import _diag
 
+
+@dataclass
 class E2EComposeRuntime:
     """Нормализованный runtime-контекст e2e-стека, поднятого через Testcontainers."""
 
