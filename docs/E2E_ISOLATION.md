@@ -357,7 +357,7 @@ wiremock_matrix_unregister_room(base, room_id=room_id)
 | `compose_bootstrap/011_e2e_matrix_unregister_room.json` | Стаб POST → `deleteState deleteWhere` по `room_id` |
 | `compose_bootstrap/020_matrix_sync.json` | Единый `/sync`: `response-template` + `#each` из State list `matrix_rooms` |
 | `tests/e2e/wiremock_client.py` | `wiremock_matrix_register_room` / `wiremock_matrix_unregister_room` |
-| `tests/e2e/helpers.py` | `e2e_matrix_generate_room_ids`, `e2e_matrix_thread_root_mid_for_sync_event` |
+| `tests/e2e/toolkit/bridges/matrix.py` | `e2e_matrix_generate_room_ids`, `e2e_matrix_thread_root_mid_for_sync_event` |
 
 ---
 
@@ -460,7 +460,7 @@ POST /__threlium/e2e/telegram/unregister_update
 | `compose_bootstrap/032_e2e_telegram_register_update.json` | POST → `recordState addLast` в list |
 | `compose_bootstrap/033_e2e_telegram_unregister_update.json` | POST → `deleteState deleteWhere` по `update_id` |
 | `tests/e2e/wiremock_client.py` | `wiremock_telegram_register_update` / `wiremock_telegram_unregister_update`, `assert_wiremock_telegram_e2e_openai_coverage` |
-| `tests/e2e/helpers.py` | `e2e_telegram_generate_update_bundle`, `e2e_telegram_thread_root_mid_for_message` |
+| `tests/e2e/toolkit/bridges/telegram.py` | `e2e_telegram_generate_update_bundle`, `e2e_telegram_thread_root_mid_for_message` |
 | `tests/e2e/wiremock_stubs/test_telegram_wiremock_live_e2e_{private,forum_topic}/` | Полный набор LLM + `040_telegram_send_message.json` на сценарий |
 
 ---

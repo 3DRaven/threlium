@@ -4,7 +4,8 @@
 [`CONTEXT_CONTRACT.md`](../CONTEXT_CONTRACT.md) §2, §7 и [`INDEX.md`](../INDEX.md) §5b;
 здесь — что сделано, зачем и что не трогали. См. также
 [`summarize_context_overflow_e2e_briefing.md`](summarize_context_overflow_e2e_briefing.md)
-(enrich/summarize и `concat_history_parts_text` — не LightRAG ingest).
+(enrich/summarize и `concat_history_parts_text` — не LightRAG ingest),
+[`e2e_toolkit_refactor_briefing.md`](e2e_toolkit_refactor_briefing.md) (`toolkit/lightrag_assert.py`, `toolkit/notmuch_assert.py`).
 
 **Дата работы:** 2026-06-02  
 **План (не редактировать):** `.cursor/plans/system_cid_maildir_read_bd86a493.plan.md`  
