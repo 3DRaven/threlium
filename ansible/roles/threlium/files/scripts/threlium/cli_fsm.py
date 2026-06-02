@@ -1,4 +1,10 @@
-"""Парсинг и политика CLI FSM (cli_intent / cli_resume / cli_hitl_out)."""
+"""Парсинг и политика CLI FSM (cli_intent / cli_resume / cli_hitl_out).
+
+Вход ``parse_cli_intent_payload`` — строго тело ``<system>``-части письма
+``reasoning → cli_intent`` (канон ``{"cli": {...}}`` из ``cli_intent/email_body.j2 | tojson``),
+а не «текст с мусором»: разбор через ``msgspec.json.decode`` без salvage-regex
+(``docs/CONTEXT_CONTRACT.md`` §2). Невалидный JSON / схема → ``None``.
+"""
 from __future__ import annotations
 
 import json
@@ -11,6 +17,7 @@ import msgspec
 from threlium.types import (
     CliExecDecision,
     CliIntentDecision,
+    CliIntentEnvelope,
     CliIntentPayload,
     CliIntentPolicy,
     CliRouteCollision,
@@ -22,48 +29,29 @@ _SHELL_OP_TOKENS = frozenset({"&&", "||", ";", "|"})
 _SHELL_BINARIES = frozenset({"sh", "bash"})
 
 
-def parse_json_loose(text: str) -> object:
-    text = text.strip()
-    m = re.search(r"\{[\s\S]*\}\s*$", text)
-    if m:
-        text = m.group(0)
-    return json.loads(text)
-
-
 def parse_cli_intent_payload(text: str) -> CliIntentPayload | None:
-    """Ожидается {\"cli\": {\"argv\": [str, ...], \"cwd\"?, \"privileged\"?}}."""
-    obj = parse_json_loose(text)
-    if not isinstance(obj, dict):
-        return None
-    cli = obj.get("cli")
-    if not isinstance(cli, dict):
-        return None
-    argv = cli.get("argv")
-    if not isinstance(argv, list) or not argv:
-        return None
-    if not all(isinstance(x, str) for x in argv):
-        return None
-    cwd_raw = cli.get("cwd")
-    cwd_norm: str | None
-    if cwd_raw is None:
-        cwd_norm = None
-    elif isinstance(cwd_raw, str):
-        t = cwd_raw.strip()
-        cwd_norm = t if t else None
-    else:
-        return None
-    priv_raw = cli.get("privileged", False)
-    if isinstance(priv_raw, bool):
-        privileged = priv_raw
-    else:
+    """Строгий разбор тела ``<system>`` → ``CliIntentPayload``.
+
+    Ожидается каноничный ``{"cli": {"argv": [str, ...], "cwd"?, "privileged"?}}``.
+    Невалидный JSON, нарушение схемы или пустой ``argv`` → ``None`` (стадии трактуют как
+    invalid intent → ``enrich_fast`` / ingress, см. вызывающие). Без regex-извлечения.
+    """
+    raw = text.strip()
+    if not raw:
         return None
     try:
-        return msgspec.convert(
-            {"argv": argv, "cwd": cwd_norm, "privileged": privileged},
-            type=CliIntentPayload,
-        )
-    except msgspec.ValidationError:
+        env = msgspec.json.decode(raw.encode("utf-8"), type=CliIntentEnvelope)
+    except (msgspec.DecodeError, msgspec.ValidationError):
         return None
+    cli = env.cli
+    if not cli.argv:
+        return None
+    cwd = cli.cwd.strip() if cli.cwd is not None else None
+    if cwd == "":
+        cwd = None
+    if cwd == cli.cwd:
+        return cli
+    return CliIntentPayload(argv=cli.argv, cwd=cwd, privileged=cli.privileged)
 
 
 def cli_payload_as_json(cli: CliIntentPayload) -> str:

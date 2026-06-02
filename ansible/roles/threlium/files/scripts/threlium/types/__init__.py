@@ -38,7 +38,7 @@ from .cli_intent_policy import (
     CliIntentPolicy,
     CliRouteCollision,
 )
-from .cli_mail import CliIntentPayload
+from .cli_mail import CliIntentEnvelope, CliIntentPayload
 from .engine_socket import EngineWireError, EngineWireOk, EngineWireRequest
 from .fsm_stage import FsmStage
 from .fsm_strings import (
@@ -275,6 +275,7 @@ __all__ = [
     "CliIntentDecision",
     "CliIntentPolicy",
     "CliRouteCollision",
+    "CliIntentEnvelope",
     "CliIntentPayload",
     "CliIntentToolArgs",
     "CliHitlBridgeError",

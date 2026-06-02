@@ -20,6 +20,16 @@ class CliIntentPayload(msgspec.Struct, frozen=True):
     privileged: bool = False
 
 
+class CliIntentEnvelope(msgspec.Struct, frozen=True):
+    """Обёртка ``{"cli": {...}}`` для строгого ``msgspec.json.decode`` тела ``<system>``.
+
+    Каноничный JSON рендерит ``prompts/reasoning/cli_intent/email_body.j2`` (``| tojson``),
+    поэтому salvage-regex (``parse_json_loose``) больше не нужен — см. ``docs/CONTEXT_CONTRACT.md``.
+    """
+
+    cli: CliIntentPayload
+
+
 class CliResumeMessageIdHeader(msgspec.Struct, frozen=True, kw_only=True):
     """``Message-ID`` входа ``cli_resume`` для нормализации через notmuch."""
 

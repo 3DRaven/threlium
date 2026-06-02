@@ -18,7 +18,7 @@ from threlium.litellm_route_context import get_litellm_http_correlation
 from threlium.litellm_tool_response import LiteLlmToolResponseError
 from threlium.litellm_tool_spec import load_tool_spec
 from threlium.logutil import clip_log_text, logger
-from threlium.mime_reform import extract_plain_body, system_part_text
+from threlium.mime_reform import system_part_text, system_part_text_from_path
 from threlium.nm import require_inner_message_id_from_fsm_email
 from threlium.prompts import render_prompt
 from threlium.settings import ThreliumSettings, resolve_llm_endpoint
@@ -39,15 +39,6 @@ from threlium.types.litellm_correlation_header import LitellmCorrelationHeader
 log = logger.bind(stage="cli_resume")
 
 _MAX_CLI_HITL_CLASSIFY_RETRIES = 2
-
-
-def _extract_decoded_body_from_maildir_file(path) -> str:
-    """Read a Maildir file and properly decode its body (handles QP, base64, etc.)."""
-    raw_bytes = path.read_bytes()
-    from threlium.mail import email_message_from_bytes
-
-    intent_msg = email_message_from_bytes(raw_bytes)
-    return extract_plain_body(intent_msg)
 
 
 def _e2e_litellm_correlation(
@@ -187,8 +178,14 @@ def main(
             settings=config,
         )
 
-    body_text = _extract_decoded_body_from_maildir_file(intent_path)
-    payload = parse_cli_intent_payload(body_text)
+    try:
+        intent_payload_text = system_part_text_from_path(intent_path).strip()
+    except RuntimeError:
+        # Письмо cli_intent по контракту несёт payload в <system>; отсутствие части —
+        # деградировавшая цепочка после долгого HITL-разрыва. Сохраняем graceful-маршрут.
+        log.warning("cli_resume_intent_no_system", path=str(intent_path))
+        intent_payload_text = ""
+    payload = parse_cli_intent_payload(intent_payload_text)
     if not payload:
         note = "Threlium cli_resume: could not parse stored CLI intent JSON in thread."
         return build_fsm_step_to_stage(
