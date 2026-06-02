@@ -1,20 +1,14 @@
 """Parse tool_calls → :class:`ConfirmCliHitlToolArgs` для ``cli_resume``.
 
-Сырой JSON args — :class:`~threlium.types.litellm_tool_call.LiteLlmToolCallArgumentsWire`
-(``from_tool_call`` / ``validate_tool_args_json``), по контракту ``docs/TYPES.md``.
+Тонкие обёртки над общим каркасом :mod:`threlium.litellm_tool_bridge`
+(``docs/TYPES.md`` § tool bridge).
 """
 from __future__ import annotations
 
-import jsonschema
-import msgspec
 from litellm.types.utils import Message
 
-from threlium.litellm_tool_response import require_single_tool_call
-from threlium.litellm_tool_spec import (
-    load_tool_spec,
-    tool_spec_parameters,
-    validate_tool_args_json,
-)
+from threlium.litellm_tool_bridge import parse_single_tool, parse_tool_args_from_wire
+from threlium.litellm_tool_spec import load_tool_spec, tool_spec_parameters
 from threlium.types import PromptPath
 from threlium.types.cli_hitl_tool_args import ConfirmCliHitlToolArgs
 from threlium.types.cli_hitl_tool_function import (
@@ -32,27 +26,25 @@ def parse_confirm_cli_hitl_from_wire(
     """jsonschema + msgspec по wire args tool ``confirm_cli_hitl``."""
     spec = load_tool_spec(PromptPath.CLI_RESUME_CONFIRM_CLI_HITL_TOOL_SPEC)
     schema = tool_spec_parameters(spec)
-    try:
-        args_dict = validate_tool_args_json(schema, wire)
-    except jsonschema.ValidationError as exc:
-        raise CliHitlBridgeError(
-            f"{_CONTEXT}: confirm_cli_hitl arguments failed jsonschema"
-        ) from exc
-    try:
-        return msgspec.convert(args_dict, type=ConfirmCliHitlToolArgs)
-    except (RuntimeError, ValueError, msgspec.ValidationError) as exc:
-        raise CliHitlBridgeError(
-            f"{_CONTEXT}: invalid confirm_cli_hitl arguments"
-        ) from exc
+    return parse_tool_args_from_wire(
+        wire,
+        schema=schema,
+        args_type=ConfirmCliHitlToolArgs,
+        bridge_error=CliHitlBridgeError,
+        context=_CONTEXT,
+    )
 
 
 def parse_confirm_cli_hitl_assistant(assistant: Message) -> ConfirmCliHitlToolArgs:
     """Распарсить assistant message после ``require_tool_calls_response``."""
-    tc = require_single_tool_call(assistant, context=_CONTEXT)
-    name = CliHitlToolFunctionName.parse_tool_call(tc)
-    name.assert_matches(CliHitlToolFunctionName.CONFIRM_CLI_HITL)
-    wire = LiteLlmToolCallArgumentsWire.from_tool_call(tc)
-    return parse_confirm_cli_hitl_from_wire(wire)
+    return parse_single_tool(
+        assistant,
+        expected=CliHitlToolFunctionName.CONFIRM_CLI_HITL,
+        tool_spec_path=PromptPath.CLI_RESUME_CONFIRM_CLI_HITL_TOOL_SPEC,
+        args_type=ConfirmCliHitlToolArgs,
+        bridge_error=CliHitlBridgeError,
+        context=_CONTEXT,
+    )
 
 
 def parse_confirm_cli_hitl(msg: Message) -> ConfirmCliHitlToolArgs:

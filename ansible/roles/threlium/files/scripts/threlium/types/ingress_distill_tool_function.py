@@ -1,37 +1,20 @@
 """Имя OpenAI tool для ingress distill."""
 from __future__ import annotations
 
-from enum import StrEnum
-from typing import Self
+from enum import nonmember
 
-from litellm.types.utils import ChatCompletionMessageToolCall
+from ._core import ToolFunctionNameBase
 
 
 class IngressDistillBridgeError(RuntimeError):
     """Ошибка bridge tool_calls → args для ingress distill."""
 
 
-class IngressDistillToolFunctionName(StrEnum):
+class IngressDistillToolFunctionName(ToolFunctionNameBase):
     INGRESS_DISTILL = "ingress_distill"
 
-    @classmethod
-    def parse_tool_call(cls, tc: ChatCompletionMessageToolCall) -> Self:
-        func = tc.function
-        if func is None or not func.name:
-            raise IngressDistillBridgeError("tool_call without function.name")
-        raw = func.name.strip()
-        try:
-            return cls(raw)
-        except ValueError as exc:
-            raise IngressDistillBridgeError(
-                f"unknown ingress distill tool function.name={raw!r}"
-            ) from exc
-
-    def assert_matches(self, expected: IngressDistillToolFunctionName) -> None:
-        if self != expected:
-            raise IngressDistillBridgeError(
-                f"expected tool {expected.value!r}, got {self.value!r}"
-            )
+    _bridge_error = nonmember(IngressDistillBridgeError)
+    _label = nonmember("ingress distill")
 
 
 __all__ = ["IngressDistillBridgeError", "IngressDistillToolFunctionName"]

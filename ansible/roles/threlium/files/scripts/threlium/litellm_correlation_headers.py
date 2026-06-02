@@ -16,6 +16,8 @@ from threlium.types import (
     NotmuchMessageIdInner,
     RfcMessageIdWire,
 )
+from threlium.litellm_route_context import get_litellm_http_correlation
+from threlium.settings import ThreliumSettings
 from threlium.types.litellm_correlation_header import LitellmCorrelationHeader
 
 
@@ -90,6 +92,33 @@ def build_litellm_correlation_headers_from_notmuch(
         thread_root_mid=resolved.message_id_inner.as_angle_bracket_header(),
         call_site=call_site,
     )
+
+
+def fsm_correlation_snap(
+    msg: EmailMessage | None,
+    settings: ThreliumSettings,
+    call_site: LitellmCallSite | None = None,
+) -> dict[str, str] | None:
+    """E2e-снимок корреляции для FSM single-tool стадий.
+
+    При ``settings.e2e.litellm_route_correlation`` — TLS snap или (если ``msg`` задан)
+    сборка с конверта через :func:`build_litellm_correlation_headers`.
+    ``call_site`` переопределяет ``X-Threlium-Call-Site`` (до override в
+    :func:`~threlium.litellm_required_tool.invoke_required_tool` по ``function.name``).
+    ``msg=None`` — только TLS snap без fallback на envelope (ingress distill, enrich).
+    """
+    if not settings.e2e.litellm_route_correlation:
+        return None
+    snap = get_litellm_http_correlation()
+    if snap is not None:
+        corr = dict(snap)
+    elif msg is not None and call_site is not None:
+        corr = build_litellm_correlation_headers(msg, call_site=call_site)
+    else:
+        return None
+    if call_site is not None:
+        corr[LitellmCorrelationHeader.CALL_SITE.value] = call_site.value
+    return corr
 
 
 def build_litellm_correlation_headers(

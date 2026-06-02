@@ -12,9 +12,13 @@ from threlium.types import PromptPath
 from threlium.types.litellm_tool_call import LiteLlmToolCallArgumentsWire
 
 
-def load_tool_spec(prompt_path: PromptPath) -> dict[str, object]:
-    """Собрать один OpenAI tool dict из ``tool_spec.j2``."""
-    rendered = render_prompt(prompt_path)
+def load_tool_spec(prompt_path: PromptPath, /, **jinja_vars: object) -> dict[str, object]:
+    """Собрать один OpenAI tool dict из ``tool_spec.j2``.
+
+    ``jinja_vars`` — переменные шаблона (напр. ``distill_max_chars`` для ingress_distill);
+    единая точка загрузки tool-spec с валидацией ``function.name`` / ``function.parameters``.
+    """
+    rendered = render_prompt(prompt_path, **jinja_vars)
     raw = json.loads(rendered)
     if not isinstance(raw, dict):
         raise RuntimeError(f"{prompt_path}: tool spec JSON must be an object")

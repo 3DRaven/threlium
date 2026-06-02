@@ -10,8 +10,7 @@
   «pipeline» значения (``lightrag_index`` / ``lightrag_query`` / ``lightrag_query_rerank`` /
   ``fsm``), которые **никогда** не появляются на ``/chat/completions`` с tool;
 * reasoning multi-tool — единственный chat-вызов с ``len(tools) > 1``; его call_site =
-  ``reasoning`` (а при единственном разрешённом route — ``function.name`` этого tool,
-  см. :func:`~threlium.litellm_call_site_wire.reasoning_call_site_wire`).
+  :attr:`~LitellmCallSite.REASONING` (а при единственном разрешённом route — ``function.name`` этого tool).
 
 Фаза LightRAG (entity / gleaning / summarize / keywords / response) определяется в
 рантайме по сигналам ``llm_func`` —

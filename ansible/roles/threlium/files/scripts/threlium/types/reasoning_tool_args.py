@@ -160,11 +160,21 @@ def reasoning_tool_struct_for_route(route: FsmStage) -> type[msgspec.Struct]:
     return t
 
 
+def formal_reason_stage_payload_from_tool_args(
+    args: FormalReasonToolArgs,
+) -> FormalReasonStagePayload:
+    """``FormalReasonToolArgs`` (reasoning tool) → ``FormalReasonStagePayload`` (stage body)."""
+    from .knowledge_stage import FormalReasonStagePayload
+
+    return msgspec.convert(msgspec.to_builtins(args), type=FormalReasonStagePayload)
+
+
 __all__ = [
     "CliIntentToolArgs",
     "EgressRouterToolArgs",
     "GlobalMemoryToolArgs",
     "FormalReasonToolArgs",
+    "formal_reason_stage_payload_from_tool_args",
     "MemoryQueryToolArgs",
     "NewSubtaskArg",
     "ReasoningToolRouteArgs",

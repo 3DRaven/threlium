@@ -2,12 +2,70 @@
 from __future__ import annotations
 
 from email.message import EmailMessage
-from typing import Annotated, Self, TypeAlias
+from enum import StrEnum, nonmember
+from typing import Annotated, Self, TypeAlias, TypeVar
 
 import msgspec
 import notmuch2  # pyright: ignore[reportMissingImports]
+from litellm.types.utils import ChatCompletionMessageToolCall
+
+from threlium.logutil import logger
 
 NonEmptyStr: TypeAlias = Annotated[str, msgspec.Meta(min_length=1)]
+
+log = logger.bind(module=__name__)
+
+_PayloadT = TypeVar("_PayloadT")
+
+
+def parse_json_payload(
+    text: str, payload_type: type[_PayloadT], *, log_ctx: str
+) -> _PayloadT | None:
+    """Wire JSON → msgspec Struct ``payload_type``; невалидный JSON/схема → ``None`` + warning.
+
+    Уровень 1 (``docs/TYPES.md``): единый разбор ``<system>``-payload стадий через
+    ``msgspec.json.decode`` (одним шагом decode + validate). ``log_ctx`` — префикс
+    стадии для лога при провале.
+    """
+    try:
+        return msgspec.json.decode(text.encode("utf-8"), type=payload_type)
+    except (msgspec.DecodeError, msgspec.ValidationError) as e:
+        log.warning("parse_json_payload_failed", ctx=log_ctx, err=str(e))
+        return None
+
+
+class ToolFunctionNameBase(StrEnum):
+    """База single-tool ``function.name`` enum (``docs/TYPES.md`` § tool bridge).
+
+    Подклассы перечисляют допустимые имена tool и через :func:`enum.nonmember`
+    переопределяют ``_bridge_error`` (тип доменного исключения) и ``_label``
+    (префикс домена для сообщений). ``parse_tool_call`` / ``assert_matches`` —
+    единые: разбор ``tc.function.name`` против фиксированного набора с
+    fail-fast доменной ошибкой. Для multi-tool роутера reasoning (динамический
+    local-part) применяется отдельный ``ReasoningToolFunctionName`` — by design.
+    """
+
+    _bridge_error = nonmember(RuntimeError)
+    _label = nonmember("tool")
+
+    @classmethod
+    def parse_tool_call(cls, tc: ChatCompletionMessageToolCall) -> Self:
+        func = tc.function
+        if func is None or not func.name:
+            raise cls._bridge_error("tool_call without function.name")
+        raw = func.name.strip()
+        try:
+            return cls(raw)
+        except ValueError as exc:
+            raise cls._bridge_error(
+                f"unknown {cls._label} tool function.name={raw!r}"
+            ) from exc
+
+    def assert_matches(self, expected: Self) -> None:
+        if self != expected:
+            raise type(self)._bridge_error(
+                f"expected tool {expected.value!r}, got {self.value!r}"
+            )
 
 
 def _kv_dict(value: str | None, key: str) -> dict[str, str]:

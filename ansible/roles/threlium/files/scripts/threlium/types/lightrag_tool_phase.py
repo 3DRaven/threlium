@@ -12,7 +12,10 @@ from threlium.types.lightrag_tool_args import (
     GenerateRagAnswerToolArgs,
     SummarizeDescriptionsToolArgs,
 )
-from threlium.types.lightrag_tool_function import LightragToolFunctionName
+from threlium.types.lightrag_tool_function import (
+    LightragToolBridgeError,
+    LightragToolFunctionName,
+)
 from threlium.types.prompt_path import PromptPath
 
 
@@ -65,7 +68,9 @@ _BY_CALL_SITE: dict[str, LightragToolPhaseSpec] = {
 def lightrag_tool_phase_for_call_site(call_site_wire: str) -> LightragToolPhaseSpec:
     spec = _BY_CALL_SITE.get(call_site_wire)
     if spec is None:
-        raise RuntimeError(f"lightrag: no tool phase for call_site={call_site_wire!r}")
+        raise LightragToolBridgeError(
+            f"lightrag: no tool phase for call_site={call_site_wire!r}"
+        )
     return spec
 
 

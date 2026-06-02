@@ -14,7 +14,8 @@
 """
 from __future__ import annotations
 
-from typing import cast
+from collections.abc import Awaitable, Callable
+from typing import Any, TypeVar, cast
 
 from litellm.types.utils import Message
 
@@ -23,13 +24,72 @@ from threlium.litellm_tool_completion import (
     completion_required_tool_sync,
 )
 from threlium.litellm_tool_response import require_tool_calls_response
-from threlium.settings import ThreliumSettings, resolve_llm_endpoint
+from threlium.settings import LlmEndpoint, ThreliumSettings, resolve_llm_endpoint
 from threlium.types import (
     LiteLlmAcompletionKwargs,
     LiteLlmChatMessage,
+    LitellmCallSite,
     LitellmRoutingSite,
 )
 from threlium.types.litellm_correlation_header import LitellmCorrelationHeader
+
+_RetryResultT = TypeVar("_RetryResultT")
+
+
+def invoke_with_bridge_retries(
+    *,
+    max_attempts: int,
+    attempt: Callable[[], _RetryResultT],
+    retry_errors: tuple[type[BaseException], ...],
+    on_retry: Callable[[int, BaseException], None] | None = None,
+    on_exhausted: Callable[[BaseException], _RetryResultT] | None = None,
+) -> _RetryResultT:
+    """Повторять sync ``attempt`` до ``max_attempts`` раз при ``retry_errors``.
+
+    Единый bridge-retry: ``attempt`` инкапсулирует invoke+parse одной попытки.
+    ``on_retry(n_1based, exc)`` — лог между попытками (не на последней).
+    ``on_exhausted(last_exc)`` — fallback после исчерпания; ``None`` → re-raise.
+    ``max_attempts`` = число ретраев + 1 (``>= 1``).
+    """
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be >= 1")
+    last_error: BaseException | None = None
+    for i in range(max_attempts):
+        try:
+            return attempt()
+        except retry_errors as exc:
+            last_error = exc
+            if i + 1 < max_attempts and on_retry is not None:
+                on_retry(i + 1, exc)
+    assert last_error is not None
+    if on_exhausted is not None:
+        return on_exhausted(last_error)
+    raise last_error
+
+
+async def ainvoke_with_bridge_retries(
+    *,
+    max_attempts: int,
+    attempt: Callable[[], Awaitable[_RetryResultT]],
+    retry_errors: tuple[type[BaseException], ...],
+    on_retry: Callable[[int, BaseException], None] | None = None,
+    on_exhausted: Callable[[BaseException], _RetryResultT] | None = None,
+) -> _RetryResultT:
+    """Async-вариант :func:`invoke_with_bridge_retries` (``attempt`` — coroutine)."""
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be >= 1")
+    last_error: BaseException | None = None
+    for i in range(max_attempts):
+        try:
+            return await attempt()
+        except retry_errors as exc:
+            last_error = exc
+            if i + 1 < max_attempts and on_retry is not None:
+                on_retry(i + 1, exc)
+    assert last_error is not None
+    if on_exhausted is not None:
+        return on_exhausted(last_error)
+    raise last_error
 
 
 def tool_function_name(spec: dict[str, object]) -> str:
@@ -44,7 +104,7 @@ def tool_function_name(spec: dict[str, object]) -> str:
 
 
 def correlation_with_call_site(
-    snap: dict[str, str] | None, call_site_wire: str
+    snap: dict[str, str] | None, call_site: LitellmCallSite | str
 ) -> dict[str, str] | None:
     """Копия снимка корреляции с переопределённым ``X-Threlium-Call-Site``.
 
@@ -52,19 +112,41 @@ def correlation_with_call_site(
     """
     if snap is None:
         return None
+    wire = call_site.value if isinstance(call_site, LitellmCallSite) else call_site
     out = dict(snap)
-    out[LitellmCorrelationHeader.CALL_SITE.value] = call_site_wire
+    out[LitellmCorrelationHeader.CALL_SITE.value] = wire
     return out
 
 
 def build_site_call(
     settings: ThreliumSettings,
-    site: LitellmRoutingSite,
+    site: LitellmRoutingSite | None,
     messages: list[LiteLlmChatMessage],
+    *,
+    endpoint: LlmEndpoint | None = None,
+    thinking_token_budget: int | None = None,
+    max_tokens: int | None = None,
+    chat_template_kwargs: dict[str, Any] | None = None,
 ) -> LiteLlmAcompletionKwargs:
-    """``LiteLlmAcompletionKwargs`` из записи каталога ``settings.litellm`` для *site*."""
-    ep = resolve_llm_endpoint(settings.litellm, site)
+    """``LiteLlmAcompletionKwargs`` из каталога ``settings.litellm`` для *site* или явного *endpoint*.
+
+    ``endpoint`` — уже резолвленный профиль (LightRAG closure, reasoning loop).
+    ``thinking_token_budget`` / ``max_tokens`` / ``chat_template_kwargs`` переопределяют endpoint.
+    """
+    if endpoint is None:
+        if site is None:
+            raise ValueError("build_site_call: site or endpoint required")
+        ep = resolve_llm_endpoint(settings.litellm, site)
+    else:
+        ep = endpoint
     mr = ep.max_retries if ep.max_retries is not None else settings.litellm.max_retries
+    tb = thinking_token_budget if thinking_token_budget is not None else ep.thinking_token_budget
+    mt = max_tokens if max_tokens is not None else ep.max_tokens
+    ctk = (
+        chat_template_kwargs
+        if chat_template_kwargs is not None
+        else (ep.chat_template_kwargs or None)
+    )
     return LiteLlmAcompletionKwargs(
         model=ep.model,
         messages=list(messages),
@@ -72,8 +154,9 @@ def build_site_call(
         max_retries=mr,
         api_key=ep.api_key,
         api_base=ep.api_base,
-        max_tokens=ep.max_tokens,
-        chat_template_kwargs=ep.chat_template_kwargs or None,
+        max_tokens=mt,
+        thinking_token_budget=tb,
+        chat_template_kwargs=ctk,
     )
 
 
@@ -122,8 +205,10 @@ async def ainvoke_required_tool(
 
 __all__ = [
     "ainvoke_required_tool",
+    "ainvoke_with_bridge_retries",
     "build_site_call",
     "correlation_with_call_site",
     "invoke_required_tool",
+    "invoke_with_bridge_retries",
     "tool_function_name",
 ]

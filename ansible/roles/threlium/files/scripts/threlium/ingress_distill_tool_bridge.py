@@ -1,15 +1,15 @@
-"""Parse tool_calls → :class:`IngressDistillToolArgs` для ingress distill."""
+"""Parse tool_calls → :class:`IngressDistillToolArgs` для ingress distill.
+
+Caller предзагружает tool spec с jinja-vars (``distill_max_chars``) и передаёт
+готовую JSON-схему — поэтому используется wire-вариант общего каркаса
+:func:`~threlium.litellm_tool_bridge.parse_tool_args_from_wire`.
+"""
 from __future__ import annotations
 
-import jsonschema
-import msgspec
 from litellm.types.utils import Message
 
+from threlium.litellm_tool_bridge import parse_tool_args_from_wire
 from threlium.litellm_tool_response import require_single_tool_call
-from threlium.litellm_tool_spec import (
-    tool_spec_parameters,
-    validate_tool_args_json,
-)
 from threlium.types.ingress_distill_tool_args import IngressDistillToolArgs
 from threlium.types.ingress_distill_tool_function import (
     IngressDistillBridgeError,
@@ -25,18 +25,13 @@ def parse_ingress_distill_from_wire(
     *,
     schema: dict[str, object],
 ) -> IngressDistillToolArgs:
-    try:
-        args_dict = validate_tool_args_json(schema, wire)
-    except jsonschema.ValidationError as exc:
-        raise IngressDistillBridgeError(
-            f"{_CONTEXT}: ingress_distill arguments failed jsonschema"
-        ) from exc
-    try:
-        return msgspec.convert(args_dict, type=IngressDistillToolArgs)
-    except (RuntimeError, ValueError, msgspec.ValidationError) as exc:
-        raise IngressDistillBridgeError(
-            f"{_CONTEXT}: invalid ingress_distill arguments"
-        ) from exc
+    return parse_tool_args_from_wire(
+        wire,
+        schema=schema,
+        args_type=IngressDistillToolArgs,
+        bridge_error=IngressDistillBridgeError,
+        context=_CONTEXT,
+    )
 
 
 def parse_ingress_distill_assistant(
