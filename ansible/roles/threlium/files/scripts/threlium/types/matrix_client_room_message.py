@@ -1,6 +1,7 @@
 """Тело события Matrix Client-Server ``m.room.message`` (egress → nio ``room_send``)."""
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Literal
 
 import msgspec
@@ -60,3 +61,36 @@ def matrix_client_room_message_m_text_content_as_dict_for_nio(
     if out.get("m.relates_to") is None:
         out.pop("m.relates_to", None)
     return out
+
+
+class MatrixInboundRoomMessageSourceContent(msgspec.Struct, frozen=True):
+    """``content`` из ``Event.source`` matrix-nio (ingress bridge)."""
+
+    body: str | None = None
+    m_relates_to: MatrixClientRoomMessageRelatesTo | None = msgspec.field(
+        name="m.relates_to",
+        default=None,
+    )
+
+
+class MatrixInboundRoomMessageSource(msgspec.Struct, frozen=True):
+    """Корень ``Event.source`` для ``m.room.message`` (ingress)."""
+
+    content: MatrixInboundRoomMessageSourceContent | None = None
+
+
+def reply_parent_event_id_from_message_source(
+    source: Mapping[str, object],
+) -> MatrixRoomEventId | None:
+    """``event_id`` предка reply из ``Event.source`` (matrix-nio ingress)."""
+    content_raw = source.get("content")
+    if not isinstance(content_raw, dict):
+        return None
+    try:
+        parsed = msgspec.convert(source, type=MatrixInboundRoomMessageSource)
+    except msgspec.ValidationError:
+        return None
+    rel = parsed.content.m_relates_to if parsed.content is not None else None
+    if rel is None or rel.m_in_reply_to is None:
+        return None
+    return rel.m_in_reply_to.event_id

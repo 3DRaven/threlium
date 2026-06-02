@@ -10,16 +10,16 @@ from __future__ import annotations
 from email.message import EmailMessage
 
 from threlium.formal_reason_gate import formal_reason_gate_active
-from threlium.litellm_call_site_wire import reasoning_call_site_wire
-from threlium.litellm_required_tool import correlation_with_call_site
+from threlium.litellm_required_tool import build_site_call, correlation_with_call_site
 from threlium.litellm_route_context import get_litellm_http_correlation
 from threlium.litellm_tool_completion import completion_required_tool_sync
 from threlium.litellm_tool_response import require_tool_calls_response
 from litellm.types.utils import Message
 
-from threlium.fsm_emit import HDR_HOP_BUDGET, build_fsm_step_to_stage, hop_budget_remaining
+from threlium.fsm_emit import build_fsm_step_to_stage, hop_budget_remaining
 from threlium.logutil import clip_log_text, logger
 from threlium.mail import canonicalize_mime
+from threlium.nm import require_fsm_message_id
 from threlium.prompts import render_prompt
 from threlium.states.reasoning_tool_spec import (
     load_tools_for_routes,
@@ -31,8 +31,8 @@ from threlium.types import (
     FsmTransitionPlainBody,
     FsmTransitionPlainSubjectLine,
     HopBudgetLine,
-    LiteLlmAcompletionKwargs,
     LiteLlmChatMessage,
+    LitellmCallSite,
     LitellmRoutingSite,
     PromptPath,
     REASONING_TARGET_STAGES,
@@ -156,7 +156,6 @@ def _decide(
     config: ThreliumSettings,
 ) -> ReasoningRouteDecision:
     ep = resolve_llm_endpoint(config.litellm, LitellmRoutingSite.REASONING)
-    mr = ep.max_retries if ep.max_retries is not None else config.litellm.max_retries
     length_max_attempts = (
         ep.length_recovery_max_attempts
         if ep.length_recovery_max_attempts is not None
@@ -176,7 +175,7 @@ def _decide(
     routes = sorted(allowed, key=lambda s: s.value)
     tools, schemas = load_tools_for_routes(routes)
     restricted = len(allowed) < len(REASONING_TARGET_STAGES)
-    call_site_wire = reasoning_call_site_wire()
+    call_site_wire = LitellmCallSite.REASONING.value
 
     system = render_prompt(PromptPath.REASONING_SYSTEM).strip()
     length_recovery_system = render_prompt(
@@ -198,16 +197,11 @@ def _decide(
         for notice in notices:
             messages.append(LiteLlmChatMessage(role="system", content=notice))
 
-        call = LiteLlmAcompletionKwargs(
-            model=ep.model,
-            messages=messages,
-            timeout=float(ep.timeout),
-            max_retries=mr,
-            api_key=ep.api_key,
-            api_base=ep.api_base,
-            max_tokens=ep.max_tokens,
-            thinking_token_budget=ep.thinking_token_budget,
-            chat_template_kwargs=ep.chat_template_kwargs or None,
+        call = build_site_call(
+            config,
+            LitellmRoutingSite.REASONING,
+            messages,
+            endpoint=ep,
         )
 
         correlation = None
@@ -299,9 +293,9 @@ def main(
 ) -> EmailMessage | None:
     canonical = canonicalize_mime(msg)
 
-    hop_line = HopBudgetLine.parse(canonical.get(HDR_HOP_BUDGET))
+    hop_line = HopBudgetLine.parse_from_email(canonical)
     remaining = hop_budget_remaining(hop_line, config)
-    mid_w = RfcMessageIdWire.parse_present_from_email(canonical, _HDR.MESSAGE_ID)
+    mid_w, _inner = require_fsm_message_id(canonical, "reasoning")
     log.info(
         "envelope",
         message_id=mid_w.value if mid_w else None,

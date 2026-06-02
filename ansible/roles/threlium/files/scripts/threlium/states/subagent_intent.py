@@ -4,7 +4,6 @@ from email.message import EmailMessage
 
 from threlium.settings import ThreliumSettings
 from threlium.fsm_emit import (
-    HDR_HOP_BUDGET,
     build_fsm_plain_to_stage,
     emit_transition_preserving_payload,
     push_subagent_hop_budget,
@@ -24,7 +23,7 @@ from threlium.types import (
 def main(
     msg: EmailMessage, stage: FsmStage, *, config: ThreliumSettings
 ) -> EmailMessage | None:
-    hb = push_subagent_hop_budget(HopBudgetLine.parse(msg.get(HDR_HOP_BUDGET)), config)
+    hb = push_subagent_hop_budget(HopBudgetLine.parse_from_email(msg), config)
     if hb is None:
         return build_fsm_plain_to_stage(
             msg,

@@ -126,6 +126,27 @@ def _extract_context_part_vo(
     return parsed if parsed.value else None
 
 
+def _tail_keep_history_entries(
+    entries: list[ReasoningHistoryEntry], max_chars: int
+) -> tuple[ReasoningHistoryEntry, ...]:
+    """Tail-keep новейших записей хронологии в пределах ``max_chars`` (CONTEXT_CONTRACT §6).
+
+    ``max_chars <= 0`` → без усечения. Иначе суммируем длины с конца (новейшие); как только
+    суммарная длина превышает бюджет — отбрасываем более старые. Минимум одна (самая свежая)
+    запись сохраняется всегда.
+    """
+    if max_chars <= 0 or not entries:
+        return tuple(entries)
+    kept_rev: list[ReasoningHistoryEntry] = []
+    used = 0
+    for entry in reversed(entries):
+        if kept_rev and used + len(entry.text) > max_chars:
+            break
+        kept_rev.append(entry)
+        used += len(entry.text)
+    return tuple(reversed(kept_rev))
+
+
 class ReasoningEnrichContext(msgspec.Struct, frozen=True, kw_only=True):
     """MIME-контекст enrich для ``reasoning/user.j2`` (сборка на границе, не в роутере)."""
 
@@ -146,7 +167,10 @@ class ReasoningEnrichContext(msgspec.Struct, frozen=True, kw_only=True):
             if not text:
                 continue
             entries.append(ReasoningHistoryEntry(origin=part_origin_label(part), text=text))
-        history = tuple(entries)
+        # Бюджет хронологии (<conversation_history>/<conversation_delta>, §6): tail-keep
+        # новейших записей в пределах max_chars (context_max_chars). Старые отбрасываются
+        # первыми; хотя бы одна новейшая запись сохраняется всегда.
+        history = _tail_keep_history_entries(entries, max_chars)
         return cls(
             user_message=_extract_context_part_vo(
                 ReasoningUserMessageText, msg, EnrichPartId.USER_MESSAGE, max_chars

@@ -67,35 +67,25 @@ def _default_sub_hop_max(settings: ThreliumSettings) -> int:
 
 
 def advance_hop_budget_for_simple_step(line: HopBudgetLine, settings: ThreliumSettings) -> HopBudgetLine:
-    """Декремент хвоста hop-стека: ``'48 44'`` → ``'48 43'``, ``'47'`` → ``'46'``."""
-    parts = line.value.split() if line.value else [str(_default_root_hop_max(settings))]
-    parts[-1] = str(max(0, int(parts[-1]) - 1))
-    return HopBudgetLine.parse(" ".join(parts))
+    """Декремент хвоста hop-стека: ``'48 44'`` → ``'48 43'``, ``'47'`` → ``'46'``.
+
+    Тонкая обёртка над :meth:`HopBudgetLine.advance_simple_step` (арифметика — в VO, дефолт
+    уровня — из settings).
+    """
+    return line.advance_simple_step(root_default=_default_root_hop_max(settings))
 
 
 def push_subagent_hop_budget(line: HopBudgetLine, settings: ThreliumSettings) -> HopBudgetLine | None:
     """PUSH: декремент хвоста + append(sub_max). ``None`` если хвост после step < 1."""
-    parts = line.value.split() if line.value else [str(_default_root_hop_max(settings))]
-    new_tail = int(parts[-1]) - 1
-    if new_tail < 1:
-        return None
-    parts[-1] = str(new_tail)
-    return HopBudgetLine.parse(" ".join(parts + [str(_default_sub_hop_max(settings))]))
+    return line.push_subagent(
+        root_default=_default_root_hop_max(settings),
+        sub_max=_default_sub_hop_max(settings),
+    )
 
 
 def hop_budget_remaining(line: HopBudgetLine, settings: ThreliumSettings) -> int:
     """Оставшийся бюджет текущего уровня (хвост стека). ``0`` = исчерпан."""
-    parts = line.value.split() if line.value else []
-    if not parts:
-        return _default_root_hop_max(settings)
-    tail = parts[-1]
-    try:
-        return max(0, int(tail))
-    except ValueError:
-        raise RuntimeError(
-            f"FSM-инвариант: X-Threlium-Hop-Budget tail is not an integer: {tail!r} "
-            f"(full line: {line.value!r})"
-        )
+    return line.remaining(root_default=_default_root_hop_max(settings))
 
 
 def irt_wire_from_incoming_message_id(incoming: EmailMessage) -> RfcInReplyToWire | None:
@@ -271,7 +261,7 @@ def build_fsm_plain_to_stage(
     out.attach(_make_inline_text_part(EnrichContentId.from_system_body(system_body), system_body))
 
     out[HDR_HOP_BUDGET] = advance_hop_budget_for_simple_step(
-        HopBudgetLine.parse(incoming.get(HDR_HOP_BUDGET)), settings
+        HopBudgetLine.parse_from_email(incoming), settings
     ).value
 
     return out
@@ -321,7 +311,7 @@ def build_fsm_multipart_to_stage(
         out.attach(_make_inline_text_part(content_id, text))
 
     out[HDR_HOP_BUDGET] = advance_hop_budget_for_simple_step(
-        HopBudgetLine.parse(incoming.get(HDR_HOP_BUDGET)), settings
+        HopBudgetLine.parse_from_email(incoming), settings
     ).value
 
     return out
@@ -418,7 +408,7 @@ def build_fsm_step_to_stage(
         )
 
     out[HDR_HOP_BUDGET] = advance_hop_budget_for_simple_step(
-        HopBudgetLine.parse(incoming.get(HDR_HOP_BUDGET)), settings
+        HopBudgetLine.parse_from_email(incoming), settings
     ).value
 
     return out

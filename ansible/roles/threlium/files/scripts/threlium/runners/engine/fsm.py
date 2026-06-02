@@ -23,6 +23,7 @@ from threlium.types.systemd_status import SystemdStatusBody
 from threlium.types import (
     FsmStage,
     LitellmCallSite,
+    LitellmCorrelationSnapshot,
     MailHeaderName,
     NotmuchMessageIdInner,
     NotmuchQueryConnective,
@@ -86,17 +87,17 @@ def _run_stage(
         out_msg = handler(msg, stage_vo, config=settings)
     else:
         corr = build_litellm_correlation_headers(msg, call_site=LitellmCallSite.FSM)
+        snap = LitellmCorrelationSnapshot.from_mapping(corr)
         tid_s = thread_scope.value if thread_scope is not None else "?"
-        rt = corr.get(MailHeaderName.ROUTE.value)
         _log.debug(
             "e2e_fsm_tls_set",
             thread=threading.current_thread().name,
             ident=threading.get_ident(),
             notmuch_thread_id=tid_s,
-            route_tail=e2e_route_wire_tail(rt if isinstance(rt, str) else None),
-            call_site=LitellmCallSite.FSM.value,
+            route_tail=e2e_route_wire_tail(snap.route_wire),
+            call_site=snap.call_site,
         )
-        set_litellm_http_correlation(corr)
+        set_litellm_http_correlation(snap.as_dict())
         try:
             out_msg = handler(msg, stage_vo, config=settings)
         finally:
