@@ -6,7 +6,7 @@ from email.message import EmailMessage
 from threlium.knowledge_fsm import parse_formal_reason_result_payload
 from threlium.mime_reform import (
     iter_system_parts,
-    part_origin_label,
+    part_origin_stage,
     system_leaf_part_text,
 )
 from threlium.types import (
@@ -15,6 +15,7 @@ from threlium.types import (
     FormalReasonResultPayload,
     FsmStage,
     MailHeaderName,
+    RfcMessageIdWire,
 )
 
 _HDR = MailHeaderName
@@ -38,8 +39,8 @@ def compute_formal_reason_outcome(
 
 
 def _message_id_wire(msg: EmailMessage) -> str | None:
-    raw = msg.get(_HDR.MESSAGE_ID.value)
-    return str(raw).strip() if raw and str(raw).strip() else None
+    mid = RfcMessageIdWire.parse_present_from_email(msg, _HDR.MESSAGE_ID)
+    return mid.value if mid is not None else None
 
 
 def require_formal_reason_result_payload(
@@ -70,7 +71,7 @@ def formal_reason_result_from_reasoning_envelope(
     mid = _message_id_wire(msg)
     last: FormalReasonResultPayload | None = None
     for cid, part in iter_system_parts(msg):
-        if part_origin_label(part) != FsmStage.FORMAL_REASON.value:
+        if part_origin_stage(part) is not FsmStage.FORMAL_REASON:
             continue
         body = system_leaf_part_text(part).strip()
         if not body:
@@ -101,7 +102,7 @@ def assert_formal_reason_relay_after_splice(
     mid = message_id or _message_id_wire(spliced)
     found = False
     for cid, part in iter_system_parts(spliced):
-        if part_origin_label(part) != FsmStage.FORMAL_REASON.value:
+        if part_origin_stage(part) is not FsmStage.FORMAL_REASON:
             continue
         found = True
         body = system_leaf_part_text(part).strip()

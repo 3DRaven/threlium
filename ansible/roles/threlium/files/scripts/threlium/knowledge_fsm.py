@@ -5,60 +5,29 @@
 """
 from __future__ import annotations
 
-import json
-import logging
-
-import msgspec
-
+from threlium.types import parse_json_payload
 from threlium.types.knowledge_stage import (
     FormalReasonResultPayload,
     FormalReasonStagePayload,
     MemoryQueryStagePayload,
 )
 
-log = logging.getLogger(__name__)
-
 
 def parse_formal_reason_payload(text: str) -> FormalReasonStagePayload | None:
     """Parse JSON body → FormalReasonStagePayload or None on failure."""
-    try:
-        raw = json.loads(text)
-    except (json.JSONDecodeError, TypeError):
-        log.warning("formal_reason: payload is not valid JSON")
-        return None
-    try:
-        return msgspec.convert(raw, type=FormalReasonStagePayload)
-    except (msgspec.ValidationError, TypeError) as e:
-        log.warning("formal_reason: payload validation failed: %s", e)
-        return None
+    return parse_json_payload(text, FormalReasonStagePayload, log_ctx="formal_reason")
 
 
 def parse_formal_reason_result_payload(text: str) -> FormalReasonResultPayload | None:
     """Parse ``<system>`` JSON from ``formal_reason`` → :class:`FormalReasonResultPayload`."""
-    try:
-        raw = json.loads(text)
-    except (json.JSONDecodeError, TypeError):
-        log.warning("formal_reason: result payload is not valid JSON")
-        return None
-    try:
-        return msgspec.convert(raw, type=FormalReasonResultPayload)
-    except (msgspec.ValidationError, TypeError) as e:
-        log.warning("formal_reason: result payload validation failed: %s", e)
-        return None
+    return parse_json_payload(
+        text, FormalReasonResultPayload, log_ctx="formal_reason_result"
+    )
 
 
 def parse_memory_query_payload(text: str) -> MemoryQueryStagePayload | None:
     """Parse JSON body → MemoryQueryStagePayload or None on failure."""
-    try:
-        raw = json.loads(text)
-    except (json.JSONDecodeError, TypeError):
-        log.warning("memory_query: payload is not valid JSON")
-        return None
-    try:
-        return msgspec.convert(raw, type=MemoryQueryStagePayload)
-    except (msgspec.ValidationError, TypeError) as e:
-        log.warning("memory_query: payload validation failed: %s", e)
-        return None
+    return parse_json_payload(text, MemoryQueryStagePayload, log_ctx="memory_query")
 
 
 __all__ = [
