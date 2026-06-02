@@ -3974,6 +3974,9 @@ class MailflowScenarioSpec:
     body_override: str | None = None
     oversized_trim_body: bool = False
     summarize_overflow_body: bool = False
+    # Сколько старых ходов треда инжектить ПЕРЕД основным, чтобы их distill-брифы
+    # (каждый под cap distill) накопились в unified до переполнения → summarize.
+    summarize_overflow_prior_turns: int = 1
     min_chat_completion_posts: int = 1
     # Cold-reset SUT: один probe в knowledge/ → меньше drain/bootstrap embeddings на тред.
     min_embedding_posts: int = 5
@@ -4157,75 +4160,103 @@ def mailflow_inject_and_wait(
     reset_maildrop_debug_log(project_name, repo_root=REPO_ROOT)
 
     if seed_id is not None:
-        if spec.summarize_overflow_body:
-            seed_body = e2e_summarize_overflow_inject_body(
-                head=f"{spec.body_head} (prior thread turn seed)",
-                correlation_key=correlation_key,
+        # summarize overflow: несколько старых ходов одного треда, каждый distill-бриф под
+        # cap (distill_max_chars), накапливаются в unified до переполнения mckp_capacity →
+        # summarize. Каждый ход тредится на ОТВЕТ агента предыдущего (см. комментарий ниже).
+        prior_turns_count = (
+            max(1, spec.summarize_overflow_prior_turns)
+            if spec.summarize_overflow_body
+            else 1
+        )
+        chain_in_reply_to: str | None = None
+        for turn_idx in range(prior_turns_count):
+            cur_seed_id = (
+                seed_id
+                if turn_idx == 0
+                else f"{spec.raw_id_prefix}seed{turn_idx}-{uuid.uuid4().hex}@localhost"
             )
-        elif spec.oversized_trim_body:
-            seed_body = e2e_oversized_context_trim_prior_turn_body(
-                head=f"{spec.body_head} (prior thread turn seed)",
-                correlation_key=correlation_key,
+            if spec.summarize_overflow_body:
+                # Маленькое сырое тело (HEAD/PAD-маркеры для проверки «raw не протёк»);
+                # размер unified задаёт templated distill-бриф (per-turn Message-ID → разный CID),
+                # а не это тело.
+                seed_body = e2e_summarize_overflow_inject_body(
+                    head=f"{spec.body_head} (prior thread turn seed {turn_idx})",
+                    correlation_key=correlation_key,
+                    pad_chars=500,
+                )
+            elif spec.oversized_trim_body:
+                seed_body = e2e_oversized_context_trim_prior_turn_body(
+                    head=f"{spec.body_head} (prior thread turn seed)",
+                    correlation_key=correlation_key,
+                )
+            else:
+                seed_body = e2e_dense_threlium_ctx_body(
+                    head=f"{spec.body_head} (prior thread turn seed)",
+                    correlation_key=correlation_key,
+                )
+            smtp_inject_inbound(
+                project_name,
+                checkout="/unused",
+                repo_root=REPO_ROOT,
+                message_id=cur_seed_id,
+                body=seed_body,
+                **(
+                    {"in_reply_to": chain_in_reply_to}
+                    if chain_in_reply_to is not None
+                    else {}
+                ),
             )
-        else:
-            seed_body = e2e_dense_threlium_ctx_body(
-                head=f"{spec.body_head} (prior thread turn seed)",
-                correlation_key=correlation_key,
+            mailflow_log_phase(
+                f"{spec.label}: prior-turn seed[{turn_idx}] injected mid={cur_seed_id!r} "
+                f"(+{time.monotonic() - t0:.1f}s)"
             )
-        smtp_inject_inbound(
-            project_name,
-            checkout="/unused",
-            repo_root=REPO_ROOT,
-            message_id=seed_id,
-            body=seed_body,
-        )
-        mailflow_log_phase(
-            f"{spec.label}: prior-turn seed injected mid={seed_id!r} (+{time.monotonic() - t0:.1f}s)"
-        )
-        wait_for_greenmail_inbox_message_gone_host(
-            rt.greenmail_imap_host,
-            rt.greenmail_imap_port,
-            message_id=seed_id,
-        )
-        seed_nm_inner = email_ingress_notmuch_id_inner(seed_id)
-        mailflow_wait_fsm_maildir_activity(
-            project_name,
-            repo_root=REPO_ROOT,
-            message_id=seed_nm_inner,
-        )
-        wait_for_notmuch_message(
-            project_name, message_id=seed_nm_inner, repo_root=REPO_ROOT
-        )
-        mailflow_log_phase(
-            f"{spec.label}: prior-turn seed indexed mid={seed_id!r} (+{time.monotonic() - t0:.1f}s)"
-        )
-        wait_for_greenmail_user_reply(
-            project_name,
-            raw_id=seed_id,
-            repo_root=REPO_ROOT,
-        )
-        assert_notmuch_thread_fully_in_stages(
-            project_name,
-            anchor_message_id=seed_nm_inner,
-            repo_root=REPO_ROOT,
-        )
-        mailflow_log_phase(
-            f"{spec.label}: prior-turn seed pipeline settled mid={seed_id!r} "
-            f"(+{time.monotonic() - t0:.1f}s)"
-        )
-        # Реалистичный threading: основной ход тредится на ОТВЕТ агента (egress glue-record),
-        # а не на собственную seed-инъекцию. Тогда IRT-цепочка основного хода проходит через
-        # ``tasks_upsert`` seed-хода → per-frame task-ledger наследуется и finalize-gate
-        # проходит без ручного сброса WireMock-латча ``phase_tasks_ledger_done``.
-        main_in_reply_to = greenmail_wait_agent_reply_message_id(
-            rt.greenmail_imap_host,
-            rt.greenmail_imap_port,
-            in_reply_to_anchor=seed_id,
-        )
-        mailflow_log_phase(
-            f"{spec.label}: prior-turn agent reply mid={main_in_reply_to!r} "
-            f"(+{time.monotonic() - t0:.1f}s)"
-        )
+            wait_for_greenmail_inbox_message_gone_host(
+                rt.greenmail_imap_host,
+                rt.greenmail_imap_port,
+                message_id=cur_seed_id,
+            )
+            seed_nm_inner = email_ingress_notmuch_id_inner(cur_seed_id)
+            mailflow_wait_fsm_maildir_activity(
+                project_name,
+                repo_root=REPO_ROOT,
+                message_id=seed_nm_inner,
+            )
+            wait_for_notmuch_message(
+                project_name, message_id=seed_nm_inner, repo_root=REPO_ROOT
+            )
+            mailflow_log_phase(
+                f"{spec.label}: prior-turn seed[{turn_idx}] indexed mid={cur_seed_id!r} "
+                f"(+{time.monotonic() - t0:.1f}s)"
+            )
+            wait_for_greenmail_user_reply(
+                project_name,
+                raw_id=cur_seed_id,
+                repo_root=REPO_ROOT,
+            )
+            assert_notmuch_thread_fully_in_stages(
+                project_name,
+                anchor_message_id=seed_nm_inner,
+                repo_root=REPO_ROOT,
+            )
+            mailflow_log_phase(
+                f"{spec.label}: prior-turn seed[{turn_idx}] pipeline settled mid={cur_seed_id!r} "
+                f"(+{time.monotonic() - t0:.1f}s)"
+            )
+            # Реалистичный threading: следующий ход (seed или основной) тредится на ОТВЕТ
+            # агента (egress glue-record), а не на собственную инъекцию. Тогда IRT-цепочка
+            # проходит через ``tasks_upsert`` предыдущего хода → per-frame task-ledger
+            # наследуется и finalize-gate проходит без ручного сброса латча
+            # ``phase_tasks_ledger_done``.
+            chain_in_reply_to = greenmail_wait_agent_reply_message_id(
+                rt.greenmail_imap_host,
+                rt.greenmail_imap_port,
+                in_reply_to_anchor=cur_seed_id,
+            )
+            mailflow_log_phase(
+                f"{spec.label}: prior-turn seed[{turn_idx}] agent reply mid={chain_in_reply_to!r} "
+                f"(+{time.monotonic() - t0:.1f}s)"
+            )
+        main_in_reply_to = chain_in_reply_to
 
     if spec.body_override is not None:
         inject_body = spec.body_override

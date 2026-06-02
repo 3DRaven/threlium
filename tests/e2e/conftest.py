@@ -115,6 +115,10 @@ E2E_COMPOSE_DOWN_ENV = "THRELIUM_E2E_COMPOSE_DOWN"
 # рестарт user-units на уровне playbook) стек должен остаться чистым и работающим для последующих
 # прогонов тестов (которые делают attach-only + session cold reset, но сам стек не поднимают).
 E2E_LEAVE_STACK_RUNNING_ENV = "THRELIUM_E2E_LEAVE_STACK_RUNNING"
+# После FAIL тела теста sessionfinish всё равно ждёт idle work@/sweep@ и unmatched;
+# без укороченного лимита выглядит как «зависание» (до 120 с). См. run_individual_e2e.sh.
+E2E_SESSIONFINISH_DRAIN_SEC_ENV = "THRELIUM_E2E_SESSIONFINISH_DRAIN_SEC"
+E2E_SESSIONFINISH_FAIL_DRAIN_SEC_ENV = "THRELIUM_E2E_SESSIONFINISH_FAIL_DRAIN_SEC"
 
 _E2E_TESTS_ROOT = Path(__file__).resolve().parent
 
@@ -125,6 +129,21 @@ _THRELIUM_E2E_SESSION_TMP_DIR = pytest.StashKey[Path]()
 def pytest_configure(config: pytest.Config) -> None:
     # e2e harness: INFO по умолчанию (DEBUG — только явно через THRELIUM_LOG_LEVEL).
     setup_logging(os.environ.get("THRELIUM_LOG_LEVEL", "INFO"))
+
+
+def _sessionfinish_drain_sec(exitstatus: int) -> float:
+    """Лимит ожидания idle work@/sweep@ и unmatched в ``pytest_sessionfinish``."""
+    try:
+        default = float(os.environ.get(E2E_SESSIONFINISH_DRAIN_SEC_ENV, "120"))
+    except ValueError:
+        default = 120.0
+    if exitstatus == 0:
+        return default
+    try:
+        fail_cap = float(os.environ.get(E2E_SESSIONFINISH_FAIL_DRAIN_SEC_ENV, "30"))
+    except ValueError:
+        fail_cap = 30.0
+    return min(default, fail_cap)
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
@@ -545,7 +564,13 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
             try:
                 rt = discover_runtime(pn_fin)
                 wm = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
-                drain_sec = float(os.environ.get("THRELIUM_E2E_SESSIONFINISH_DRAIN_SEC", "120"))
+                drain_sec = _sessionfinish_drain_sec(exitstatus)
+                if exitstatus != 0:
+                    log.info(
+                        "sessionfinish_fail_fast_drain",
+                        drain_sec=drain_sec,
+                        exitstatus=exitstatus,
+                    )
                 wait_for_sut_threlium_user_workers_idle(pn_fin, timeout=drain_sec)
                 assert_wiremock_zero_unmatched_requests(wm, wait_timeout_sec=drain_sec)
                 # Изоляцию обеспечивает state-matcher + composite_context_key

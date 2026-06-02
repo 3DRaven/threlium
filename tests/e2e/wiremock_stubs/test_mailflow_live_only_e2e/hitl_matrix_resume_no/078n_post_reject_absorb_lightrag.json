@@ -4,7 +4,7 @@
     "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
     "headers": {
       "X-Threlium-Call-Site": {
-        "matches": "^lightrag_.*"
+        "equalTo": "extract_knowledge_graph"
       }
     },
     "bodyPatterns": [

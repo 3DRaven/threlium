@@ -1,5 +1,4 @@
 {
-  "id": "b1c2d3e4-f5a6-7b8c-9d0e-1f2a3b4c5d6e",
   "request": {
     "method": "POST",
     "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
@@ -8,7 +7,7 @@
         "equalTo": "e2e-bootstrap"
       },
       "X-Threlium-Call-Site": {
-        "equalTo": "extract_knowledge_graph"
+        "equalTo": "extract_knowledge_graph_gleaning"
       }
     },
     "bodyPatterns": [
@@ -23,7 +22,7 @@
       "Content-Type": "application/json"
     },
     "jsonBody": {
-      "id": "chatcmpl-e2e-bootstrap-knowledge",
+      "id": "chatcmpl-e2e-bootstrap-knowledge-gleaning",
       "object": "chat.completion",
       "created": 0,
       "model": "gpt-4o-mini",
@@ -36,11 +35,11 @@
             "content": null,
             "tool_calls": [
               {
-                "id": "call_lightrag_008_chat_completions_bootstrap_knowledge",
+                "id": "call_lightrag_008g_chat_completions_bootstrap_gleaning",
                 "type": "function",
                 "function": {
-                  "name": "extract_knowledge_graph",
-                  "arguments": "{\"entities\": [{\"name\": \"E2e Bootstrap Entity\", \"type\": \"concept\", \"description\": \"Synthetic entity from knowledge bootstrap indexing.\"}], \"relations\": []}"
+                  "name": "extract_knowledge_graph_gleaning",
+                  "arguments": "{\"entities\": [], \"relations\": []}"
                 }
               }
             ]
