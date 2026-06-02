@@ -43,7 +43,7 @@ from pathlib import Path
 from tests.e2e.log import clip_log_body, log
 from threlium.types import FsmStage
 
-from .helpers import (
+from .toolkit import (
     E2EComposeRuntime,
     MailflowScenarioSpec,
     REPO_ROOT,
@@ -63,7 +63,7 @@ MAILFLOW_SPEC = MailflowScenarioSpec(
     stub_dir=_WIREMOCK_STUBS_ROOT / "test_mailflow_e2e",
     stub_tag="stub-mailflow-e2e-01",
     body_head="e2e body",
-    min_chat_completion_posts=2,
+    min_chat_completion_posts=3,
     min_embedding_posts=5,
     expect_notmuch_stage_folders=(
         FsmStage.INGRESS.value,
@@ -82,7 +82,7 @@ MAILFLOW_SPEC = MailflowScenarioSpec(
 def _assert_egress_reply_excludes_internal_mime(project: str, *, raw_id: str) -> None:
     """External SMTP reply must not leak ``@history`` / ``@system`` MIME parts (egress_email purity)."""
     import imaplib
-    from .helpers import E2E_FETCHMAIL_PASS, E2E_GREENMAIL_REPLY_USER
+    from .toolkit import E2E_FETCHMAIL_PASS, E2E_GREENMAIL_REPLY_USER
     from .mail_wire import e2e_parse_rfc822
 
     rt = discover_runtime(project, repo_root=REPO_ROOT)
