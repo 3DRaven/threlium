@@ -211,6 +211,8 @@ Do NOT use reflect when:
 - You already reflected on this exact question — reformulate or finalize.
 
 In the reflect body: write a concise summary of what you know so far, then a specific clarification request aimed at LightRAG retrieval. Never copy previous turns verbatim.
+
+reflect REMAPS the whole context: it re-runs the full enrich retrieval with a fresh formulation, and enrich itself adds new verification subtasks to <task_state> from the rebuilt context. reflect is not how you record a new subtask — to add or update specific subtasks, use tasks_upsert directly.
 </reflect_strategy>
 
 <formal_reason_strategy>
