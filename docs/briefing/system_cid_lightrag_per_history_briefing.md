@@ -2,7 +2,9 @@
 
 Документ для передачи контекста в другую сессию. Нормативные контракты остаются в
 [`CONTEXT_CONTRACT.md`](../CONTEXT_CONTRACT.md) §2, §7 и [`INDEX.md`](../INDEX.md) §5b;
-здесь — что сделано, зачем и что не трогали.
+здесь — что сделано, зачем и что не трогали. См. также
+[`summarize_context_overflow_e2e_briefing.md`](summarize_context_overflow_e2e_briefing.md)
+(enrich/summarize и `concat_history_parts_text` — не LightRAG ingest).
 
 **Дата работы:** 2026-06-02  
 **План (не редактировать):** `.cursor/plans/system_cid_maildir_read_bd86a493.plan.md`  
@@ -174,7 +176,7 @@ docs/TYPES.md, ARCHITECTURE.md, MEMORY_TABLE.md
 1. **Bake/deploy:** закрепить изменения в образе SUT (`wipe_bake` или `wipe_sync`), не только `docker cp`.
 2. **E2e из плана:** по желанию — `test_mailflow_live_only` (cli_resume HITL), `test_response_buffer_e2e`, task_ledger, `test_cli_discovery_chain_e2e`, `test_cli_route_collision`, `test_lightrag_index_filter_e2e`, `test_knowledge_bootstrap_live_e2e`.
 3. **Поиск битых ссылок:** `rg 'adr/0001|ingest_body\.j2'` по `docs/` и тестам.
-4. **`concat_history_parts_text`:** остаётся для enrich/summarize/Jinja `history_text` — это **не** LightRAG ingest; не путать с удалённым merge в ingest.
+4. **`concat_history_parts_text`:** остаётся для enrich/summarize/Jinja `history_text` — это **не** LightRAG ingest; см. [`summarize_context_overflow_e2e_briefing.md`](summarize_context_overflow_e2e_briefing.md) (фикс `history_body_chars`).
 
 ---
 

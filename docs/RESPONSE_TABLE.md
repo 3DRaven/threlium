@@ -138,4 +138,6 @@ class TasksUpsertOp:       # durable письмо → tasks_upsert (JSON tool-ar
   `cancelled` старой. Meta (`discovery_append` / `next_action` / `blockers` /
   `allow_finalize_with_blocker`) — last-wins в reduced-ledger. enrich сеет стартовый набор
   (LLM `enrich_task_plan`, fail-open на самом seed; пустой результат → ledger пуст → gate
-  всё равно блокирует, пока модель не заведёт план).
+  всё равно блокирует, пока модель не заведёт план) и после RAG добавляет проверяемые
+  гипотезы (LLM `enrich_task_hypotheses`, тоже fail-open) — оба прохода пишут один
+  `<task-init>` (один `TaskInitOp` на письмо enrich→reasoning), не через `tasks_upsert`.
