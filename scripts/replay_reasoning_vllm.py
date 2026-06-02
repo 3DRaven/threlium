@@ -19,7 +19,6 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
-from email import message_from_bytes
 from pathlib import Path
 from typing import Any
 
@@ -27,8 +26,10 @@ _REPO = Path(os.environ.get("THRELIUM_REPO", "/home/threlium/threlium/agent"))
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
+from threlium.mail import parse_rfc822
 from threlium.enrich_context import trim_context_text
-from threlium.mime_reform import canonicalize_mime, extract_plain_body
+from threlium.mail import canonicalize_mime
+from threlium.mime_reform import extract_plain_body
 from threlium.prompts import init_prompts_root, render_prompt
 from threlium.settings import load_settings, resolve_llm_endpoint
 from threlium.states.reasoning import _render_user_prompt
@@ -414,7 +415,7 @@ def main() -> None:
 
     path = _find_mail(MID)
     raw = path.read_bytes()
-    msg = canonicalize_mime(message_from_bytes(raw))
+    msg = canonicalize_mime(parse_rfc822(raw))
     hop = HopBudgetLine.parse(msg.get(_HDR.HOP_BUDGET))
     body_text = trim_context_text(
         extract_plain_body(msg).strip(),

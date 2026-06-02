@@ -21,7 +21,7 @@ from pathlib import Path
 import notmuch2  # pyright: ignore[reportMissingImports]
 
 from threlium import nm
-from threlium.mime_reform import email_message_from_bytes
+from threlium.mail import email_message_from_bytes
 from threlium.ingress_route_resolve import (
     egress_fsm_start_inner_from_email,
     resolve_route_for_egress_fsm_from_email,
@@ -111,9 +111,9 @@ def main() -> None:
             try:
                 p0 = Path(out_r.strip().split("\n")[0])
                 raw = p0.read_bytes()[:8000]
-                from email import message_from_bytes
+                from threlium.mail import parse_rfc822
 
-                em = message_from_bytes(raw)
+                em = parse_rfc822(raw)
                 hdr = em.get("X-Threlium-Route")
             except OSError:
                 hdr = "(read header failed)"
