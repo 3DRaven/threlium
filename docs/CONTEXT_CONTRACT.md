@@ -138,7 +138,7 @@ flowchart LR
 |---|---|:--:|:--:|:--:|---|
 | `cli_exec` | `enrich_fast` | —⁴ | да | да | Результат команды (observation: cmd_line+stdout/stderr/exit) → `<history>` (origin=cli_exec) + `<system>`. ⁴cmd_line уже в observation, отдельный echo избыточен. |
 | `cli_hitl_out` | `egress_router` | — | да | да | Вопрос пользователю: `<system>` = тело отправки, `<history>` = копия вопроса. |
-| `cli_resume` | `ingress` / `cli_exec` | — | нет | да | Возобновление после HITL: `<system>` = ответ пользователя; пустой ответ → `enrich_fast` без LLM; иначе sync LLM tool `confirm_cli_hitl` (score 0, retry bridge). Отказ пользователя (`confirmed=false`) → `enrich_fast`; ошибка classify после retry → падение стадии. |
+| `cli_resume` | `ingress` / `cli_exec` | — | нет | да | Возобновление после HITL: `<system>` = ответ пользователя; пустой ответ → `enrich_fast` без LLM; иначе sync LLM tool `confirm_cli_hitl` (score 0, retry bridge). Исходный intent по IRT-предку читается из `<system>` (`system_part_text_from_path`), не из первого `text/plain`. Отказ пользователя (`confirmed=false`) → `enrich_fast`; ошибка classify после retry → падение стадии. |
 
 **Субагент-возврат / сжатие / терминальные.**
 
@@ -161,7 +161,7 @@ flowchart LR
 
 | Content-ID | Источник |
 |---|---|
-| `<user-message>` | canonical user text |
+| `<user-message>` | canonical user text (§4.1: `enrich_incoming_user_text.j2` + last `<history>`) |
 | `<graph-answer>` | JSON-envelope `rag.aquery` |
 | `<unified-mail-context>` | хронология треда + memory из `<history>`-частей (`message_has_history`) |
 | `<thread-memory>` / `<global-memory>` | memory-письма (намеренное дублирование маркеров) |
@@ -170,6 +170,108 @@ flowchart LR
 
 MCKP-бюджет / тиринг контекста (`context_budget.py`) живут **только в большом enrich**.
 Деталь секций — [`FSM.md` §5.2](FSM.md#52-контракт-тела-enrich--reasoning).
+
+### 4.1 Distill → enrich: контур передачи
+
+Distill **не передаёт** в enrich отдельный JSON или заголовок: результат — только
+`<history>`-части на том же `EmailMessage`, который fdm кладёт в `stages/enrich/Maildir`.
+Части `<user-message>` / `<unified-mail-context>` появляются **позже**, на выходе полного
+enrich→reasoning (`build_enriched_multipart`, §4).
+
+```mermaid
+flowchart TB
+  subgraph ingress["ingress._emit_to_enrich"]
+    EXT[Внешнее тело моста]
+    LLM["ingress_distill_llm (tool_choice=required)"]
+    H1["&lt;hash@history&gt; language / step_back / gaps"]
+    H2["&lt;hash@history&gt; ## User intent … (user_query)"]
+    EXT --> LLM
+    LLM --> H1
+    LLM --> H2
+  end
+  subgraph enrich_in["enrich@ (вход, notmuch)"]
+    MSG["multipart: конверт + 0..N &lt;history&gt;, без &lt;system&gt;"]
+    H1 --> MSG
+    H2 --> MSG
+  end
+  subgraph enrich_run["enrich.main (runtime)"]
+    UM["user_message_text = enrich_incoming_user_text.j2"]
+    UNI["ctx.all_messages = build_unified_email_messages(leaf)"]
+    MSG --> UM
+    MSG --> UNI
+  end
+  subgraph enrich_out["enrich → reasoning (выход)"]
+    P1["&lt;user-message&gt;"]
+    P2["&lt;unified-mail-context&gt;"]
+    UM --> P1
+    UNI --> P2
+  end
+```
+
+**Шаг 1 — ingress (`states/ingress.py`, `ingress_distill.py`).**
+
+1. Мост кладёт сырое внешнее тело; `ingress` собирает `IngressDistillEnvelope` (канал,
+   заголовки, `full_body`, опц. orphan-notice).
+2. `ingress_distill_llm`: один LLM-вызов с обязательным tool `ingress_distill` (или
+   fail-safe fallback, см. ниже).
+3. Каждое поле tool → отдельный `IngressDistillHistoryPart` → Jinja-шаблон history
+   (`ingress/distill_history_*.j2`) → `out.attach(_make_inline_text_part(
+   EnrichContentId.from_history_body(text), …))`.
+4. Переход `ingress → enrich`: `emit_transition_simple_step_preserving_payload` — конверт
+   и уже существующие части сохраняются; **`<system>` на этом пути не эмитится** (§3).
+
+Порядок history-частей на письме (если tool вернул все поля): `user_reply_language` →
+`step_back_notes` → `open_gaps` → **`user_query` последним** — canonical user turn = **последняя**
+непустая `<history>` (`last_history_part_text`, `mime_reform.py`).
+
+| Поле tool `ingress_distill` | Heading в `<history>` | Кто читает на первом enrich |
+|---|---|---|
+| `user_query` | `## User intent` | **`last_history` → `<user-message>`**; graph query / task plan |
+| `user_reply_language` | `## User reply language` | reasoning egress / `response_finalize` |
+| `step_back_notes` | `## Step-back context` | `<unified-mail-context>`, reasoning history |
+| `open_gaps` | `## Open gaps` | `<unified-mail-context>`, reasoning history |
+
+**Шаг 2 — вход enrich (`states/enrich.py`).** Handler читает **текущее** письмо листа
+(`Message-ID` = ход ingress→enrich) из notmuch. На диске: только `<history>` + RFC822-конверт.
+`<user-message>` **ещё нет** — это не часть контракта ingress→enrich.
+
+Два **параллельных** чтения одного `msg` (не два канала от distill):
+
+1. **Canonical user turn** — `user_message_text = render_prompt(
+   PromptPath.LIGHTRAG_ENRICH_INCOMING_USER_TEXT, incoming=msg)`. Шаблон
+   `lightrag/enrich_incoming_user_text.j2`: заголовки конверта (From/To/Subject/Message-ID/…)
+   + фильтр `last_history_text` (= последняя distill-`<history>`, обычно `## User intent`).
+   Используется для query plan, task plan, бюджета `EnrichPartId.USER_MESSAGE`.
+
+2. **Unified-бакет** — `ctx = build_unified_email_messages(leaf_inner=текущий MID,
+   thread_id=…)` (`enrich_context.py`): обход IRT **старые→новые**, лист (текущий
+   ingress→enrich) **включается**; из каждого письма — все непустые `<history>` (дедуп по
+   `EnrichContentId`, без `tag:context_summarized`, memory — отдельные бакеты). Рендер в
+   `<unified-mail-context>` — `lightrag/mail_context.j2` + `history_text` (§5).
+
+Последняя history листа **может кратко дублировать** тело `<user-message>` (один и тот же
+`user_query`, разная обёртка: у `<user-message>` есть envelope-заголовки в шаблоне).
+
+**Шаг 3 — выход enrich→reasoning.** После LightRAG/MCKP `build_enriched_multipart` создаёт
+core-CID (§4): в т.ч. `<user-message>` из `user_message_text` и `<unified-mail-context>` из
+`ctx.all_messages`. Distill-части листа попадают в unified **как элементы хронологии**, а не
+как отдельный «пакет distill».
+
+**Fallback distill** (`ingress_distill_llm` после исчерпания retry): одна `<history>` =
+`ingress/distill_history_user_query.j2` с `user_query = trim_context_text(full_body,
+distill_fallback_max_chars)` — **хвост** сырого тела (`trim_prompt_text`), без LLM-полей
+language/gaps/step_back. Тот же контракт CID; enrich читает его так же через `last_history_text`.
+
+**Связь с overflow summarize** (§5): `_emit_summarize_overflow` берёт
+`concat_history_parts_text(m)` по письмам из `ctx.all_messages` — те же `<history>` на диске,
+что и для оценки веса (`history_body_chars` / `estimate_unified_weight`), **не** из готового
+`<unified-mail-context>` и **не** из distill как
+отдельного артефакта. Summarize сжимает **старый хвост** треда при переполнении бюджета; на
+одно письмо в треде в batch попадает только лист → суммаризируется текущий distill-бриф (см.
+e2e `test_summarize_context_e2e` — сценарий одного хода).
+
+Код: `states/ingress.py` (`_emit_to_enrich`), `ingress_distill.py`, `types/ingress_distill.py`,
+`prompts/lightrag/enrich_incoming_user_text.j2`, `enrich_context.py`, `states/enrich.py`.
 
 ---
 
@@ -185,8 +287,7 @@ MCKP-бюджет / тиринг контекста (`context_budget.py`) жив
   / `<task-state>` (пересчёт CRDT). Остальные части `E_prev` не трогает.
 - **`enrich`** (`enrich_context.py`): полный обход IRT (лист + предки, старые→новые), берёт
   `<history>`-части из **всех** писем (включая лист ingress→enrich и `To: enrich_fast`),
-  исключая `tag:context_summarized` и memory-бакеты. Последняя history листа может кратко
-  дублировать `<user-message>` (canonical = `last_history_text`).
+  исключая `tag:context_summarized` и memory-бакеты (лист ingress→enrich и дедуп — §4.1).
   Планировщик графа (`enrich_query_plan.j2`, recent messages) и overflow summarize
   (`enrich._emit_summarize_overflow`) читают те же `<history>`-части через
   `concat_history_parts_text` / Jinja `history_text`, **не** `get_body`.
@@ -214,19 +315,22 @@ origin + tool spec, известный модели. Бюджет — tail-keep 
 Drain (`runners/lightrag/_drain.py`, `lightrag_drain_query.py`) индексирует письмо тем же
 предикатом `message_has_history`. notmuch не индексирует MIME по Content-ID, поэтому selector
 даёт лишь tag-негативы (дешёвый pre-filter), а финальный `message_has_history` применяется
-load-time. Тело графа — конкатенация `<history>`-частей (`lightrag_ingest.py`). `<system>`
-**не индексируется**: его смысл несёт парная `<history>`-копия. Письма без history →
-`lightrag_skipped` (не вечный pending).
+load-time. Ingest-строка (`lightrag_ingest.py`) — synthetic `multipart/mixed`: **каждая**
+`<history>`-часть письма переезжает как отдельная inline `text/plain` с тем же контент-адресным
+CID `<{sha256(body)}@history>` (без слияния в одно plain-тело). Чанкинг
+(`threlium_email_chunking_func`) идёт **по отдельным** `<history>`-частям: малая часть
+(`tokens ≤ chunk_token_size`) → один чанк, большая → окно/overlap внутри части; нумерация
+`X-Threlium-LightRAG-Chunk` сквозная 1..N по документу. Bootstrap (`runners/lightrag/_bootstrap.py`)
+оборачивает файл в ту же одну `<history>`-часть — единый путь chunking, без fallback на первый
+`text/plain`. `<system>` **не индексируется**: его смысл несёт парная `<history>`-копия. Письма
+без history → `lightrag_skipped` (не вечный pending).
 
 ---
 
 ## 8. Сквозные примеры по CID
 
-**Ход пользователя (внешний → ingress).** Мост: полное внешнее тело (без semantic trim) →
-`ingress`. `ingress._emit_to_enrich`: preserving MIME + append **несколько** `<history>` (LLM distill,
-`tool_choice=required`; каждое поле tool — свой Jinja; порядок: language → step_back → gaps →
-**`user_query` последним**) → `enrich` читает **последнюю** `<history>` (`last_history_part_text`
-→ `<user-message>`); все distill-`<history>` — в unified (лист не пропускается) и в LightRAG.
+**Ход пользователя (внешний → ingress → enrich).** Полный контур distill→enrich, canonical
+`<user-message>` vs unified — **§4.1**. Сводка полей tool:
 
 | Поле distill | History heading | Потребитель | Язык |
 |---|---|---|---|

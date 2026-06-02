@@ -79,7 +79,7 @@ class EmailStruct:
 
 **`X-Threlium-Irt-Hash` (sha256):** SHA256 hex от значения ``In-Reply-To`` — :class:`IrtHashWire` (фабрика ``from_irt_header_value``). Та же причина: base62-encoded MID (96+ символов local-part) отбрасывается Xapian. Запрос ``IrtHashWire.from_irt_header_value(irt).as_notmuch_index_term()`` — O(1) поиск по индексу. Модуль: [`types/irt_hash.py`](../ansible/roles/threlium/files/scripts/threlium/types/irt_hash.py).
 
-**`X-Threlium-Thread-Id` (только ingest-строка):** не пишется в Maildir; задаётся только в синтетическом RFC822 для `ainsert` (сериализация — `threlium.mail.serialize_rfc822_for_wire` / `RFC822_FOR_INSERT`, тело — шаблон `lightrag/ingest_body.j2`, см. [`docs/adr/0001-lightrag-ingest-chunking-enrich.md`](adr/0001-lightrag-ingest-chunking-enrich.md)).
+**`X-Threlium-Thread-Id` (только ingest-строка):** не пишется в Maildir; задаётся только в синтетическом `multipart/mixed` RFC822 для `ainsert` (сериализация — `threlium.mail.serialize_rfc822_for_wire` / `RFC822_FOR_INSERT`, тело — по одной inline `text/plain` на каждую `<history>`-часть, без слияния; см. [`docs/CONTEXT_CONTRACT.md`](CONTEXT_CONTRACT.md) §7).
 
 **CLI intent payload:** `CliIntentPayload` — `argv`, опционально `cwd`, `privileged: bool` (default false). Политика `CliIntentPolicy`: `SANDBOX` | `PRIVILEGED`. Sandbox — `systemd-run --user --wait --pipe` с `ProtectSystem=strict`; privileged — `systemd-run --wait --pipe --uid=0` после HITL (если `cli.privileged_hitl_enabled`).
 
