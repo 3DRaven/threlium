@@ -3,10 +3,34 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import msgspec
+
 from threlium.logutil import logger
 from threlium.types import NotmuchMessageIdInner
 
 log = logger.bind(stage="response")
+
+
+class ResponseEditStagePayload(msgspec.Struct, frozen=True):
+    """Wire-форма ``<system>`` для ``response_edit``: ``{position, new_content}``.
+
+    TYPES (``docs/TYPES.md`` § CRDT msgspec boundary): edit-op читается строго через
+    ``msgspec.json.decode(..., type=ResponseEditStagePayload)``, без ``json.loads`` + ручного
+    ``dict``. Поле ``reasoning`` tool-арга в ``<system>`` НЕ релеится (нужно только LLM на
+    tool-call, ``ResponseEditToolArgs``), поэтому это отдельная wire-структура, а не
+    ``ResponseEditToolArgs``.
+    """
+
+    position: int
+    new_content: str | None = None
+
+
+def parse_response_edit_stage_payload(raw: str) -> ResponseEditStagePayload | None:
+    """``<system>`` JSON → :class:`ResponseEditStagePayload`; невалидный payload → ``None``."""
+    try:
+        return msgspec.json.decode(raw.encode("utf-8"), type=ResponseEditStagePayload)
+    except (msgspec.DecodeError, msgspec.ValidationError):
+        return None
 
 
 @dataclass(frozen=True)

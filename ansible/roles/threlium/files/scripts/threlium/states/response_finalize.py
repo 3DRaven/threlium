@@ -18,25 +18,21 @@ from threlium.fsm_emit import (
 )
 from threlium.logutil import logger
 from threlium.mime_reform import system_part_text
+from threlium.nm import require_fsm_message_id
 from threlium.prompts import render_prompt
 from threlium.response.collect import collect_ops
 from threlium.response.reduce import reduce_ops
 from threlium.settings import ThreliumSettings
-from threlium.task import (
-    build_task_incomplete_notice,
-    collect_task_ops,
-    ledger_has_open_work,
-    reduce_task_ops,
-)
+from threlium.ledger_context_parts import crdt_ledger_state
+from threlium.task import build_task_incomplete_notice, ledger_has_open_work
 from threlium.types import (
     FsmStage,
     FsmTransitionPlainBody,
     FsmTransitionPlainSubjectLine,
     HopBudgetLine,
     MailHeaderName,
-    NotmuchMessageIdInner,
     PromptPath,
-    RfcMessageIdWire,
+    RfcSubjectWire,
 )
 
 log = logger.bind(stage="response_finalize")
@@ -45,10 +41,7 @@ log = logger.bind(stage="response_finalize")
 def main(
     msg: EmailMessage, stage: FsmStage, *, config: ThreliumSettings
 ) -> EmailMessage | None:
-    mid_w = RfcMessageIdWire.parse_present_from_email(msg, MailHeaderName.MESSAGE_ID.value)
-    inner = NotmuchMessageIdInner.from_optional_wire(mid_w)
-    if inner is None:
-        raise RuntimeError("response_finalize: no Message-ID on incoming message")
+    mid_w, inner = require_fsm_message_id(msg, "response_finalize")
 
     inline_content = system_part_text(msg).strip() or None
 
@@ -66,9 +59,9 @@ def main(
     # Исключение — исчерпанный hop-budget (remaining == 0): reasoning форсирует
     # сюда последний ответ, и он возвращается пользователю жёстко, минуя gate
     # (иначе finalize↔ingress зациклится). См. states/reasoning.py (force_finalize).
-    hop_line = HopBudgetLine.parse(msg.get(MailHeaderName.HOP_BUDGET.value))
+    hop_line = HopBudgetLine.parse_from_email(msg)
     budget_exhausted = hop_budget_remaining(hop_line, config) < 1
-    ledger = reduce_task_ops(collect_task_ops(inner))
+    ledger = crdt_ledger_state(inner).task_ledger
     if (
         not budget_exhausted
         and (has_buffer or has_content)
@@ -89,9 +82,10 @@ def main(
             settings=config,
         )
 
+    subj_w = RfcSubjectWire.parse_present_from_email(msg, MailHeaderName.SUBJECT)
     subject_raw = (
-        msg.get(MailHeaderName.SUBJECT)
-        or render_prompt(PromptPath.RESPONSE_FINALIZE_FALLBACK_SUBJECT).strip()
+        subj_w.value if subj_w is not None
+        else render_prompt(PromptPath.RESPONSE_FINALIZE_FALLBACK_SUBJECT).strip()
     )
 
     if has_buffer or has_content:

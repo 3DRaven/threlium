@@ -15,9 +15,10 @@
 """
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from email.message import EmailMessage
 
-from threlium.enrich_context import collect_unified_delta_msgs, trim_context_text
+from threlium.enrich_context import collect_unified_delta_msgs
 from threlium.formal_reason_gate import assert_formal_reason_relay_after_splice
 from threlium.fsm_emit import emit_transition_preserving_payload
 from threlium.fsm_emit_semantic import managed_patch_simple_fsm_step
@@ -29,16 +30,14 @@ from threlium.mime_reform import (
     iter_system_parts,
     splice_e_prev_with_history,
 )
-from threlium.response.collect import collect_ops
-from threlium.response.state_summary import build_state_summary
+from threlium.ledger_context_parts import crdt_ledger_state, trimmed_crdt_state_texts
+from threlium.nm import require_fsm_message_id
 from threlium.settings import ThreliumSettings
-from threlium.task import build_task_state_summary, collect_task_ops, reduce_task_ops
 from threlium.thread_context_filter import iter_irt_ancestors_filtered
 from threlium.types import (
     FsmStage,
     MailHeaderName,
     NotmuchMessageIdInner,
-    RfcMessageIdWire,
 )
 
 log = logger.bind(stage="enrich_fast")
@@ -57,47 +56,41 @@ def _find_e_prev(start_inner: NotmuchMessageIdInner) -> EmailMessage | None:
     return None
 
 
-def _collect_delta_history_parts(
+def _collect_delta_parts(
     delta_msgs: list[EmailMessage],
+    iter_fn: Callable[[EmailMessage], Iterator[tuple[EnrichContentId, EmailMessage]]],
 ) -> list[tuple[EnrichContentId, EmailMessage]]:
-    """``<history>``-части окна-дельты со штампом ``X-Threlium-Origin`` (= конвертный From).
+    """Части окна-дельты (history или system) со штампом ``X-Threlium-Origin``.
 
     Origin ставится один раз на части без него: стадии-источники проставляют только
-    ``score`` (полнота знаний о своём контенте), а ``origin`` теряется при релее — его
-    восстанавливает enrich_fast по ``From:`` письма-носителя. Тело части не трогаем —
-    контент-адресный CID ``<{hash}@history>`` обязан остаться стабильным для дедупа.
+    ``score``, а ``origin`` восстанавливает enrich_fast по конвертному ``From:`` письма-носителя.
     """
     out: list[tuple[EnrichContentId, EmailMessage]] = []
     for dm in delta_msgs:
         origin = FsmStage.try_from_mailbox(dm.get(_HDR.FROM.value))
-        for cid, part in iter_history_parts(dm):
+        for cid, part in iter_fn(dm):
             if origin is not None and not part.get(_HDR.ORIGIN.value):
                 part[_HDR.ORIGIN.value] = origin.rfc822_mailbox
             out.append((cid, part))
     return out
+
+
+def _collect_delta_history_parts(
+    delta_msgs: list[EmailMessage],
+) -> list[tuple[EnrichContentId, EmailMessage]]:
+    return _collect_delta_parts(delta_msgs, iter_history_parts)
 
 
 def _collect_delta_system_parts(
     delta_msgs: list[EmailMessage],
 ) -> list[tuple[EnrichContentId, EmailMessage]]:
-    """``<system>``-части окна-дельты со штампом ``X-Threlium-Origin`` (= конвертный From)."""
-    out: list[tuple[EnrichContentId, EmailMessage]] = []
-    for dm in delta_msgs:
-        origin = FsmStage.try_from_mailbox(dm.get(_HDR.FROM.value))
-        for cid, part in iter_system_parts(dm):
-            if origin is not None and not part.get(_HDR.ORIGIN.value):
-                part[_HDR.ORIGIN.value] = origin.rfc822_mailbox
-            out.append((cid, part))
-    return out
+    return _collect_delta_parts(delta_msgs, iter_system_parts)
 
 
 def main(
     msg: EmailMessage, stage: FsmStage, *, config: ThreliumSettings
 ) -> EmailMessage | None:
-    mid_w = RfcMessageIdWire.parse_present_from_email(msg, MailHeaderName.MESSAGE_ID.value)
-    inner = NotmuchMessageIdInner.from_optional_wire(mid_w)
-    if inner is None:
-        raise RuntimeError("enrich_fast: no Message-ID on incoming message")
+    mid_w, inner = require_fsm_message_id(msg, "enrich_fast")
 
     e_prev = _find_e_prev(inner)
     if e_prev is None:
@@ -106,14 +99,9 @@ def main(
             "(addressed to reasoning@localhost) in IRT chain"
         )
 
-    ops = collect_ops(inner)
-    summary = build_state_summary(ops)
-
     limit = config.enrich.context_max_chars
-    trimmed_summary = trim_context_text(summary, limit)
-
-    task_ledger = reduce_task_ops(collect_task_ops(inner))
-    task_state_text = trim_context_text(build_task_state_summary(task_ledger), limit)
+    trimmed_summary, task_state_text = trimmed_crdt_state_texts(inner, limit=limit)
+    ops = crdt_ledger_state(inner).response_ops
 
     delta_msgs = collect_unified_delta_msgs(inner)
     history_parts = _collect_delta_history_parts(delta_msgs)

@@ -1,14 +1,12 @@
 """Сбор response-операций из IRT-цепочки (фрейм-локально, leaf → tag:route boundary)."""
 from __future__ import annotations
 
-import json
-
 from threlium.irt_chain import IrtAncestorSnapshot
 from threlium.mime_reform import system_part_text_from_path
 from threlium.thread_context_filter import iter_irt_ancestors_filtered
 from threlium.types import FsmStage, NotmuchMessageIdInner
 
-from .ops import AppendOp, EditOp, ResponseOp
+from .ops import AppendOp, EditOp, ResponseOp, parse_response_edit_stage_payload
 
 _APPEND_STAGES = frozenset({FsmStage.RESPONSE_APPEND})
 _EDIT_STAGES = frozenset({FsmStage.RESPONSE_EDIT})
@@ -28,14 +26,18 @@ def _is_edit_stage(snap: IrtAncestorSnapshot) -> bool:
 
 
 def _parse_edit_body(snap: IrtAncestorSnapshot) -> tuple[int, str | None]:
-    """JSON body EditOp из ``<system>``: ``{position: int, new_content: str | null}``."""
+    """JSON body EditOp из ``<system>``: ``{position: int, new_content: str | null}``.
+
+    Через msgspec (TYPES § CRDT boundary). Письмо уже прошло валидацию ``response_edit.main``,
+    поэтому невалидный payload здесь — нарушение инварианта (``RuntimeError``), не graceful.
+    """
     raw = system_part_text_from_path(snap.path).strip()
-    data = json.loads(raw)
-    position = int(data["position"])
-    new_content = data.get("new_content")
-    if new_content is not None:
-        new_content = str(new_content)
-    return position, new_content
+    payload = parse_response_edit_stage_payload(raw)
+    if payload is None:
+        raise RuntimeError(
+            f"collect_ops: response_edit <system> not a valid edit payload: {raw[:120]!r}"
+        )
+    return payload.position, payload.new_content
 
 
 def _read_append_content(snap: IrtAncestorSnapshot) -> str:

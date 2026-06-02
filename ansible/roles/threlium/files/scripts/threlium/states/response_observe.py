@@ -8,25 +8,22 @@ from __future__ import annotations
 
 from email.message import EmailMessage
 
-from threlium.fsm_emit import build_fsm_step_to_stage
+from threlium.fsm_emit_semantic import emit_to_enrich_fast
+from threlium.litellm_correlation_headers import fsm_correlation_snap
 from threlium.litellm_required_tool import build_site_call, invoke_required_tool
-from threlium.litellm_route_context import get_litellm_http_correlation
 from threlium.litellm_tool_spec import load_tool_spec
 from threlium.logutil import logger
+from threlium.nm import require_fsm_message_id
 from threlium.prompts import render_prompt
-from threlium.response.collect import collect_ops
+from threlium.ledger_context_parts import crdt_ledger_state
 from threlium.response.state_summary import build_state_data
 from threlium.settings import ThreliumSettings
 from threlium.summarize_tool_bridge import parse_summarize_response_buffer_assistant
-from threlium.task import collect_task_ops, reduce_task_ops
 from threlium.types import (
     FsmStage,
     LiteLlmChatMessage,
     LitellmRoutingSite,
-    MailHeaderName,
-    NotmuchMessageIdInner,
     PromptPath,
-    RfcMessageIdWire,
 )
 
 log = logger.bind(stage="response_observe")
@@ -45,11 +42,7 @@ def _llm_observe(data_kw: dict[str, object], config: ThreliumSettings) -> str:
         ],
     )
     tool_spec = load_tool_spec(PromptPath.RESPONSE_OBSERVE_TOOL_SPEC)
-    correlation = (
-        get_litellm_http_correlation()
-        if config.e2e.litellm_route_correlation
-        else None
-    )
+    correlation = fsm_correlation_snap(None, config)
     assistant = invoke_required_tool(
         settings=config,
         call=call,
@@ -63,15 +56,11 @@ def _llm_observe(data_kw: dict[str, object], config: ThreliumSettings) -> str:
 def main(
     msg: EmailMessage, stage: FsmStage, *, config: ThreliumSettings
 ) -> EmailMessage | None:
-    mid_w = RfcMessageIdWire.parse_present_from_email(msg, MailHeaderName.MESSAGE_ID.value)
-    inner = NotmuchMessageIdInner.from_optional_wire(mid_w)
-    if inner is None:
-        raise RuntimeError("response_observe: no Message-ID on incoming message")
+    mid_w, inner = require_fsm_message_id(msg, "response_observe")
 
-    ops = collect_ops(inner)
-    data = build_state_data(ops)
-
-    ledger = reduce_task_ops(collect_task_ops(inner))
+    crdt = crdt_ledger_state(inner)
+    data = build_state_data(list(crdt.response_ops))
+    ledger = crdt.task_ledger
 
     data_kw: dict[str, object] = {
         "is_empty": data.is_empty,
@@ -95,17 +84,16 @@ def main(
     observation = _llm_observe(data_kw, config)
     log.info(
         "observed",
-        ops_count=len(ops),
+        ops_count=len(crdt.response_ops),
         subtasks=len(ledger.subtasks),
         open_subtasks=len(ledger.open_subtasks()),
         observation_chars=len(observation),
         message_id=mid_w.value if mid_w else None,
     )
 
-    return build_fsm_step_to_stage(
+    return emit_to_enrich_fast(
         msg,
-        to_addr=FsmStage.ENRICH_FAST,
-        from_stage=stage,
+        stage,
         history=observation,
         settings=config,
     )
