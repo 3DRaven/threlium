@@ -1,7 +1,9 @@
 """Резолв источника CLI intent по цепочке ``In-Reply-To`` (лист → корень).
 
 Барьер: узел с ``To:`` = ``FsmStage.CLI_RESUME`` — выше по цепочке не ищем.
-Payload JSON: первый предок (без листа) с ``To:`` = ``FsmStage.CLI_INTENT`` до того же барьера.
+Payload JSON: первый предок (без листа) с ``To:`` = ``FsmStage.CLI_INTENT`` до того же барьера;
+тело intent читается из ``<system>``-части (``system_part_text_from_path``), не из первого
+``text/plain`` (``docs/CONTEXT_CONTRACT.md`` §2).
 
 HITL-детекция (ранее ``resolve_hitl_parent_from_in_reply_to_ancestors``) удалена:
 используется прямой lookup родителя через

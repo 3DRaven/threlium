@@ -1,6 +1,6 @@
 """tasks_upsert@localhost → enrich_fast@localhost | ingress@localhost.
 
-Тело письма (от reasoning) — JSON ``TasksUpsertToolArgs``: за один вызов модель
+``<system>``-payload (от reasoning) — JSON ``TasksUpsertToolArgs``: за один вызов модель
 **добавляет** новые подзадачи (``new_subtasks``) и **меняет статусы** существующих
 (``subtask_updates`` по ``content_id`` из ``<task-state>``).
 

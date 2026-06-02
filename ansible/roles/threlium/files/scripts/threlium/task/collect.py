@@ -13,7 +13,7 @@ from threlium.mail import email_message_from_path
 from threlium.mime_reform import (
     EnrichPartId,
     extract_part_by_content_id,
-    extract_plain_body,
+    system_part_text_from_path,
 )
 from threlium.thread_context_filter import iter_irt_ancestors_filtered
 from threlium.types import FsmStage, NotmuchMessageIdInner
@@ -26,7 +26,7 @@ def collect_task_ops(start_inner: NotmuchMessageIdInner) -> list[TaskOp]:
 
     Фрейм определяется маркерным балансом IRT (header-free), а не ``X-Threlium-Hop-Budget``.
     Источники op: письма ``enrich → reasoning`` (MIME ``<task-init>``) и durable письма
-    ``→ tasks_upsert`` (JSON tool-args в теле).
+    ``→ tasks_upsert`` (JSON tool-args в ``<system>``-части, ``system_part_text_from_path``).
     """
     frame = list(iter_irt_ancestors_filtered(start_inner))
     frame.reverse()
@@ -41,8 +41,7 @@ def collect_task_ops(start_inner: NotmuchMessageIdInner) -> list[TaskOp]:
                 if op is not None:
                     ops.append(op)
         elif snap.is_addressed_to_fsm_stage(FsmStage.TASKS_UPSERT):
-            msg = email_message_from_path(snap.path)
-            body = extract_plain_body(msg)
+            body = system_part_text_from_path(snap.path).strip()
             op2 = parse_tasks_upsert_op(body, message_id_inner=snap.message_id_inner)
             if op2 is not None:
                 ops.append(op2)

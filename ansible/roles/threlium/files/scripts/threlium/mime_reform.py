@@ -508,6 +508,20 @@ def system_part_text(msg: EmailMessage) -> str:
     return _leaf_part_text(parts[0][1])
 
 
+def system_part_text_from_path(path: Path | str) -> str:
+    """Тело единственной ``<system>``-части письма, прочитанного с диска (Maildir).
+
+    Граница «байты с диска → payload» по контракту ``docs/CONTEXT_CONTRACT.md`` §2:
+    ретроспективное чтение payload из FSM-писем (cli_resume intent, durable
+    ``tasks_upsert`` / ``response_*`` при IRT-обходе) идёт через ``<system>``-CID, а **не**
+    через :func:`extract_plain_body` (первый ``text/plain``). Fail-fast как у
+    :func:`system_part_text`: отсутствие / >1 ``<system>`` → ``RuntimeError``.
+    """
+    from threlium.mail import email_message_from_path
+
+    return system_part_text(email_message_from_path(path))
+
+
 def extract_part_by_content_id(msg: EmailMessage, content_id: EnrichPartId) -> str | None:
     """Текст MIME-part с заданным ``Content-ID``, или ``None``."""
     target = EnrichContentId.from_part_id(content_id)

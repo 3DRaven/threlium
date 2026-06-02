@@ -4,8 +4,7 @@ from __future__ import annotations
 import json
 
 from threlium.irt_chain import IrtAncestorSnapshot
-from threlium.mail import email_message_from_path
-from threlium.mime_reform import extract_plain_body
+from threlium.mime_reform import system_part_text_from_path
 from threlium.thread_context_filter import iter_irt_ancestors_filtered
 from threlium.types import FsmStage, NotmuchMessageIdInner
 
@@ -29,9 +28,8 @@ def _is_edit_stage(snap: IrtAncestorSnapshot) -> bool:
 
 
 def _parse_edit_body(snap: IrtAncestorSnapshot) -> tuple[int, str | None]:
-    """JSON body EditOp: ``{position: int, new_content: str | null}``."""
-    msg = email_message_from_path(snap.path)
-    raw = extract_plain_body(msg).strip()
+    """JSON body EditOp из ``<system>``: ``{position: int, new_content: str | null}``."""
+    raw = system_part_text_from_path(snap.path).strip()
     data = json.loads(raw)
     position = int(data["position"])
     new_content = data.get("new_content")
@@ -41,8 +39,7 @@ def _parse_edit_body(snap: IrtAncestorSnapshot) -> tuple[int, str | None]:
 
 
 def _read_append_content(snap: IrtAncestorSnapshot) -> str:
-    msg = email_message_from_path(snap.path)
-    return extract_plain_body(msg).strip()
+    return system_part_text_from_path(snap.path).strip()
 
 
 def collect_ops(start_inner: NotmuchMessageIdInner) -> list[ResponseOp]:
