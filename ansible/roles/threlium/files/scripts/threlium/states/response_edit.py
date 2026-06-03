@@ -1,14 +1,11 @@
-"""response_edit@localhost → enrich_fast@localhost | ingress@localhost.
-
-Парсит JSON body ``{position, new_content}``, валидирует position через
-collect_ops. Невалидная позиция → ingress с ошибкой; ok → enrich_fast.
-"""
+"""response_edit@localhost → enrich_fast@localhost | enrich@localhost."""
 from __future__ import annotations
 
 from email.message import EmailMessage
 
+from threlium.enrich_user_query import require_enrich_user_query_for_reenrich
 from threlium.fsm_emit_semantic import (
-    emit_ingress_validation_error,
+    emit_enrich_validation_error,
     emit_preserving_to_enrich_fast,
 )
 from threlium.logutil import logger
@@ -18,10 +15,7 @@ from threlium.response.collect import collect_ops
 from threlium.response.ops import AppendOp, parse_response_edit_stage_payload
 from threlium.response.state_summary import build_state_summary
 from threlium.settings import ThreliumSettings
-from threlium.types import (
-    FsmStage,
-    PromptPath,
-)
+from threlium.types import FsmStage, PromptPath
 
 log = logger.bind(stage="response_edit")
 
@@ -30,15 +24,17 @@ def main(
     msg: EmailMessage, stage: FsmStage, *, config: ThreliumSettings
 ) -> EmailMessage | None:
     mid_w, inner = require_fsm_message_id(msg, "response_edit")
+    user_query = require_enrich_user_query_for_reenrich(msg, stage_label="response_edit")
 
     body_raw = system_part_text(msg).strip()
     payload = parse_response_edit_stage_payload(body_raw)
     if payload is None:
         log.error("invalid_body_json", message_id=mid_w.value if mid_w else None)
-        return emit_ingress_validation_error(
+        return emit_enrich_validation_error(
             msg,
             from_stage=stage,
             settings=config,
+            user_query=user_query,
             prompt_path=PromptPath.RESPONSE_EDIT_ERROR_INVALID_BODY,
             exc=f"not a valid edit payload: {body_raw[:120]!r}",
         )
@@ -54,10 +50,11 @@ def main(
             valid_positions=sorted(valid_positions),
             message_id=mid_w.value if mid_w else None,
         )
-        return emit_ingress_validation_error(
+        return emit_enrich_validation_error(
             msg,
             from_stage=stage,
             settings=config,
+            user_query=user_query,
             prompt_path=PromptPath.RESPONSE_EDIT_ERROR_INVALID_POSITION,
             position=target_position,
             new_content=payload.new_content,

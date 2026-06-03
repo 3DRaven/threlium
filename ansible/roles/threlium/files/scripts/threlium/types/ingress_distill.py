@@ -26,20 +26,20 @@ _HDR = MailHeaderName
 
 
 class IngressDistillHistoryPartKind(StrEnum):
-    """Порядок attach на ingress→enrich: metadata first, ``USER_QUERY`` всегда последний."""
+    """Порядок attach на ingress→enrich: metadata first, ``USER_INTENT`` перед request_echo."""
 
     USER_REPLY_LANGUAGE = "user_reply_language"
     STEP_BACK_NOTES = "step_back_notes"
     OPEN_GAPS = "open_gaps"
-    USER_QUERY = "user_query"
+    USER_INTENT = "user_intent"
 
 
 class IngressExternalBodyText(_OptionalStripEmpty):
-    """Полное внешнее тело до LLM distill."""
+    """Полное внешнее тело до LLM distill (``<system>`` user query)."""
 
 
 class IngressDistillBriefText(_OptionalStripEmpty):
-    """Текст последней ``<history>`` (= ``USER_QUERY``) для canonical user turn."""
+    """Текст distill brief ``USER_INTENT`` (``## User intent``); не canonical user query."""
 
 
 class IngressDistillHistoryPart(msgspec.Struct, frozen=True, kw_only=True):
@@ -85,22 +85,18 @@ class IngressDistillEnvelope(msgspec.Struct, frozen=True, kw_only=True):
 
 
 class IngressDistillResult(msgspec.Struct, frozen=True, kw_only=True):
-    """Набор history-частей для attach; последняя — ``user_query``."""
+    """Набор history-частей distill (metadata + user intent); user query — request_echo."""
 
     parts: tuple[IngressDistillHistoryPart, ...]
 
-    def user_query_brief(self) -> IngressDistillBriefText:
-        if not self.parts:
-            raise ValueError("ingress_distill: no history parts")
-        last = self.parts[-1]
-        if last.kind is not IngressDistillHistoryPartKind.USER_QUERY:
-            raise ValueError(
-                f"ingress_distill: expected last part USER_QUERY, got {last.kind.value!r}"
-            )
-        brief = IngressDistillBriefText.parse(last.text)
-        if not brief.value:
-            raise ValueError("ingress_distill: empty user_query history part")
-        return brief
+    def user_intent_brief(self) -> IngressDistillBriefText:
+        for part in reversed(self.parts):
+            if part.kind is IngressDistillHistoryPartKind.USER_INTENT:
+                brief = IngressDistillBriefText.parse(part.text)
+                if not brief.value:
+                    raise ValueError("ingress_distill: empty user_intent history part")
+                return brief
+        raise ValueError("ingress_distill: no USER_INTENT history part")
 
 
 def _render_history_part(
@@ -121,7 +117,7 @@ def _render_history_part(
 def ingress_distill_history_parts_from_tool_args(
     args: IngressDistillToolArgs,
 ) -> tuple[IngressDistillHistoryPart, ...]:
-    """Jinja per field → отдельные ``<history>``; ``user_query`` всегда последний."""
+    """Jinja per field → отдельные ``<history>``; ``user_intent`` последний среди distill parts."""
     from threlium.types import PromptPath
 
     parts: list[IngressDistillHistoryPart] = []
@@ -156,16 +152,16 @@ def ingress_distill_history_parts_from_tool_args(
         if p is not None:
             parts.append(p)
 
-    query = args.user_query.strip()
-    if not query:
-        raise ValueError("ingress_distill: empty user_query from tool")
+    intent = args.user_intent.strip()
+    if not intent:
+        raise ValueError("ingress_distill: empty user_intent from tool")
     p = _render_history_part(
         PromptPath.INGRESS_DISTILL_HISTORY_USER_QUERY,
-        kind=IngressDistillHistoryPartKind.USER_QUERY,
-        user_query=query,
+        kind=IngressDistillHistoryPartKind.USER_INTENT,
+        user_intent=intent,
     )
     if p is None:
-        raise ValueError("ingress_distill: empty user_query history after render")
+        raise ValueError("ingress_distill: empty user_intent history after render")
     parts.append(p)
 
     return tuple(parts)
@@ -182,8 +178,8 @@ def ingress_distill_fallback_history_parts(
         raise ValueError("ingress_distill fallback: empty body")
     p = _render_history_part(
         PromptPath.INGRESS_DISTILL_HISTORY_USER_QUERY,
-        kind=IngressDistillHistoryPartKind.USER_QUERY,
-        user_query=body,
+        kind=IngressDistillHistoryPartKind.USER_INTENT,
+        user_intent=body,
     )
     if p is None:
         raise ValueError("ingress_distill fallback: empty history after render")

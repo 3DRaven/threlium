@@ -55,7 +55,7 @@ from threlium.mime_reform import (
     EnrichPartId,
     build_enriched_multipart,
     concat_history_parts_text,
-    last_history_part_text,
+    require_enrich_user_query_text,
 )
 from threlium.prompts import render_prompt
 from threlium.runners.lightrag.aquery import build_lightrag_query_param, run_lightrag_aquery
@@ -713,7 +713,7 @@ def _emit_summarize_overflow(
 
     # Канонический ход пользователя (последняя <history> входящего) едет неизменным по циклу
     # summarize: re-trigger enrich обязан повторить тот же user message (CONTEXT_CONTRACT §5).
-    user_query = last_history_part_text(msg)
+    user_query = require_enrich_user_query_text(msg).value
     payload = msgspec.json.encode(
         SummarizeContextStagePayload(
             summarize=SummarizeContextBatch(mids=mids, bodies=bodies),

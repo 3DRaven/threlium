@@ -23,6 +23,7 @@ from threlium.types import (
     FsmTransitionPlainSubjectLine,
     HopBudgetLine,
     IrtHashWire,
+    NotmuchBridgeFromLocalhost,
     NotmuchMessageIdInner,
     RfcInReplyToWire,
     RfcMessageIdWire,
@@ -104,6 +105,79 @@ def _msgid_normalized(raw: str | None) -> str | None:
     if s.startswith("<") and s.endswith(">"):
         return s
     return f"<{s.strip('<> ')}>"
+
+
+def _try_bridge_from_mailbox(raw: str | None) -> NotmuchBridgeFromLocalhost | None:
+    if raw is None:
+        return None
+    normalized = raw.strip().lower()
+    for bridge in NotmuchBridgeFromLocalhost:
+        if normalized == bridge.value.lower():
+            return bridge
+    return None
+
+
+def _request_echo_origin(
+    incoming: EmailMessage,
+    from_stage: FsmStage,
+) -> tuple[str, FsmStage]:
+    """Mailbox для ``X-Threlium-Origin`` echo и стадия для ``score_for``."""
+    raw_from = incoming.get(HDR_FROM)
+    bridge = _try_bridge_from_mailbox(raw_from)
+    if bridge is not None:
+        return bridge.value, from_stage
+    fsm_origin = FsmStage.try_from_mailbox(raw_from)
+    if fsm_origin is not None:
+        return fsm_origin.rfc822_mailbox, fsm_origin
+    return from_stage.rfc822_mailbox, from_stage
+
+
+def attach_request_echo_history(
+    out: EmailMessage,
+    *,
+    incoming: EmailMessage,
+    echo_text: str,
+    from_stage: FsmStage,
+    settings: ThreliumSettings,
+) -> None:
+    """Дописать ``<history>``-эхо user query; origin = bridge channel или incoming From."""
+    if not echo_text.strip():
+        return
+    origin_mailbox, score_stage = _request_echo_origin(incoming, from_stage)
+    echo_score = ThreliumContentScoreWire.from_score(
+        settings.history.score_for(score_stage)
+    )
+    part = _make_inline_text_part(
+        EnrichContentId.from_history_body(echo_text),
+        echo_text,
+        score=echo_score,
+    )
+    part[MailHeaderName.ORIGIN.value] = origin_mailbox
+    out.attach(part)
+
+
+def _build_history_only_envelope(
+    incoming: EmailMessage,
+    *,
+    to_addr: FsmStage,
+    from_stage: FsmStage,
+    managed_headers: ManagedFsmHeaderPatch | None,
+) -> EmailMessage:
+    """Новое multipart/mixed с конвертом FSM-шага; без MIME-payload (только envelope)."""
+    out = EmailMessage()
+    out.make_mixed()
+    for hdr in MailHeaderName.propagate_from_incoming():
+        v = incoming.get(hdr)
+        if v is not None:
+            out[hdr] = v
+    out[HDR_FROM] = from_stage.rfc822_mailbox
+    out[HDR_TO] = to_addr.rfc822_mailbox
+    out[HDR_DATE] = formatdate(localtime=True)
+    mid_new = RfcMessageIdWire.internal_for_fsm()
+    CanonicalMidWire.assert_from_wire(mid_new)
+    out[HDR_MESSAGE_ID] = mid_new.value
+    _apply_managed_headers(out, managed_headers)
+    return out
 
 
 def _apply_managed_headers(
@@ -194,19 +268,12 @@ def emit_transition_preserving_payload(
     if request_echo is not None and request_echo.strip():
         if settings is None:
             raise ValueError("emit_transition_preserving_payload: request_echo requires settings")
-        echo = request_echo
-        echo_origin = FsmStage.try_from_mailbox(incoming.get(HDR_FROM))
-        echo_score_stage = echo_origin if echo_origin is not None else from_stage
-        echo_score = ThreliumContentScoreWire.from_score(
-            settings.history.score_for(echo_score_stage)
-        )
-        out.attach(
-            _make_inline_text_part(
-                EnrichContentId.from_history_body(echo),
-                echo,
-                score=echo_score,
-                origin=echo_origin,
-            )
+        attach_request_echo_history(
+            out,
+            incoming=incoming,
+            echo_text=request_echo,
+            from_stage=from_stage,
+            settings=settings,
         )
 
     _apply_managed_headers(out, managed_headers)
@@ -384,19 +451,12 @@ def build_fsm_step_to_stage(
         )
 
     if request_echo is not None and request_echo.strip():
-        echo = request_echo
-        echo_origin = FsmStage.try_from_mailbox(incoming.get(HDR_FROM))
-        echo_score_stage = echo_origin if echo_origin is not None else from_stage
-        echo_score = ThreliumContentScoreWire.from_score(
-            settings.history.score_for(echo_score_stage)
-        )
-        out.attach(
-            _make_inline_text_part(
-                EnrichContentId.from_history_body(echo),
-                echo,
-                score=echo_score,
-                origin=echo_origin,
-            )
+        attach_request_echo_history(
+            out,
+            incoming=incoming,
+            echo_text=request_echo,
+            from_stage=from_stage,
+            settings=settings,
         )
 
     # system привязан к контракту «payload только в <system>»: прикрепляем, как только

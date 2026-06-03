@@ -1,38 +1,27 @@
 #!/usr/bin/env python3
-"""ingress@localhost (INGRESS_ROUTER): правила SUBAGENT_TABLE §ingress_router.
+"""ingress@localhost (INGRESS_ROUTER): bridge + HITL router + distill gateway.
 
-`docs/INDEX.md` §8: hard-fail на нарушение FSM-инварианта,
-graceful обработка только для «новый внешний тред» (Case 1). Стадии
-не индексируют — `notmuch insert` делает fdm, см. `docs/INDEX.md` §1/§4.
-
-Fail-fast матрица (`docs/INDEX.md` §8):
-
-  * Case 1 (parent не виден в notmuch) — graceful: новый внешний тред
-    идёт в ``enrich`` (единственный legal-вход в ``reasoning``,
-    `docs/FSM.md §2.1`); orphan-notice префиксуется в distill envelope.
-  * HITL — обход предков по IRT (1–N шагов) до From: cli_hitl_out →
-    ``cli_resume``.
+``docs/INDEX.md`` §8:
+  * Case 1 (parent не виден) — orphan-notice + distill → enrich.
+  * HITL — IRT до ``From: cli_hitl_out`` → ``cli_resume``.
+  * Только ``From:`` bridge (email/telegram/matrix@localhost); internal стадии → enrich напрямую.
 """
 from email.message import EmailMessage
 
-from threlium.settings import ThreliumSettings
-from threlium.fsm_emit import build_fsm_step_to_stage, emit_transition_preserving_payload
-from threlium.fsm_emit_semantic import (
-    emit_transition_simple_step_preserving_payload,
-    managed_patch_simple_fsm_step,
+from threlium.bridges.ingress_from import require_bridge_from_email
+from threlium.ingress_bridge_user_query import (
+    assert_bridge_input_has_no_user_query,
+    enrich_user_query_from_bridge_system,
 )
+from threlium.settings import ThreliumSettings
+from threlium.fsm_emit import build_fsm_step_to_stage
+from threlium.fsm_emit_semantic import emit_bridge_distill_to_enrich
 from threlium.ingress_distill import ingress_distill_llm
 from threlium.logutil import logger
 from threlium.mime_reform import (
-    EnrichContentId,
-    _make_inline_text_part,
-    email_without_system_parts,
-    extract_plain_body,
-    ingress_external_body_text,
     ingress_pipeline_email,
-    message_has_history,
-    message_has_system,
     require_unique_threading_rfc822_headers,
+    system_part_text,
 )
 from threlium import nm
 from threlium.types.ingress_hitl import (
@@ -41,6 +30,7 @@ from threlium.types.ingress_hitl import (
     classify_hitl_parent_notmuch,
 )
 from threlium.types import (
+    EnrichUserQueryText,
     FsmStage,
     FsmTransitionPlainSubjectLine,
     IngressDistillEnvelope,
@@ -51,7 +41,6 @@ from threlium.types import (
     RfcSubjectWire,
     bridge_channel_from_email,
 )
-from threlium.types.content_score import ThreliumContentScoreWire
 
 log = logger.bind(stage="ingress")
 
@@ -63,83 +52,62 @@ ORPHAN_NOTICE = (
 
 
 def _prefix_body_for_distill(
-    full_body: str,
+    user_query: EnrichUserQueryText,
     prefix_text: str | None,
-) -> str:
+) -> EnrichUserQueryText:
     p = OrphanNoticePrefixLine.parse(prefix_text).value if prefix_text else ""
-    user_body = full_body.strip()
+    user_body = user_query.value.strip()
     if not p:
-        return user_body
-    return p + "\n\n" + user_body
+        return user_query
+    return EnrichUserQueryText.require_value(
+        name="distill body",
+        raw=p + "\n\n" + user_body,
+    )
 
 
-def _emit_to_enrich(
+def _emit_bridge_distill_to_enrich(
     msg: EmailMessage, stage: FsmStage, *, orphan: bool = False, config: ThreliumSettings,
 ) -> EmailMessage:
-    # CONTEXT_CONTRACT §4.1/§3: distill пропускаем только для релеев, которые УЖЕ несут
-    # canonical <history> (subagent_end / subagent_intent-echo) — повторный distill заменил бы
-    # last_history (= ответ субагента) на свой user_query. Релеи с одним только <system>
-    # (reflect refresh-промпт, error-ветки response_finalize/response_edit/tasks_upsert,
-    # subagent budget-exhausted) и внешний вход <history> не несут — их distill превращает в
-    # <history> для следующего enrich (см. MEMORY_TABLE §3, stub reflect_cycle/ingress_distill).
-    if message_has_history(msg):
-        relay = email_without_system_parts(msg) if message_has_system(msg) else msg
-        # IRT из MID входа ingress (THREAD_MODEL §3); relay после strip @system
-        # не несёт конверт — managed_patch на relay терял In-Reply-To (SUBAGENT_TABLE §4).
-        return emit_transition_preserving_payload(
-            relay,
-            to_addr=FsmStage.ENRICH,
-            from_stage=stage,
-            managed_headers=managed_patch_simple_fsm_step(msg, config),
-        )
-
-    body_vo = ingress_external_body_text(msg)
+    require_bridge_from_email(msg)
+    assert_bridge_input_has_no_user_query(msg)
+    user_query = enrich_user_query_from_bridge_system(msg)
     orphan_notice = OrphanNoticePrefixLine.parse(ORPHAN_NOTICE) if orphan else None
     distill_body = _prefix_body_for_distill(
-        body_vo.value,
+        user_query,
         orphan_notice.value if orphan_notice else None,
     )
     envelope = IngressDistillEnvelope.from_email(
         msg,
         channel=bridge_channel_from_email(msg),
-        full_body=IngressExternalBodyText.parse(distill_body),
+        full_body=IngressExternalBodyText.parse(distill_body.value),
         orphan_notice=orphan_notice,
     )
     result = ingress_distill_llm(envelope, msg, config=config)
-    out = emit_transition_simple_step_preserving_payload(
+    return emit_bridge_distill_to_enrich(
         msg,
-        to_addr=FsmStage.ENRICH,
-        from_stage=stage,
+        stage,
+        user_query=distill_body,
         settings=config,
+        distill_parts=result.parts,
     )
-    score = ThreliumContentScoreWire.from_score(config.history.score_for(stage))
-    for hp in result.parts:
-        out.attach(
-            _make_inline_text_part(
-                EnrichContentId.from_history_body(hp.text),
-                hp.text,
-                score=score,
-            )
-        )
-    return out
 
 
 def _emit_to_cli_resume(
     msg: EmailMessage, stage: FsmStage, *, config: ThreliumSettings,
 ) -> EmailMessage:
+    require_bridge_from_email(msg)
     msg = ingress_pipeline_email(msg)
     return build_fsm_step_to_stage(
         msg,
         to_addr=FsmStage.CLI_RESUME,
         from_stage=stage,
-        system=extract_plain_body(msg).strip(),
+        system=system_part_text(msg).strip(),
         subject_line=_preserved_subject(msg),
         settings=config,
     )
 
 
 def _preserved_subject(msg: EmailMessage) -> FsmTransitionPlainSubjectLine | None:
-    """Сохранить исходный Subject входа (без ``Re:``-префикса билдера) для enrich-шаблона."""
     subj = RfcSubjectWire.parse_present_from_email(msg, MailHeaderName.SUBJECT)
     if subj is None:
         return None
@@ -150,17 +118,19 @@ def main(
     msg: EmailMessage, stage: FsmStage, *, config: ThreliumSettings
 ) -> EmailMessage | None:
     require_unique_threading_rfc822_headers(msg)
+    require_bridge_from_email(msg)
+    assert_bridge_input_has_no_user_query(msg)
     irt_wire = IngressRouterChildMsg.from_email(msg).in_reply_to
     if irt_wire is None:
-        return _emit_to_enrich(msg, stage, config=config)
+        return _emit_bridge_distill_to_enrich(msg, stage, config=config)
 
     with nm.open_parent_message_for_in_reply_to(irt_wire) as parent_msg:
         if parent_msg is None:
             log.info("irt_parent_not_found_orphan")
-            return _emit_to_enrich(msg, stage, orphan=True, config=config)
+            return _emit_bridge_distill_to_enrich(msg, stage, orphan=True, config=config)
 
         match classify_hitl_parent_notmuch(parent_msg):
             case HitlParentWithoutIntent():
-                return _emit_to_enrich(msg, stage, config=config)
+                return _emit_bridge_distill_to_enrich(msg, stage, config=config)
             case HitlParentWithIntent():
                 return _emit_to_cli_resume(msg, stage, config=config)

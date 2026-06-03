@@ -52,7 +52,12 @@ from threlium.litellm_route_context import e2e_route_wire_tail
 from threlium.delivery import fdm_bytes_from_message, run_fdm
 from threlium.logutil import logger
 from threlium.mail import canonicalize_mime, imap_fetch_rfc822_bytes, parse_rfc822
-from threlium.mime_reform import ingress_raw_email_capture
+from threlium.mime_reform import (
+    EnrichContentId,
+    _make_inline_text_part,
+    extract_plain_body,
+    ingress_raw_email_capture,
+)
 from threlium.bridges import attach_raw_ingress_capture
 from threlium.bridges.checkpoint import latest_route_checkpoint
 from threlium.systemd_notify import notify_status
@@ -219,6 +224,7 @@ def _build_canonical(
     refs_src = refs_w.value if refs_w is not None else None
     irt_w = RfcInReplyToWire.parse_present_from_email(msg, _HDR.IN_REPLY_TO)
     subj_w = BridgeEmailSubjectLine.parse_present_from_email(msg, _HDR.SUBJECT)
+    body_text = extract_plain_body(msg).strip()
 
     out = EmailMessage()
     skip = _BRIDGE_CANONICAL_SKIP_LOWER
@@ -230,21 +236,10 @@ def _build_canonical(
         else:
             out[k] = v
 
-    payload = msg.get_payload(decode=False)
-    if msg.is_multipart() and isinstance(payload, list):
-        out.set_payload(payload)
-        if msg.get(_HDR.CONTENT_TYPE) and _HDR.CONTENT_TYPE not in out:
-            out[_HDR.CONTENT_TYPE] = msg.get(_HDR.CONTENT_TYPE)
-        if msg.get(_HDR.MIME_VERSION) and _HDR.MIME_VERSION not in out:
-            out[_HDR.MIME_VERSION] = msg.get(_HDR.MIME_VERSION)
-    else:
-        raw_body = msg.get_payload(decode=True)
-        if isinstance(raw_body, bytes):
-            charset = msg.get_content_charset() or "utf-8"
-            subtype = (msg.get_content_subtype() or "plain").lower()
-            out.set_content(raw_body.decode(charset, errors="replace"), subtype=subtype, charset=charset)
-        else:
-            out.set_content("" if payload is None else str(payload), subtype="plain", charset="utf-8")
+    out.make_mixed()
+    out.attach(
+        _make_inline_text_part(EnrichContentId.from_system_body(body_text), body_text)
+    )
 
     reply_tgt = ExternalRfcMidWire.parse_optional(mid_w.value)
     route_struct = EmailIngressRoute(

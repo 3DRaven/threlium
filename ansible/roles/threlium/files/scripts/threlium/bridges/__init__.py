@@ -11,6 +11,7 @@ from email.message import EmailMessage
 from email.utils import formatdate
 
 from threlium.fsm_emit import HDR_ROUTE
+from threlium.mime_reform import EnrichContentId, _make_inline_text_part
 from threlium.types import (
     BridgeIngressChannel,
     IngressRoute,
@@ -74,10 +75,11 @@ def build_bridge_ingress_email(
 ) -> EmailMessage:
     """Готовое письмо bridge→ingress (runner только fdm).
 
-    При непустом ``raw_capture`` — второй MIME-часть ``text/plain`` attachment
-    (основное тело первым ``text/plain`` для :func:`~threlium.mime_reform.extract_plain_body`).
+    Payload — одна ``<system>``-часть. При непустом ``raw_capture`` — attachment
+    ``threlium-raw-ingress.txt`` (только durable Maildir ingress, не в enrich).
     """
     msg = EmailMessage()
+    msg.make_mixed()
     route_wire = IngressRouteB62Wire.from_ingress_route(route).value
     msg[_HDR.FROM] = f"{channel.value}@localhost"
     msg[_HDR.TO] = "ingress@localhost"
@@ -95,7 +97,10 @@ def build_bridge_ingress_email(
     msg[HDR_ROUTE] = route_wire
     if space_wire is not None and space_wire.value:
         msg[_HDR.SPACE_HASH] = space_wire.space_hash_wire().value
-    msg.set_content(body, subtype="plain", charset="utf-8")
+    system_body = body.strip()
+    msg.attach(
+        _make_inline_text_part(EnrichContentId.from_system_body(system_body), system_body)
+    )
     if raw_capture is not None and raw_capture.strip():
         attach_raw_ingress_capture(msg, raw_capture)
     return msg

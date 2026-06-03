@@ -51,6 +51,7 @@ class EnrichPartId(StrEnum):
     TASK_STATE = "<task-state>"
     HISTORY = "<history>"
     SYSTEM = "<system>"
+    USER_QUERY = "<user-query>"
 
 
 # Единственное relay-семейство после унификации (docs/FSM.md): любая содержательная
@@ -576,6 +577,45 @@ def extract_part_by_content_id(msg: EmailMessage, content_id: EnrichPartId) -> s
         if cid == target:
             return _leaf_part_text(part)
     return None
+
+
+def attach_user_query_part(
+    out: EmailMessage,
+    user_query: "EnrichUserQueryText",
+) -> None:
+    """Прикрепить фиксированную ``<user-query>``-часть (вход enrich@)."""
+    from threlium.types.fsm_strings import EnrichUserQueryText
+
+    if not isinstance(user_query, EnrichUserQueryText):
+        raise TypeError("attach_user_query_part: expected EnrichUserQueryText")
+    if not user_query.value.strip():
+        raise ValueError("attach_user_query_part: empty EnrichUserQueryText")
+    out.attach(
+        _make_inline_text_part(EnrichPartId.USER_QUERY, user_query.value)
+    )
+
+
+def require_enrich_user_query_text(msg: EmailMessage) -> "EnrichUserQueryText":
+    """Fail-fast: ровно одна непустая ``<user-query>``-часть на ``To: enrich@``."""
+    from threlium.types.fsm_strings import EnrichUserQueryText
+
+    target = EnrichContentId.from_part_id(EnrichPartId.USER_QUERY)
+    found: list[str] = []
+    for cid, part in _iter_relay_leaf_parts(msg):
+        if cid == target:
+            text = _leaf_part_text(part).strip()
+            if text:
+                found.append(text)
+    if not found:
+        raise RuntimeError(
+            "FSM-инвариант: ожидалась ровно одна непустая <user-query>-часть "
+            "(canonical user turn на To: enrich@), не найдено"
+        )
+    if len(found) > 1:
+        raise RuntimeError(
+            f"FSM-инвариант: ожидалась ровно одна <user-query>-часть, найдено {len(found)}"
+        )
+    return EnrichUserQueryText.require_value(name="user-query", raw=found[0])
 
 
 @dataclass(frozen=True)

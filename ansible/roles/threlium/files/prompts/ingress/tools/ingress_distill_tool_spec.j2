@@ -7,7 +7,7 @@
     "parameters": {
       "type": "object",
       "properties": {
-        "user_query": {
+        "user_intent": {
           "type": "string",
           "maxLength": {{ distill_max_chars }},
           "description": "Always English: operational brief of NEW user content only (no quoted prior thread). Paraphrase; do not paste long untranslated quotes."
@@ -15,7 +15,7 @@
         "user_reply_language": {
           "type": "string",
           "maxLength": 64,
-          "description": "Language for eventual user-facing replies only (e.g. English, German), not the language of user_query."
+          "description": "Language for eventual user-facing replies only (e.g. English, German), not the language of user_intent."
         },
         "open_gaps": {
           "type": "array",
@@ -30,7 +30,7 @@
           "description": "English only. Implicit goals/constraints from NEW user prose only (not quoted thread)."
         }
       },
-      "required": ["user_query", "user_reply_language"],
+      "required": ["user_intent", "user_reply_language"],
       "additionalProperties": false
     }
   }

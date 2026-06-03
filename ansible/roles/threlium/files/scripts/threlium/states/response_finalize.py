@@ -1,4 +1,4 @@
-"""response_finalize@localhost → egress_router@localhost | ingress@localhost.
+"""response_finalize@localhost → egress_router@localhost | enrich@localhost.
 
 Четыре режима:
 
@@ -11,11 +11,12 @@ from __future__ import annotations
 
 from email.message import EmailMessage
 
+from threlium.enrich_user_query import require_enrich_user_query_for_reenrich
 from threlium.fsm_emit import (
-    build_fsm_plain_to_stage,
     build_fsm_step_to_stage,
     hop_budget_remaining,
 )
+from threlium.fsm_emit_semantic import emit_to_enrich
 from threlium.logutil import logger
 from threlium.mime_reform import system_part_text
 from threlium.nm import require_fsm_message_id
@@ -26,8 +27,8 @@ from threlium.settings import ThreliumSettings
 from threlium.ledger_context_parts import crdt_ledger_state
 from threlium.task import build_task_incomplete_notice, ledger_has_open_work
 from threlium.types import (
+    EnrichCalleeHistoryText,
     FsmStage,
-    FsmTransitionPlainBody,
     FsmTransitionPlainSubjectLine,
     HopBudgetLine,
     MailHeaderName,
@@ -74,11 +75,14 @@ def main(
             cancelled=len(ledger.cancelled_subtasks()),
             message_id=mid_w.value if mid_w else None,
         )
-        return build_fsm_plain_to_stage(
+        user_query = require_enrich_user_query_for_reenrich(msg, stage_label="response_finalize")
+        return emit_to_enrich(
             msg,
-            to_addr=FsmStage.INGRESS,
-            from_stage=stage,
-            body=FsmTransitionPlainBody.parse(build_task_incomplete_notice(ledger)),
+            stage,
+            user_query=user_query,
+            callee_history=EnrichCalleeHistoryText.parse(
+                build_task_incomplete_notice(ledger)
+            ),
             settings=config,
         )
 
@@ -117,11 +121,12 @@ def main(
                 subject_line=FsmTransitionPlainSubjectLine.parse(subject_raw),
                 settings=config,
             )
-        return build_fsm_plain_to_stage(
+        user_query = require_enrich_user_query_for_reenrich(msg, stage_label="response_finalize")
+        return emit_to_enrich(
             msg,
-            to_addr=FsmStage.INGRESS,
-            from_stage=stage,
-            body=FsmTransitionPlainBody.parse(notice),
+            stage,
+            user_query=user_query,
+            callee_history=EnrichCalleeHistoryText.parse(notice),
             settings=config,
         )
 

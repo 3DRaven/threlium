@@ -58,6 +58,17 @@ def _history_text(msg: object) -> str:
     return concat_history_parts_text(msg)
 
 
+def _user_query_text(msg: object) -> str:
+    """Jinja: canonical user turn = ``<user-query>`` на ``To: enrich@``."""
+    from email.message import EmailMessage
+
+    from threlium.mime_reform import require_enrich_user_query_text
+
+    if not isinstance(msg, EmailMessage):
+        return ""
+    return require_enrich_user_query_text(msg).value
+
+
 def _last_history_text(msg: object) -> str:
     """Jinja: canonical user turn = последняя непустая ``<history>`` (ingress distill)."""
     from email.message import EmailMessage
@@ -95,6 +106,7 @@ def _prompts_env() -> Environment:
         _PROMPTS_ENV.filters["tojson"] = _plain_text_tojson
         _PROMPTS_ENV.filters["history_text"] = _history_text
         _PROMPTS_ENV.filters["last_history_text"] = _last_history_text
+        _PROMPTS_ENV.filters["user_query_text"] = _user_query_text
     return _PROMPTS_ENV
 
 

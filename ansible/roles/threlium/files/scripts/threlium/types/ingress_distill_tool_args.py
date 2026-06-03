@@ -11,7 +11,7 @@ import msgspec
 class IngressDistillToolArgs(msgspec.Struct, frozen=True):
     """Структурированный ответ LLM (tool_choice=required)."""
 
-    user_query: str
+    user_intent: str
     user_reply_language: str
     open_gaps: tuple[str, ...] = ()
     step_back_notes: tuple[str, ...] = ()

@@ -81,7 +81,7 @@ def ingress_distill_llm(
         log.info(
             "ingress_distill_ok",
             history_parts=len(parts),
-            user_query_len=len(parts[-1].text),
+            user_intent_len=len(parts[-1].text),
         )
         return IngressDistillResult(parts=parts)
 

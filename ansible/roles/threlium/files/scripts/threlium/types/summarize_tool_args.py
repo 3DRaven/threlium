@@ -29,10 +29,9 @@ class SummarizeContextBatch(msgspec.Struct, frozen=True):
 class SummarizeContextStagePayload(msgspec.Struct, frozen=True):
     """Wire-форма ``<system>`` для перехода ``enrich → summarize_context`` (CONTEXT §5 overflow).
 
-    ``user_query`` — канонический ход пользователя (последняя ``<history>`` входящего enrich,
-    distill ``user_query``). Едет неизменным по циклу ``enrich → summarize_context →
-    summarize_memory → enrich``: суммаризация не меняет сообщения пользователя, поэтому
-    re-trigger enrich обязан повторить тот же user message (читается из ``<history>``).
+    ``user_query`` — **user query** (``<user-query>`` CID на ``To: enrich@``),
+    не distill tool field ``user_intent`` (``## User intent``). Едет неизменным по циклу
+    summarize_memory → enrich``: суммаризация не меняет сообщения пользователя.
 
     TYPES (``docs/TYPES.md`` § stage payload): сериализация/разбор строго через ``msgspec`` (не
     ``json.dumps`` / ``json.loads`` + ручной ``dict``).

@@ -2,11 +2,11 @@
     This Jinja comment is stripped and never sent to the model.
 -#}
 
-{#- Canonical incoming = last <history> on ingress→enrich letter (distill user_query). Assumes distill stripped quotes; fallback may contain raw quotes. -#}
+{#- user_query_text = canonical user turn (<user-query> CID). Not user intent (## User intent). -#}
 From: {{ incoming.get('From', '') }}
 To: {{ incoming.get('To', '') }}
 Subject: {{ incoming.get('Subject', '') }}
 Message-ID: {{ incoming.get('Message-ID', '') }}
 In-Reply-To: {{ incoming.get('In-Reply-To', '') }}
 
-{{ incoming | last_history_text }}
+{{ incoming | user_query_text }}

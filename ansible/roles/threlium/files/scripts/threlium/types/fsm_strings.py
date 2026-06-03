@@ -3,7 +3,12 @@ from __future__ import annotations
 
 import msgspec
 
-from ._core import _OptionalStripEmpty, _OptionalStripNone, _SingleLineHeaderWire
+from typing import TYPE_CHECKING, Self
+
+from ._core import _OptionalStripEmpty, _OptionalStripNone, _RequiredNonEmpty, _SingleLineHeaderWire
+
+if TYPE_CHECKING:
+    from threlium.types.ingress_distill import IngressExternalBodyText
 
 
 class MessageIdHeaderNormalizationInput(_OptionalStripNone):
@@ -76,3 +81,28 @@ class FsmTransitionPlainSubjectLine(_SingleLineHeaderWire):
 
 class EnrichObservationNoteText(_OptionalStripEmpty):
     """Текст MIME-части <observation-note> (formal_reason / memory_query → enrich_fast)."""
+
+
+class EnrichUserQueryText(_OptionalStripEmpty):
+    """Канонический сырой user turn в ``<user-query>`` CID на ``To: enrich@``.
+
+    Не путать с :class:`~threlium.types.reasoning.ReasoningUserMessageText` — тот про
+    отрендеренный ``<user-message>`` (envelope в Jinja enrich→reasoning).
+    """
+
+    @classmethod
+    def require_value(cls, *, name: str, raw: str | None) -> Self:
+        req = _RequiredNonEmpty.require(name=name, raw=raw)
+        return cls.parse(req.value)
+
+    @classmethod
+    def from_external_body(cls, body: IngressExternalBodyText) -> Self:
+        return cls.parse(body.value)
+
+
+class EnrichCalleeHistoryText(_OptionalStripEmpty):
+    """Собственный ``<history>``-ответ callee на переходе → enrich (error notice, …)."""
+
+
+class EnrichRequestEchoText(_OptionalStripEmpty):
+    """Тело request_echo (subagent_intent); callee решает, класть ли."""

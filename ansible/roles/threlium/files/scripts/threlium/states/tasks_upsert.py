@@ -1,21 +1,13 @@
-"""tasks_upsert@localhost → enrich_fast@localhost | ingress@localhost.
-
-``<system>``-payload (от reasoning) — JSON ``TasksUpsertToolArgs``: за один вызов модель
-**добавляет** новые подзадачи (``new_subtasks``) и **меняет статусы** существующих
-(``subtask_updates`` по ``content_id`` из ``<task-state>``).
-
-Стадия валидирует ``content_id`` обновлений против reduced-ledger предков (Level 3 граница):
-неизвестный id / пустой набор действий → ingress с ошибкой; ok → enrich_fast (тот
-пересобирает ``<task-state>`` из CRDT, включая это durable письмо ``To: tasks_upsert``).
-"""
+"""tasks_upsert@localhost → enrich_fast@localhost | enrich@localhost."""
 from __future__ import annotations
 
 from email.message import EmailMessage
 
 import msgspec
 
+from threlium.enrich_user_query import require_enrich_user_query_for_reenrich
 from threlium.fsm_emit_semantic import (
-    emit_ingress_validation_error,
+    emit_enrich_validation_error,
     emit_preserving_to_enrich_fast,
 )
 from threlium.logutil import logger
@@ -26,6 +18,7 @@ from threlium.task import build_task_state_summary, reduce_task_ops
 from threlium.task.ops import TasksUpsertOp
 from threlium.ledger_context_parts import crdt_ledger_state
 from threlium.types import (
+    EnrichUserQueryText,
     FsmStage,
     MailHeaderName,
     NotmuchMessageIdInner,
@@ -40,13 +33,20 @@ log = logger.bind(stage="tasks_upsert")
 _HDR = MailHeaderName
 
 
-def _ingress_error(
-    msg: EmailMessage, stage: FsmStage, *, config: ThreliumSettings, error: str, ledger: TaskLedger
+def _enrich_error(
+    msg: EmailMessage,
+    stage: FsmStage,
+    *,
+    config: ThreliumSettings,
+    user_query: EnrichUserQueryText,
+    error: str,
+    ledger: TaskLedger,
 ) -> EmailMessage:
-    return emit_ingress_validation_error(
+    return emit_enrich_validation_error(
         msg,
         from_stage=stage,
         settings=config,
+        user_query=user_query,
         prompt_path=PromptPath.INGRESS_TASKS_UPSERT_ERROR,
         error=error,
         task_state=build_task_state_summary(ledger),
@@ -57,6 +57,7 @@ def main(
     msg: EmailMessage, stage: FsmStage, *, config: ThreliumSettings
 ) -> EmailMessage | None:
     mid_w, inner = require_fsm_message_id(msg, "tasks_upsert")
+    user_query = require_enrich_user_query_for_reenrich(msg, stage_label="tasks_upsert")
 
     irt_w = RfcInReplyToWire.parse_present_from_email(msg, _HDR.IN_REPLY_TO.value)
     parent_inner = NotmuchMessageIdInner.from_optional_raw(irt_w.value if irt_w else None)
@@ -76,7 +77,9 @@ def main(
         )
     except (msgspec.DecodeError, msgspec.ValidationError, ValueError, RuntimeError) as exc:
         log.error("invalid_tasks_upsert", error=str(exc), message_id=mid_w.value if mid_w else None)
-        return _ingress_error(msg, stage, config=config, error=str(exc), ledger=prior_ledger)
+        return _enrich_error(
+            msg, stage, config=config, user_query=user_query, error=str(exc), ledger=prior_ledger
+        )
 
     new_ledger = reduce_task_ops([*prior_ops, op])
     log.info(
