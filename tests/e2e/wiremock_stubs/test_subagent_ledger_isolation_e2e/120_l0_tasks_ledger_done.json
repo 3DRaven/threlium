@@ -50,7 +50,7 @@
                 "type": "function",
                 "function": {
                   "name": "tasks_upsert",
-                  "arguments": "{\"reasoning\": \"e2e L0: close parent frame after subagent return\",\"new_subtasks\": [{\"text\": \"Complete the user request\",\"status\": \"done\"}]}"
+                  "arguments": "{\"reasoning\": \"e2e L0: close parent-frame open subtask after subagent POP before finalize\",\"new_subtasks\": [{\"text\": \"L0 parent ledger must not block L1 finalize\", \"status\": \"done\"}, {\"text\": \"Complete the user request\", \"status\": \"done\"}]}"
                 }
               }
             ]

@@ -21,7 +21,7 @@
     "customMatcher": {
       "name": "state-matcher",
       "parameters": {
-        "hasContext": "stub-task-ledger-cancel-01::{{request.headers.[x-threlium-thread-root]}}"
+        "hasContext": "stub-task-ledger-allcancel-01::{{request.headers.[x-threlium-thread-root]}}"
       }
     }
   },
@@ -31,7 +31,7 @@
       "Content-Type": "application/json"
     },
     "jsonBody": {
-      "id": "chatcmpl-task-ledger-cancel-ingress-distill",
+      "id": "chatcmpl-task-ledger-allcancel-ingress-distill",
       "object": "chat.completion",
       "created": 0,
       "model": "gpt-4o-mini",
@@ -44,11 +44,11 @@
             "content": null,
             "tool_calls": [
               {
-                "id": "call_ingress_distill_task-ledger-cancel",
+                "id": "call_ingress_distill_task-ledger-allcancel",
                 "type": "function",
                 "function": {
                   "name": "ingress_distill",
-                  "arguments": "{\"user_query\": \"E2E-TASK-LEDGER-CANCEL-BODY: task ledger all cancelled.\", \"user_reply_language\": \"Russian\", \"open_gaps\": [], \"step_back_notes\": [\"Ingress distill for stub-task-ledger-cancel-01.\"]}"
+                  "arguments": "{\"user_query\": \"E2E-TASK-LEDGER-ALLCANCEL-BODY: task ledger all cancelled guard.\", \"user_reply_language\": \"Russian\", \"open_gaps\": [], \"step_back_notes\": [\"Ingress distill for stub-task-ledger-allcancel-01.\"]}"
                 }
               }
             ]
