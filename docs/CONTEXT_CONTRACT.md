@@ -53,8 +53,8 @@ domain) — поэтому пара «команда + её history-копия»
 - Создаётся `build_fsm_step_to_stage(..., system=...)` или legacy `build_fsm_plain_to_stage`
   (тоже оборачивает body в `<system>`).
 - **Внешняя граница**: мост (`bridge`) на входе извлекает тело внешнего письма
-  (`extract_plain_body`) и оборачивает в `<system>` + кладёт `<history>`-копию хода
-  пользователя. Терминальные `egress_email`/`egress_telegram`/`egress_matrix` строят чистое
+  (`extract_plain_body`) и оборачивает **только в `<system>`** (без `<user-query>` — его
+  создаёт `ingress` на переходе ingress→enrich). Терминальные `egress_email`/`egress_telegram`/`egress_matrix` строят чистое
   внешнее письмо **только из `<system>`** (`system_part_text`), не пробрасывая внутренний MIME.
 
 ---
@@ -104,7 +104,7 @@ flowchart LR
 
 | Стадия | To: | echo | resp | sys | Роль |
 |---|---|:--:|:--:|:--:|---|
-| `ingress` | `enrich` (или `cli_resume`) | — | да¹ | **нет**² | Единая точка входа. → `enrich`: preserving payload + append `<history>` (distill brief); HITL → `cli_resume` только `<system>` (¹без history). ²На пути enrich `<system>` не эмитится. |
+| `ingress` | `enrich` (или `cli_resume`) | — | да | **нет** | **Только bridge + HITL router:** distill gateway (`From:` email/telegram/matrix@localhost) → `enrich` с `<user-query>` + distill `<history>`; HITL → `cli_resume` только `<system>`. Internal стадии в ingress **не** эмитят. |
 | `enrich` | `reasoning` / `summarize_context` | — | — | да² | → `reasoning`: **`<system>` НЕТ** (reasoning не читает payload, см. ниже) — собирает core-CID §4 + `<unified-mail-context>` из `<history>`-частей треда; своих `<history>` не создаёт. ²Только → `summarize_context` есть `<system>`. |
 | `enrich_fast` | `reasoning` | — | — | **релей** | Relay-сборщик дельты: `<history>` + `<system>` из окна (штампует `origin`); replace `<response-state>`/`<task-state>`. Старые `@system` из `E_prev` не копируются — только свежие из дельты. `reasoning` не кладёт их в LLM-промпт, но читает для FSM gate (`formal_reason`). |
 | `reasoning` | tool | **нет** | **нет** | да | Чистый `<system>`-эмиттер tool-call (команда адресату). История — забота callee. На ВХОДЕ сам `<system>` не читает. |
@@ -125,12 +125,12 @@ flowchart LR
 | `thread_memory` / `global_memory` | `enrich_fast` | **да** (note) | нет | — | Для памяти ценен запрос: note = что агент решил запомнить; origin=reasoning; «recorded»-ответа нет. |
 | `response_observe` | `enrich_fast` | нет | да | — | Нарратив-обзор буфера + task-ledger. |
 | `response_append` | `enrich_fast` | нет | нет | релей | Мутатор буфера; буфер виден как `<response-state>`. Сырой чанк в history не идёт. |
-| `response_edit` | `enrich_fast` / `ingress` | нет | нет | релей / да | Мутатор буфера; ошибка валидации → `ingress` (`<system>`). |
-| `tasks_upsert` | `enrich_fast` / `ingress` | нет | нет | релей / да | Мутатор ledger (`<task-state>`); ошибка → `ingress`. |
-| `response_finalize` | `egress_router` / `ingress` | нет | да | да | Итоговый ответ (`<history>`+`<system>`); task-gate/ошибка → `ingress` (`<system>`). |
-| `reflect` | `ingress` | нет | **нет** | да | Анти-раздувание (`MEMORY_TABLE.md §3`): рефреш-промпт только `<system>`. |
+| `response_edit` | `enrich_fast` / `enrich` | нет | нет | релей / да | Мутатор буфера; ошибка валидации → `enrich` (`<user-query>` + notice в `<history>`). |
+| `tasks_upsert` | `enrich_fast` / `enrich` | нет | нет | релей / да | Мутатор ledger (`<task-state>`); ошибка → `enrich`. |
+| `response_finalize` | `egress_router` / `enrich` | нет | да | да | Итоговый ответ (`<history>`+`<system>`); task-gate/ошибка → `enrich`. |
+| `reflect` | `enrich` | нет | **нет** | — | Re-enrich без ingress: `<user-query>` из IRT, без distill. |
 | `cli_intent` | `enrich_fast` / `cli_exec` / `cli_hitl_out` | нет | да³ | да | Роутер CLI. ³route-collision / invalid → `enrich_fast` (`<history>`-note); sandbox→`cli_exec`; privileged (+ HITL если включён)→`cli_hitl_out`→`cli_resume`→`cli_exec`. `cli_exec` / `cli_resume` (reject) → `enrich_fast`. |
-| `subagent_intent` | `ingress` | **да** (task) | нет | релей | Делегирование субагенту. Фильтр фрейма (`iter_irt_ancestors_filtered`) изолирует внутренние письма субагента — родителю видны лишь границы intent/end. Задача жила в `<system>` и терялась из истории родителя → request-echo (origin=reasoning) кладёт её в `<history>`. |
+| `subagent_intent` | `enrich` | **да** (task) | нет / да | релей | Делегирование субагенту: `<user-query>` = текст задачи; request-echo в `<history>`. Budget exhausted → notice в `<history>`. |
 
 **CLI / HITL цепочка.**
 
@@ -144,9 +144,9 @@ flowchart LR
 
 | Стадия | To: | echo | resp | sys | Роль |
 |---|---|:--:|:--:|:--:|---|
-| `subagent_end` | `ingress` | — | релей | релей | Возврат результата субагента (preserving). `<history>`-финализация субагента пробрасывается и видна родителю на границе фрейма (симметрично request-echo в `subagent_intent`). |
-| `summarize_context` | `summarize_memory` | — | да | да | Сводка хвоста → `<history>` (durable, переживает дренаж) + канонический `user_query` релеем в `<system>`. |
-| `summarize_memory` | `enrich` | — | да | — | Дренаж в полный enrich: `user_query` из `<system>` → `<history>` (re-trigger повторяет тот же ход; сводку enrich видит из unified, §5). |
+| `subagent_end` | `enrich` | — | релей | релей | Возврат результата субагента (preserving). `<user-query>` = parent query из IRT; relay `<history>`. |
+| `summarize_context` | `summarize_memory` | — | да | да | Сводка хвоста → `<history>` (durable) + `user_query` в `<system>` payload. |
+| `summarize_memory` | `enrich` | — | да | — | Дренаж в enrich: `user_query` из payload → `<user-query>` CID (re-trigger повторяет тот же ход; §5). |
 | `egress_router` | `egress_*` / `subagent_end` | — | релей | релей | Маршрутизация по каналам; части письма не меняет. |
 | `egress_email` / `egress_telegram` / `egress_matrix` | — (терминал) | — | — | читает | Строят внешнее письмо **только из `<system>`** (`system_part_text`); ничего не эмитят. |
 | `archive` | — (терминал) | — | — | — | Оседает в Maildir/union-index; ничего не эмитит. |
@@ -161,7 +161,7 @@ flowchart LR
 
 | Content-ID | Источник |
 |---|---|
-| `<user-message>` | canonical user text (§4.1: `enrich_incoming_user_text.j2` + last `<history>`) |
+| `<user-message>` | canonical user text (§4.1: `enrich_incoming_user_text.j2` + `<user-query>` CID) |
 | `<graph-answer>` | JSON-envelope `rag.aquery` |
 | `<unified-mail-context>` | хронология треда + memory из `<history>`-частей (`message_has_history`) |
 | `<thread-memory>` / `<global-memory>` | memory-письма (намеренное дублирование маркеров) |
@@ -180,22 +180,27 @@ enrich→reasoning (`build_enriched_multipart`, §4).
 
 ```mermaid
 flowchart TB
-  subgraph ingress["ingress._emit_to_enrich"]
-    EXT[Внешнее тело моста]
+  subgraph bridge["bridge → ingress"]
+    SYS["&lt;system&gt; = внешнее тело"]
+  end
+  subgraph ingress["ingress (bridge-only distill)"]
     LLM["ingress_distill_llm (tool_choice=required)"]
     H1["&lt;hash@history&gt; language / step_back / gaps"]
     H2["&lt;hash@history&gt; ## User intent … (user_query)"]
-    EXT --> LLM
+    UQ["&lt;user-query&gt; из system_part_text"]
+    SYS --> LLM
+    SYS --> UQ
     LLM --> H1
     LLM --> H2
   end
   subgraph enrich_in["enrich@ (вход, notmuch)"]
-    MSG["multipart: конверт + 0..N &lt;history&gt;, без &lt;system&gt;"]
+    MSG["multipart: &lt;user-query&gt; + 0..N &lt;history&gt;, без &lt;system&gt;"]
     H1 --> MSG
     H2 --> MSG
+    UQ --> MSG
   end
   subgraph enrich_run["enrich.main (runtime)"]
-    UM["user_message_text = enrich_incoming_user_text.j2"]
+    UM["user_message_text = enrich_incoming_user_text.j2 (user_query_text filter)"]
     UNI["ctx.all_messages = build_unified_email_messages(leaf)"]
     MSG --> UM
     MSG --> UNI
@@ -210,26 +215,26 @@ flowchart TB
 
 **Шаг 1 — ingress (`states/ingress.py`, `ingress_distill.py`).**
 
-1. Мост кладёт сырое внешнее тело; `ingress` собирает `IngressDistillEnvelope` (канал,
-   заголовки, `full_body`, опц. orphan-notice).
+1. Мост кладёт **только `<system>`** (внешнее тело); `ingress` читает `system_part_text` →
+   `EnrichUserQueryText` (`ingress_bridge_user_query.enrich_user_query_from_bridge_system`).
+   Distill envelope: `full_body` = тот же текст (+ опц. orphan-notice).
 2. `ingress_distill_llm`: один LLM-вызов с обязательным tool `ingress_distill` (или
-   fail-safe fallback, см. ниже).
+   fail-safe fallback) — **только** на bridge-path; internal re-enrich идёт напрямую в enrich.
 3. Каждое поле tool → отдельный `IngressDistillHistoryPart` → Jinja-шаблон history
-   (`ingress/distill_history_*.j2`) → `out.attach(_make_inline_text_part(
-   EnrichContentId.from_history_body(text), …))`.
-4. Переход `ingress → enrich`: `emit_transition_simple_step_preserving_payload` — конверт
-   и уже существующие части сохраняются; **`<system>` на этом пути не эмитится** (§3).
+   (`ingress/distill_history_*.j2`) → distill parts; **без request_echo** на bridge-path.
+4. Переход `ingress → enrich`: distill `<history>` + **attach `<user-query>`** из bridge system (§3).
 
-Порядок history-частей на письме (если tool вернул все поля): `user_reply_language` →
-`step_back_notes` → `open_gaps` → **`user_query` последним** — canonical user turn = **последняя**
-непустая `<history>` (`last_history_part_text`, `mime_reform.py`).
+Порядок history-частей (ветка distill): `user_reply_language` → `step_back_notes` →
+`open_gaps` → **`user_intent`**. Canonical user turn = **`<user-query>` CID** (не последняя
+`<history>`).
 
-| Поле tool `ingress_distill` | Heading в `<history>` | Кто читает на первом enrich |
+| Поле tool `ingress_distill` | Heading в `<history>` | Кто читает на enrich |
 |---|---|---|
-| `user_query` | `## User intent` | **`last_history` → `<user-message>`**; graph query / task plan |
+| `user_intent` | `## User intent` | unified / task plan; **не** `<user-message>` |
 | `user_reply_language` | `## User reply language` | reasoning egress / `response_finalize` |
 | `step_back_notes` | `## Step-back context` | `<unified-mail-context>`, reasoning history |
 | `open_gaps` | `## Open gaps` | `<unified-mail-context>`, reasoning history |
+| `<user-query>` (bridge) | (fixed CID) | **`user_query_text` → `<user-message>`** |
 
 **Шаг 2 — вход enrich (`states/enrich.py`).** Handler читает **текущее** письмо листа
 (`Message-ID` = ход ingress→enrich) из notmuch. На диске: только `<history>` + RFC822-конверт.
@@ -239,8 +244,8 @@ flowchart TB
 
 1. **Canonical user turn** — `user_message_text = render_prompt(
    PromptPath.LIGHTRAG_ENRICH_INCOMING_USER_TEXT, incoming=msg)`. Шаблон
-   `lightrag/enrich_incoming_user_text.j2`: заголовки конверта (From/To/Subject/Message-ID/…)
-   + фильтр `last_history_text` (= последняя distill-`<history>`, обычно `## User intent`).
+   `lightrag/enrich_incoming_user_text.j2`: заголовки конверта + фильтр
+   `user_query_text` (= `require_enrich_user_query_text` → `<user-query>` CID).
    Используется для query plan, task plan, бюджета `EnrichPartId.USER_MESSAGE`.
 
 2. **Unified-бакет** — `ctx = build_unified_email_messages(leaf_inner=текущий MID,
@@ -258,9 +263,8 @@ core-CID (§4): в т.ч. `<user-message>` из `user_message_text` и `<unified
 как отдельный «пакет distill».
 
 **Fallback distill** (`ingress_distill_llm` после исчерпания retry): одна `<history>` =
-`ingress/distill_history_user_query.j2` с `user_query = trim_context_text(full_body,
-distill_fallback_max_chars)` — **хвост** сырого тела (`trim_prompt_text`), без LLM-полей
-language/gaps/step_back. Тот же контракт CID; enrich читает его так же через `last_history_text`.
+`ingress/distill_history_user_query.j2` с `user_intent = trim_context_text(full_body,
+distill_fallback_max_chars)`; `<user-query>` relay без изменений.
 
 **Связь с overflow summarize** (§5): `_emit_summarize_overflow` берёт
 `concat_history_parts_text(m)` по письмам из `ctx.all_messages` — те же `<history>` на диске,
