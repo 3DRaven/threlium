@@ -228,6 +228,7 @@ EDIT_DELETE_SPEC = MailflowScenarioSpec(
     body_head=f"{E2E_EDIT_DELETE_BODY_MARKER}\ne2e response edit delete test body",
     min_chat_completion_posts=5,
     min_embedding_posts=1,
+    wiremock_journal_ready_needle="call_e2e_edit_delete_finalize",
     expect_notmuch_stage_folders=(
         FsmStage.INGRESS.value,
         FsmStage.ENRICH.value,

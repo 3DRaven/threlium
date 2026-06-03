@@ -58,6 +58,8 @@ FORMAL_REASON_TECH_GATE_SPEC = MailflowScenarioSpec(
         FsmStage.ARCHIVE.value,
     ),
     reply_body_needle="e2e-formal-reason-tech-gate-verified-answer",
+    # Длинный gate-контур: poll tasks_ledger в журнале до GreenMail (finalize+egress в его окне).
+    wiremock_journal_ready_needle="call_e2e_tasks_ledger_tech_gate",
 )
 
 
