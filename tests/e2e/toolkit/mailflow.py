@@ -15,7 +15,7 @@ from .bridges.email import (
     email_ingress_notmuch_id_inner,
     e2e_thread_root_mid_for_message_id,
 )
-from .constants import E2E_SUT_NOTMUCH_BASH_EXPORT, REPO_ROOT, TIMEOUT_POLL_LIVE_MAIL, TIMEOUT_POLL_SHORT
+from .constants import E2E_SUT_NOTMUCH_BASH_EXPORT, REPO_ROOT, TIMEOUT_POLL_SHORT
 from .diag import (
     mailflow_fsm_maildir_systemd_snapshot,
     mailflow_pipeline_diag,
@@ -82,7 +82,6 @@ class MailflowScenarioSpec:
     # Длинные multi-hop: poll журнала WireMock (request/response) до GreenMail, чтобы
     # min_chat_completion_posts на раннем lightrag не «съел» TIMEOUT_POLL_SHORT.
     wiremock_journal_ready_needle: str | None = None
-    reply_poll_timeout: float | None = None
     assert_thread_no_unread: bool = False
     length_recovery_e2e: bool = False
 
@@ -97,7 +96,7 @@ def _wait_rag_drain_idle(project_name: str, *, label: str) -> None:
     ]
 
     def _probe() -> str | None:
-        r = service_exec(project_name, "sut", cmd, repo_root=REPO_ROOT, timeout=30)
+        r = service_exec(project_name, "sut", cmd, repo_root=REPO_ROOT, timeout=int(TIMEOUT_POLL_SHORT))
         if r.returncode != 0:
             return None
         try:
@@ -136,7 +135,7 @@ def _inject_rag_warmup(
         "bash", "-lc",
         "stat --printf='%s' /home/threlium/threlium/data/lightrag/vdb_chunks.json 2>/dev/null || echo 0",
     ]
-    r = service_exec(project_name, "sut", cmd, repo_root=REPO_ROOT, timeout=30)
+    r = service_exec(project_name, "sut", cmd, repo_root=REPO_ROOT, timeout=int(TIMEOUT_POLL_SHORT))
     try:
         sz = int((r.stdout or "").strip())
     except ValueError:
@@ -272,7 +271,7 @@ def mailflow_inject_and_wait(
         # summarize. Каждый ход тредится на ОТВЕТ агента предыдущего (см. комментарий ниже).
         prior_turns_count = (
             max(1, spec.summarize_overflow_prior_turns)
-            if spec.summarize_overflow_body
+            if (spec.summarize_overflow_body or spec.oversized_trim_body)
             else 1
         )
         chain_in_reply_to: str | None = None
@@ -292,9 +291,11 @@ def mailflow_inject_and_wait(
                     pad_chars=500,
                 )
             elif spec.oversized_trim_body:
+                # Малое сырое тело (HEAD-маркер); размер unified задаёт templated distill-бриф.
                 seed_body = e2e_oversized_context_trim_prior_turn_body(
-                    head=f"{spec.body_head} (prior thread turn seed)",
+                    head=f"{spec.body_head} (prior thread turn seed {turn_idx})",
                     correlation_key=correlation_key,
+                    pad_chars=500,
                 )
             else:
                 seed_body = e2e_dense_threlium_ctx_body(
@@ -402,7 +403,7 @@ def mailflow_inject_and_wait(
         rt.greenmail_imap_host,
         rt.greenmail_imap_port,
         message_id=raw_id,
-        timeout=TIMEOUT_POLL_LIVE_MAIL,
+        timeout=TIMEOUT_POLL_SHORT,
     )
     mailflow_log_phase(
         f"{spec.label}: after wait_for_greenmail_inbox_message_gone_host (+{time.monotonic() - t0:.1f}s)"

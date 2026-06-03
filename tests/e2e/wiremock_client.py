@@ -1874,7 +1874,6 @@ def _e2e_openai_llm_coverage_missing(data: dict[str, Any], test_id: str) -> list
                 "THRELIUM_E2E_WIREMOCK_STRICT_JOURNAL=1 — проверка фаз LLM недостоверна."
             )
 
-    chat_hays: list[str] = []
     chat_entries: list[dict[str, Any]] = []
     emb_posts: list[str] = []
     for entry in raw_list:
@@ -1888,7 +1887,6 @@ def _e2e_openai_llm_coverage_missing(data: dict[str, Any], test_id: str) -> list
         if method != "POST":
             continue
         if "/v1/chat/completions" in url or url.rstrip("/").endswith("chat/completions"):
-            chat_hays.append(_journal_request_anchor_haystack(entry))
             chat_entries.append(entry)
         elif "/v1/embeddings" in url or url.rstrip("/").endswith("embeddings"):
             emb_posts.append(_journal_request_body(entry))
@@ -1902,22 +1900,22 @@ def _e2e_openai_llm_coverage_missing(data: dict[str, Any], test_id: str) -> list
     if len(emb_posts) < 1:
         missing.append("POST /embeddings (≥1 с телом сценария)")
 
-    def _post_has_reasoning(hay: str) -> bool:
-        return (
-            test_id in hay
-            and "<envelope>" in hay
-            and '"tools"' in hay
-        )
-
     def _entry_has_call_site(entry: dict[str, Any], call_site: str) -> bool:
         req = entry.get("request")
         if not isinstance(req, dict):
             return False
         return _wiremock_headers_get_ci(req.get("headers"), "X-Threlium-Call-Site") == call_site
 
-    if not any(_post_has_reasoning(h) for h in chat_hays):
+    def _entry_has_reasoning(entry: dict[str, Any]) -> bool:
+        if not _entry_has_call_site(entry, "reasoning"):
+            return False
+        hay = _journal_request_anchor_haystack(entry)
+        return "<envelope>" in hay and '"tools"' in hay
+
+    if not any(_entry_has_reasoning(e) for e in chat_entries):
         missing.append(
-            "reasoning (как 100_chat_reasoning_egress_tool.json: <envelope> + tools + test_id)"
+            "reasoning (X-Threlium-Call-Site: reasoning + <envelope> + tools, "
+            "как 100_chat_reasoning_egress_tool.json)"
         )
     if not any(_entry_has_call_site(e, "enrich_query_plan") for e in chat_entries):
         missing.append("enrich plan (X-Threlium-Call-Site: enrich_query_plan)")
