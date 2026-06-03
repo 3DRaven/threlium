@@ -26,7 +26,7 @@
 | **`enrich_task_plan`** (early seed) | До RAG | Да | Тексты в graph query + позже в тот же `<task-init>` |
 | **`enrich_task_hypotheses`** (late) | После RAG | Да | Только новые subtasks → **тот же** merged `<task-init>` |
 | **`tasks_upsert`** | Reasoning tool | Reasoning | Статусы / follow-ups (без изменений) |
-| **`reflect`** | Reasoning tool → `reflect → ingress` | **Нет** на стадии reflect | Полный re-enrich, не пополнение ledger |
+| **`reflect`** | Reasoning tool → `reflect → enrich` | **Нет** на стадии reflect | Полный re-enrich, не пополнение ledger |
 
 Отменённая линия (старый план `context_reflection_llm`): LLM на стадии reflect, `ContextReflectSystemPayload`, `reflect → tasks_upsert → enrich_fast`.
 
@@ -97,7 +97,7 @@ enrich.main (один процесс, один emit):
 
 ### Reflect
 
-[`states/reflect.py`](../../ansible/roles/threlium/files/scripts/threlium/states/reflect.py) — **без** LiteLLM (как было): Jinja → `reflect → ingress`.
+[`states/reflect.py`](../../ansible/roles/threlium/files/scripts/threlium/states/reflect.py) — **без** LiteLLM (как было): Jinja → `reflect → enrich`.
 
 ---
 

@@ -125,12 +125,12 @@ flowchart LR
 | `thread_memory` / `global_memory` | `enrich_fast` | **да** (note) | нет | — | Для памяти ценен запрос: note = что агент решил запомнить; origin=reasoning; «recorded»-ответа нет. |
 | `response_observe` | `enrich_fast` | нет | да | — | Нарратив-обзор буфера + task-ledger. |
 | `response_append` | `enrich_fast` | нет | нет | релей | Мутатор буфера; буфер виден как `<response-state>`. Сырой чанк в history не идёт. |
-| `response_edit` | `enrich_fast` / `enrich` | нет | нет | релей / да | Мутатор буфера; ошибка валидации → `enrich` (`<user-query>` + notice в `<history>`). |
+| `response_edit` | `enrich_fast` / `enrich` | нет | нет | релей / да | Мутатор буфера; ошибка валидации → `enrich` (`<user-query>` = notice, local turn). |
 | `tasks_upsert` | `enrich_fast` / `enrich` | нет | нет | релей / да | Мутатор ledger (`<task-state>`); ошибка → `enrich`. |
 | `response_finalize` | `egress_router` / `enrich` | нет | да | да | Итоговый ответ (`<history>`+`<system>`); task-gate/ошибка → `enrich`. |
-| `reflect` | `enrich` | нет | **нет** | — | Re-enrich без ingress: `<user-query>` из IRT, без distill. |
+| `reflect` | `enrich` | нет | **нет** | — | Re-enrich без ingress: `<user-query>` = rendered reflect body (local turn), без distill. |
 | `cli_intent` | `enrich_fast` / `cli_exec` / `cli_hitl_out` | нет | да³ | да | Роутер CLI. ³route-collision / invalid → `enrich_fast` (`<history>`-note); sandbox→`cli_exec`; privileged (+ HITL если включён)→`cli_hitl_out`→`cli_resume`→`cli_exec`. `cli_exec` / `cli_resume` (reject) → `enrich_fast`. |
-| `subagent_intent` | `enrich` | **да** (task) | нет / да | релей | Делегирование субагенту: `<user-query>` = текст задачи; request-echo в `<history>`. Budget exhausted → notice в `<history>`. |
+| `subagent_intent` | `enrich` | **да** (task) | нет / да | релей | Делегирование субагенту: `<user-query>` = текст задачи; request-echo в `<history>`. Budget exhausted → notice в `<user-query>`. |
 
 **CLI / HITL цепочка.**
 
@@ -144,7 +144,7 @@ flowchart LR
 
 | Стадия | To: | echo | resp | sys | Роль |
 |---|---|:--:|:--:|:--:|---|
-| `subagent_end` | `enrich` | — | релей | релей | Возврат результата субагента (preserving). `<user-query>` = parent query из IRT; relay `<history>`. |
+| `subagent_end` | `enrich` | — | релей | релей | Возврат результата субагента (preserving). `<user-query>` = текст результата; relay `<history>`. |
 | `summarize_context` | `summarize_memory` | — | да | да | Сводка хвоста → `<history>` (durable) + `user_query` в `<system>` payload. |
 | `summarize_memory` | `enrich` | — | да | — | Дренаж в enrich: `user_query` из payload → `<user-query>` CID (re-trigger повторяет тот же ход; §5). |
 | `egress_router` | `egress_*` / `subagent_end` | — | релей | релей | Маршрутизация по каналам; части письма не меняет. |
@@ -222,14 +222,15 @@ flowchart TB
    fail-safe fallback) — **только** на bridge-path; internal re-enrich идёт напрямую в enrich.
 3. Каждое поле tool → отдельный `IngressDistillHistoryPart` → Jinja-шаблон history
    (`ingress/distill_history_*.j2`) → distill parts; **без request_echo** на bridge-path.
-4. Переход `ingress → enrich`: distill `<history>` + **attach `<user-query>`** из bridge system (§3).
+4. Переход `ingress → enrich`: **`## Original user message`** (сырой bridge `<system>`) + distill `<history>` + **attach `<user-query>`** (преобразованный bridge system VO, опц. orphan-prefix; §3).
 
-Порядок history-частей (ветка distill): `user_reply_language` → `step_back_notes` →
-`open_gaps` → **`user_intent`**. Canonical user turn = **`<user-query>` CID** (не последняя
-`<history>`).
+Порядок history-частей (ветка distill): **`original_user_message`** → `user_reply_language` →
+`step_back_notes` → `open_gaps` → **`user_intent`**. Canonical user turn = **`<user-query>` CID**
+(не последняя `<history>`).
 
 | Поле tool `ingress_distill` | Heading в `<history>` | Кто читает на enrich |
 |---|---|---|
+| (bridge `<system>`, не tool) | `## Original user message` | `<unified-mail-context>` |
 | `user_intent` | `## User intent` | unified / task plan; **не** `<user-message>` |
 | `user_reply_language` | `## User reply language` | reasoning egress / `response_finalize` |
 | `step_back_notes` | `## Step-back context` | `<unified-mail-context>`, reasoning history |
@@ -264,7 +265,7 @@ core-CID (§4): в т.ч. `<user-message>` из `user_message_text` и `<unified
 
 **Fallback distill** (`ingress_distill_llm` после исчерпания retry): одна `<history>` =
 `ingress/distill_history_user_query.j2` с `user_intent = trim_context_text(full_body,
-distill_fallback_max_chars)`; `<user-query>` relay без изменений.
+distill_fallback_max_chars)`; `<user-query>` = преобразованный bridge system (VO), без IRT-relay.
 
 **Связь с overflow summarize** (§5): `_emit_summarize_overflow` берёт
 `concat_history_parts_text(m)` по письмам из `ctx.all_messages` — те же `<history>` на диске,
@@ -278,11 +279,11 @@ distill, overflow на enrich главного хода (брифинг:
 `docs/briefing/summarize_context_overflow_e2e_briefing.md`).
 
 **Цикл user_query.** Суммаризация не меняет ход пользователя, поэтому канонический `user_query`
-(последняя `<history>` входящего enrich) едет неизменным по `enrich → summarize_context →
+(`<user-query>` CID текущего enrich-листа) едет неизменным по `enrich → summarize_context →
 summarize_memory → enrich`: enrich кладёт его в `SummarizeContextStagePayload.user_query`,
 `summarize_context` релеит его в `<system>` (рядом со сводкой в `<history>`), `summarize_memory`
-возвращает его enrich как `<history>`. Re-trigger enrich читает тот же `user_query` через
-`last_history_text` и не переполняется снова (оригиналы помечены `context_summarized`, сводка
+возвращает его enrich как `<user-query>` CID. Re-trigger enrich читает тот же turn через
+`require_enrich_user_query_text` и не переполняется снова (оригиналы помечены `context_summarized`, сводка
 уже в unified).
 
 Код: `states/ingress.py` (`_emit_to_enrich`), `ingress_distill.py`, `types/ingress_distill.py`,
