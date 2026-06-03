@@ -1,0 +1,60 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
+    "headers": {
+      "X-Threlium-Call-Site": {
+        "equalTo": "ingress_distill"
+      }
+    },
+    "bodyPatterns": [
+      {
+        "matches": "(?s).*(openai/threlium_e2e_l0|threlium_e2e_l0).*"
+      },
+      {
+        "contains": "\"tools\""
+      },
+      {
+        "contains": "ingress_distill"
+      }
+    ],
+    "customMatcher": {
+      "name": "state-matcher",
+      "parameters": {
+        "hasContext": "stub-greenmail-delivery-smoke-01::{{request.headers.[x-threlium-thread-root]}}"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "id": "chatcmpl-e2e-greenmail-ingress-distill",
+      "object": "chat.completion",
+      "created": 0,
+      "model": "gpt-4o-mini",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "tool_calls",
+          "message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_ingress_distill_e2e",
+                "type": "function",
+                "function": {
+                  "name": "ingress_distill",
+                  "arguments": "{\"user_query\":\"GreenMail delivery smoke message; standalone new thread, no action required.\",\"user_reply_language\":\"English\",\"open_gaps\":[],\"step_back_notes\":[\"Smoke email for greenmail delivery; acknowledge only.\"]}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}
