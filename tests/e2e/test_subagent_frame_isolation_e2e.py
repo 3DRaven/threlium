@@ -29,14 +29,15 @@ from .wiremock_client import (
     find_wiremock_requests_by_body_contains,
     journal_entries_for_stub_tag,
     wiremock_public_base,
-    _journal_chat_completion_user_content,
+    _entry_response_body_preview,
     _journal_request_anchor_haystack,
+    _journal_request_body,
 )
 
 _WIREMOCK_STUBS_ROOT = Path(__file__).resolve().parent / "wiremock_stubs"
 E2E_SUBAGENT_ISO_BODY = "E2E-SUBAGENT-FRAME-ISO"
 E2E_L0_BUFFER_MARKER = "E2E-ISO-L0-BUFFER-CHUNK-MUST-NOT-LEAK-TO-L1"
-E2E_L1_RESULT_MARKER = "E2E-ISO-L1-FRAME-RESULT-ONLY"
+E2E_L1_FINALIZE_TOOL_CALL = "call_e2e_iso_l1_finalize"
 
 RESPONSE_ISO_SPEC = MailflowScenarioSpec(
     label="subagent_response_frame_iso",
@@ -44,7 +45,7 @@ RESPONSE_ISO_SPEC = MailflowScenarioSpec(
     stub_dir=_WIREMOCK_STUBS_ROOT / "test_subagent_frame_isolation_e2e",
     stub_tag="stub-subagent-frame-iso-01",
     body_head=f"{E2E_SUBAGENT_ISO_BODY}\ne2e subagent response buffer frame isolation",
-    min_chat_completion_posts=18,
+    min_chat_completion_posts=20,
     min_embedding_posts=1,
     min_rerank_posts=0,
     expect_notmuch_stage_folders=(
@@ -71,7 +72,7 @@ LEDGER_ISO_SPEC = MailflowScenarioSpec(
     stub_dir=_WIREMOCK_STUBS_ROOT / "test_subagent_ledger_isolation_e2e",
     stub_tag="stub-subagent-ledger-iso-01",
     body_head=f"{E2E_SUBAGENT_ISO_BODY}\ne2e subagent task-ledger frame isolation",
-    min_chat_completion_posts=18,
+    min_chat_completion_posts=20,
     min_embedding_posts=1,
     min_rerank_posts=0,
     expect_notmuch_stage_folders=(
@@ -92,9 +93,10 @@ LEDGER_ISO_SPEC = MailflowScenarioSpec(
 )
 
 
-def _journal_bodies_for_stub(
-    project: str, *, stub_tag: str, correlation_key: str, needle: str
+def _journal_l1_finalize_request_bodies(
+    project: str, *, stub_tag: str, correlation_key: str
 ) -> list[str]:
+    """Reasoning POST bodies served by ``113_l1_finalize`` (response contains tool call id)."""
     rt = discover_runtime(project, repo_root=REPO_ROOT)
     wm_base = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
     bodies: list[str] = []
@@ -107,11 +109,13 @@ def _journal_bodies_for_stub(
         url = str(req.get("url") or "")
         if "/chat/completions" not in url:
             continue
+        if E2E_L1_FINALIZE_TOOL_CALL not in _entry_response_body_preview(entry):
+            continue
         hay = _journal_request_anchor_haystack(entry)
         if correlation_key not in hay:
             continue
-        body = _journal_chat_completion_user_content(entry)
-        if body and needle in body:
+        body = _journal_request_body(entry)
+        if body:
             bodies.append(body)
     return bodies
 
@@ -120,15 +124,14 @@ def _assert_l1_finalize_prompt_excludes_l0_buffer(
     project: str, *, stub_tag: str, correlation_key: str
 ) -> None:
     """L1 finalize reasoning hop must not see L0 response buffer in its prompt."""
-    bodies = _journal_bodies_for_stub(
+    bodies = _journal_l1_finalize_request_bodies(
         project,
         stub_tag=stub_tag,
         correlation_key=correlation_key,
-        needle=E2E_L1_RESULT_MARKER,
     )
     assert bodies, (
-        f"L1 finalize prompt must contain {E2E_L1_RESULT_MARKER!r} in WM journal "
-        f"(stub_tag={stub_tag!r})"
+        f"L1 finalize reasoning hop not found in WM journal "
+        f"(tool_call={E2E_L1_FINALIZE_TOOL_CALL!r}, stub_tag={stub_tag!r})"
     )
     for body in bodies:
         assert E2E_L0_BUFFER_MARKER not in body, (

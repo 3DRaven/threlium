@@ -22,7 +22,8 @@
       "name": "state-matcher",
       "parameters": {
         "hasContext": "stub-subagent-ledger-iso-01::{{request.headers.[x-threlium-thread-root]}}",
-        "hasProperty": "phase_l0_egress_done"
+        "hasProperty": "phase_l0_egress_done",
+        "hasNotProperty": "phase_parent_resume_ledger_done"
       }
     }
   },
@@ -32,7 +33,7 @@
       "Content-Type": "application/json"
     },
     "jsonBody": {
-      "id": "chatcmpl-e2e-iso-l0-finalize-retry",
+      "id": "chatcmpl-e2e-iso-l0-parent-resume-tasks",
       "object": "chat.completion",
       "created": 0,
       "model": "gpt-4o-mini",
@@ -45,11 +46,11 @@
             "content": null,
             "tool_calls": [
               {
-                "id": "call_e2e_iso_l0_finalize",
+                "id": "call_e2e_iso_l0_parent_resume_tasks",
                 "type": "function",
                 "function": {
-                  "name": "response_finalize",
-                  "arguments": "{\"reasoning\": \"e2e L0: finalize after subagent POP (retry)\", \"subject\": \"e2e subagent iso reply\", \"verification_summary\": \"e2e: parent frame egress after isolation\", \"content\": \"e2e-subagent-frame-iso-verified\"}"
+                  "name": "tasks_upsert",
+                  "arguments": "{\"reasoning\": \"e2e L0 parent-resume: close L1 subagent + enrich seed subtasks before archive finalize\",\"new_subtasks\": [{\"text\": \"Complete the nested subtask\", \"status\": \"done\"}, {\"text\": \"L0 parent ledger must not block L1 finalize\", \"status\": \"done\"}, {\"text\": \"Complete the user request\", \"status\": \"done\"}, {\"text\": \"Locate the task ledger handler in states\", \"status\": \"done\"}, {\"text\": \"Draft the reply summarizing the ledger flow\", \"status\": \"done\"}]}"
                 }
               }
             ]
@@ -57,5 +58,16 @@
         }
       ]
     }
-  }
+  },
+  "serveEventListeners": [
+    {
+      "name": "recordState",
+      "parameters": {
+        "context": "stub-subagent-ledger-iso-01::{{request.headers.[x-threlium-thread-root]}}",
+        "state": {
+          "phase_parent_resume_ledger_done": "1"
+        }
+      }
+    }
+  ]
 }

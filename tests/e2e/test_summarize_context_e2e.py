@@ -173,8 +173,13 @@ def _assert_summarize_pipeline_artifacts(
     assert reasoning_bodies, "no reasoning chat/completions in WireMock journal"
     merged = "\n".join(reasoning_bodies)
     assert E2E_SUMMARY_MARKER in merged, "reasoning context should include durable summary marker"
-    assert E2E_SUM_ORIG_PAD_MARKER not in merged, (
-        "summarized originals (pad block) must not appear in reasoning user content"
+    post_summarize = [b for b in reasoning_bodies if E2E_SUMMARY_MARKER in b]
+    assert post_summarize, (
+        "expected at least one reasoning hop after summarize_memory with summary in context"
+    )
+    merged_post = "\n".join(post_summarize)
+    assert E2E_SUM_ORIG_PAD_MARKER not in merged_post, (
+        "summarized originals (pad block) must not appear in post-summarize reasoning user content"
     )
     merged_summarize = _summarize_context_user_content_merged(wm_base, stub_tag=stub_tag)
     assert merged_summarize, "no summarize_context LLM user content in WireMock journal"

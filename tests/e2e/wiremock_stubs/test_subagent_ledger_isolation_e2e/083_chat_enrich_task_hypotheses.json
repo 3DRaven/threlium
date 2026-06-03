@@ -4,16 +4,10 @@
     "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
     "headers": {
       "X-Threlium-Call-Site": {
-        "equalTo": "reasoning"
+        "equalTo": "enrich_task_hypotheses"
       }
     },
     "bodyPatterns": [
-      {
-        "matches": "(?s).*(openai/threlium_e2e_l0|threlium_e2e_l0).*"
-      },
-      {
-        "contains": "<envelope>"
-      },
       {
         "contains": "\"tools\""
       }
@@ -21,8 +15,7 @@
     "customMatcher": {
       "name": "state-matcher",
       "parameters": {
-        "hasContext": "stub-subagent-frame-iso-01::{{request.headers.[x-threlium-thread-root]}}",
-        "hasProperty": "phase_l0_egress_done"
+        "hasContext": "stub-subagent-ledger-iso-01::{{request.headers.[x-threlium-thread-root]}}"
       }
     }
   },
@@ -32,7 +25,7 @@
       "Content-Type": "application/json"
     },
     "jsonBody": {
-      "id": "chatcmpl-e2e-iso-l0-finalize-retry",
+      "id": "chatcmpl-e2e-iso-enrich-task-hypotheses",
       "object": "chat.completion",
       "created": 0,
       "model": "gpt-4o-mini",
@@ -45,11 +38,11 @@
             "content": null,
             "tool_calls": [
               {
-                "id": "call_e2e_iso_l0_finalize",
+                "id": "call_enrich_task_hypotheses_iso_ledger",
                 "type": "function",
                 "function": {
-                  "name": "response_finalize",
-                  "arguments": "{\"reasoning\": \"e2e L0: finalize after subagent POP (retry)\", \"subject\": \"e2e subagent iso reply\", \"verification_summary\": \"e2e: parent frame egress after isolation\", \"content\": \"e2e-subagent-frame-iso-verified\"}"
+                  "name": "enrich_task_hypotheses",
+                  "arguments": "{\"subtasks\": []}"
                 }
               }
             ]

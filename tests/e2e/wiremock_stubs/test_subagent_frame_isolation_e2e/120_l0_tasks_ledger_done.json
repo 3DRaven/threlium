@@ -50,7 +50,7 @@
                 "type": "function",
                 "function": {
                   "name": "tasks_upsert",
-                  "arguments": "{\"reasoning\": \"e2e L0: close parent frame after subagent return\",\"new_subtasks\": [{\"text\": \"Complete the user request\",\"status\": \"done\"}]}"
+                  "arguments": "{\"reasoning\": \"e2e L0: close enrich seed before finalize after subagent return\",\"new_subtasks\": [{\"text\": \"Complete the user request\", \"status\": \"done\"}, {\"text\": \"Locate the task ledger handler in states\", \"status\": \"done\"}, {\"text\": \"Draft the reply summarizing the ledger flow\", \"status\": \"done\"}]}"
                 }
               }
             ]

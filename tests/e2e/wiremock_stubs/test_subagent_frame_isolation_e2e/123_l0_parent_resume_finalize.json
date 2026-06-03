@@ -21,9 +21,9 @@
     "customMatcher": {
       "name": "state-matcher",
       "parameters": {
-        "hasContext": "stub-subagent-ledger-iso-01::{{request.headers.[x-threlium-thread-root]}}",
-        "hasProperty": "phase_l1_done",
-        "hasNotProperty": "phase_tasks_ledger_done"
+        "hasContext": "stub-subagent-frame-iso-01::{{request.headers.[x-threlium-thread-root]}}",
+        "hasProperty": "phase_parent_resume_ledger_done",
+        "hasNotProperty": "phase_parent_resume_done"
       }
     }
   },
@@ -33,7 +33,7 @@
       "Content-Type": "application/json"
     },
     "jsonBody": {
-      "id": "chatcmpl-e2e-iso-l0-tasks-ledger",
+      "id": "chatcmpl-e2e-iso-l0-parent-resume-finalize",
       "object": "chat.completion",
       "created": 0,
       "model": "gpt-4o-mini",
@@ -46,11 +46,11 @@
             "content": null,
             "tool_calls": [
               {
-                "id": "call_e2e_iso_l0_tasks_ledger",
+                "id": "call_e2e_iso_l0_parent_resume_finalize",
                 "type": "function",
                 "function": {
-                  "name": "tasks_upsert",
-                  "arguments": "{\"reasoning\": \"e2e L0: close enrich seed + parent-frame ledger before finalize\",\"new_subtasks\": [{\"text\": \"L0 parent ledger must not block L1 finalize\", \"status\": \"done\"}, {\"text\": \"Complete the user request\", \"status\": \"done\"}, {\"text\": \"Locate the task ledger handler in states\", \"status\": \"done\"}, {\"text\": \"Draft the reply summarizing the ledger flow\", \"status\": \"done\"}]}"
+                  "name": "response_finalize",
+                  "arguments": "{\"reasoning\": \"e2e L0 parent-resume: ledger closed after subagent POP — archive thread\", \"subject\": \"e2e subagent iso reply\", \"verification_summary\": \"e2e: parent frame archive after isolation\", \"content\": \"e2e-subagent-frame-iso-verified\"}"
                 }
               }
             ]
@@ -63,9 +63,9 @@
     {
       "name": "recordState",
       "parameters": {
-        "context": "stub-subagent-ledger-iso-01::{{request.headers.[x-threlium-thread-root]}}",
+        "context": "stub-subagent-frame-iso-01::{{request.headers.[x-threlium-thread-root]}}",
         "state": {
-          "phase_tasks_ledger_done": "1"
+          "phase_parent_resume_done": "1"
         }
       }
     }
