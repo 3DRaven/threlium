@@ -105,6 +105,7 @@ def build_rag(settings: ThreliumSettings) -> LightRAG:
         "chunk_token_size": body_max,
         "chunk_overlap_token_size": overlap_toks,
         "chunking_func": threlium_email_chunking_func,
+        "tiktoken_model_name": settings.lightrag.tiktoken_model_name,
     }
     if rerank_ep is not None:
         rag_kwargs["rerank_model_func"] = build_rerank_func(

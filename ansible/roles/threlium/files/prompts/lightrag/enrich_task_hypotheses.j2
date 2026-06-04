@@ -22,23 +22,15 @@ Guidance:
 - Call the `enrich_task_hypotheses` tool exactly once with the `subtasks` array (no assistant text outside tool_calls, no markdown fences, no role-play).
 - Example: ["Confirm module X actually imports Y per the graph", "Verify the deadline stated in the thread matches the project record"].
 
-{% if existing_subtasks %}
-Existing ledger for this thread — do NOT duplicate these (identity is content-addressed); add only genuinely new verification subtasks:
-{% for s in existing_subtasks %}
-- [{{ s.status }}] {{ s.text }}
-{%- endfor %}
-{% endif %}
-
 Canonical intent (English, ingress distill):
 {{ incoming_user_message }}
 
+{#- Retrieved-context order is fixed for the token cap (trim_from_end_tokens keeps the
+    START): graph -> memory -> existing ledger -> unified mail context LAST, so on overflow
+    the oldest unified thread tail is dropped first, never the graph answer or the intent. -#}
 {% if graph_answer %}
 --- graph answer (LightRAG retrieval) ---
 {{ graph_answer }}
-{% endif %}
-{% if unified_mail_context %}
---- unified mail context ---
-{{ unified_mail_context }}
 {% endif %}
 {% if thread_memory %}
 --- thread memory ---
@@ -47,4 +39,14 @@ Canonical intent (English, ingress distill):
 {% if global_memory %}
 --- global memory ---
 {{ global_memory }}
+{% endif %}
+{% if existing_subtasks %}
+Existing ledger for this thread — do NOT duplicate these (identity is content-addressed); add only genuinely new verification subtasks:
+{% for s in existing_subtasks %}
+- [{{ s.status }}] {{ s.text }}
+{%- endfor %}
+{% endif %}
+{% if unified_mail_context %}
+--- unified mail context ---
+{{ unified_mail_context }}
 {% endif %}

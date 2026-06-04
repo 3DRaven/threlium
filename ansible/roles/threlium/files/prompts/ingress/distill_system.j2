@@ -27,7 +27,7 @@ Extract only the user's NEW prose for this turn. Treat everything below as OLD c
 - `user_query` (required, English only): Dense operational brief of the user's NEW content this turn.
   Translate meaning into English; keep proper nouns, code, and identifiers verbatim.
   Do not paste long untranslated quotes from the user message. No markdown fences.
-  Stored as `## User intent` — canonical input for enrich and reasoning (see enrich_query_plan: graph query stays English).
+  Stored as `## User intent` — canonical input for enrich and reasoning (the single-pass LightRAG graph query stays English).
 - `user_reply_language` (required): Language for eventual user-facing replies (e.g. English, German).
   Infer from NEW prose above any quote block, not from quoted thread text.
   NOT the language of `user_query`. Stored as `## User reply language` for response_finalize / egress.

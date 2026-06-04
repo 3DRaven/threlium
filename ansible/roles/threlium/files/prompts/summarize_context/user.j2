@@ -1,6 +1,11 @@
-Summarize the following {{ message_count }} messages into a single concise text. Preserve all important facts, decisions, and technical details. Bodies are distilled history parts; collapse duplicate thread history per message.
+{%- if prior_summary %}
+--- prior summary (merge new parts into this) ---
+{{ prior_summary }}
+
+{% endif -%}
+Summarize the following {{ message_count }} history parts into a single concise text{% if prior_summary %}, merging with the prior summary above{% endif %}. Preserve all important facts, decisions, and technical details. Parts are distilled history; collapse duplicate thread history.
 
 {% for body in bodies %}
---- message {{ loop.index }} ---
+--- part {{ loop.index }} ---
 {{ body }}
 {% endfor %}

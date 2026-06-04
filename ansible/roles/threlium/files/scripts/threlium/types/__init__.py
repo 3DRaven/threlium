@@ -166,6 +166,7 @@ from .enrich_tool_function import EnrichToolBridgeError, EnrichToolFunctionName
 from .summarize_tool_args import (
     SummarizeContextBatch,
     SummarizeContextStagePayload,
+    SummarizeHistoryUnit,
     SummarizeResponseBufferToolArgs,
     SummarizeThreadContextToolArgs,
     validated_user_query,
@@ -317,6 +318,7 @@ __all__ = [
     "EnrichToolFunctionName",
     "SummarizeContextBatch",
     "SummarizeContextStagePayload",
+    "SummarizeHistoryUnit",
     "SummarizeResponseBufferToolArgs",
     "SummarizeThreadContextToolArgs",
     "validated_user_query",

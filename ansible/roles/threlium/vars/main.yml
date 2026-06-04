@@ -84,6 +84,7 @@ _threlium_lightrag_base:
   llm_model_max_async: 4
   embedding_func_max_async: 4
   prompts_overlay: true
+  tiktoken_model_name: "gpt-4o-mini"
   aquery_hints: ""
   query_api: "aquery_llm"
   query_mode: "hybrid"
@@ -128,10 +129,15 @@ _threlium_enrich_base:
   context_thread_memory_n: 100
   context_global_n: 100
   context_max_chars: 180000
+  model_context_tokens: 262144
+  context_safety_margin_tokens: 2000
+  lightrag_query_overhead_tokens: 2000
+  enrich_task_hypotheses_overhead_tokens: 2000
+  reasoning_overhead_tokens: 4000
+  summarize_overhead_tokens: 2000
   tier1_full: 5
   tier2_summary: 15
   tier_preview_chars: 200
-  plan_recent_n: 5
   priority_user: 10.0
   priority_graph: 6.0
   priority_unified: 8.0
@@ -140,8 +146,6 @@ _threlium_enrich_base:
   priority_extra: 5.0
   tier1_medium_ratio: 2
   summarize_enabled: true
-  summarize_batch_max_messages: 10
-  summarize_trigger_min_excess_chars: 500
 
 # Эффективная конфигурация = base ⊕ пользовательские overrides (host_vars / group_vars / -e).
 # Отдельные имена (*_effective) принципиальны: при запуске `ansible-playbook … -e @host_vars/<host>.yml`
@@ -157,11 +161,10 @@ threlium_knowledge_effective: "{{ _threlium_knowledge_base | combine(threlium_kn
 
 # Внутренний контракт: обязательные Jinja2-промпты (не user-facing настройка).
 threlium_required_prompts:
-  - lightrag/enrich_query_plan.j2
   - lightrag/enrich_task_plan.j2
   - lightrag/enrich_task_hypotheses.j2
   - lightrag/enrich_incoming_user_text.j2
-  - lightrag/enrich_aquery_user.j2
+  - lightrag/lightrag_query.j2
   - lightrag/mail_context.j2
   - lightrag/graph_answer.j2
   - lightrag/graph_answer_answer_only.j2

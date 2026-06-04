@@ -122,12 +122,19 @@ threlium_litellm:
 threlium_e2e:
   litellm_route_correlation: true
 
-# enrich: context budget + summarize overflow (e2e summarize / trim сценарии)
+# enrich: token budget + summarize overflow (e2e summarize / trim сценарии).
+# model_context_tokens намеренно мал, чтобы dense-тред (2 prior turns) переполнял
+# effective_budget(reasoning) ≈ 1400 − 200 − 100 = 1100 токенов (≈ старый cap ~4667 chars),
+# а одиночный ход — нет. context_max_chars остаётся для символьного trim мелких CRDT-частей.
 threlium_enrich:
   context_max_chars: 8000
+  model_context_tokens: 1400
+  context_safety_margin_tokens: 100
+  lightrag_query_overhead_tokens: 100
+  enrich_task_hypotheses_overhead_tokens: 100
+  reasoning_overhead_tokens: 200
+  summarize_overhead_tokens: 100
   summarize_enabled: true
-  summarize_trigger_min_excess_chars: 100
-  summarize_batch_max_messages: 5
 
 # knowledge: e2e trim-сценарий observation-note
 threlium_knowledge:

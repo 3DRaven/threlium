@@ -378,6 +378,61 @@ def build_enriched_multipart(
     return container
 
 
+def build_context_backpack_multipart(
+    incoming: EmailMessage,
+    *,
+    user_message_text: str,
+    graph_answer: EnrichGraphAnswerText | None,
+    thread_memory: EnrichThreadMemoryText | None,
+    global_memory: EnrichGlobalMemoryText | None,
+    history_parts: Iterable[tuple["EnrichContentId", EmailMessage]] = (),
+    stage: str,
+    extra_parts: list[tuple["EnrichContentId", str]] | None = None,
+) -> EmailMessage:
+    """Гранулярный enrich-бэкпак для reasoning (заменяет merged ``<unified-mail-context>``).
+
+    Mandatory leaf: ``<user-message>``, ``<graph-answer>``, ``<thread-memory>``,
+    ``<global-memory>`` (если непусты) + ``extra_parts`` (``<response-state>``,
+    ``<task-init>``, ``<task-state>``). Unified-история едет **гранулярными**
+    ``<{hash}@history>`` leaf-частями (как ``enrich_fast`` splice), не одним блобом —
+    reasoning читает их через :func:`iter_history_parts`. Дедуп по контент-CID.
+    """
+    container = EmailMessage()
+    container.make_mixed()
+    _copy_envelope_headers(incoming, container)
+
+    container.attach(
+        _make_inline_text_part(EnrichPartId.USER_MESSAGE, user_message_text.strip())
+    )
+
+    _VO_PARTS: list[tuple[EnrichPartId, _EnrichOptionalText]] = [
+        (EnrichPartId.GRAPH_ANSWER, graph_answer),
+        (EnrichPartId.THREAD_MEMORY, thread_memory),
+        (EnrichPartId.GLOBAL_MEMORY, global_memory),
+    ]
+    part_ids = [EnrichPartId.USER_MESSAGE.value]
+    for pid, vo in _VO_PARTS:
+        if vo is not None and vo.value:
+            container.attach(_make_inline_text_part(pid, vo.value))
+            part_ids.append(pid.value)
+
+    seen: set[EnrichContentId] = set()
+    for cid, part in history_parts:
+        if cid.is_core or cid in seen:
+            continue
+        container.attach(part)
+        seen.add(cid)
+        part_ids.append(cid.value)
+
+    if extra_parts:
+        for cid, text in extra_parts:
+            container.attach(_make_inline_text_part(cid, text))
+            part_ids.append(cid.value)
+
+    logger.bind(stage=stage).info("built_context_backpack", parts=part_ids)
+    return container
+
+
 def _leaf_part_text(part: EmailMessage) -> str:
     """Декодированное тело leaf text/plain MIME-части."""
     raw = part.get_payload(decode=True)

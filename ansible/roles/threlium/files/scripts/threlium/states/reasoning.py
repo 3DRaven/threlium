@@ -25,6 +25,11 @@ from threlium.states.reasoning_tool_spec import (
     load_tools_for_routes,
     route_decision_from_tool_call,
 )
+from threlium.context_token_count import (
+    build_tokenizer,
+    reasoning_effective_budget,
+    trim_from_end_tokens,
+)
 from threlium.settings import ThreliumSettings, resolve_llm_endpoint
 from threlium.types import (
     FsmStage,
@@ -181,7 +186,13 @@ def _decide(
     length_recovery_system = render_prompt(
         PromptPath.REASONING_LENGTH_RECOVERY_SYSTEM
     ).strip()
+    # Один глобальный token-cap на собранный backpack (а не per-field char-cap): хвост =
+    # старая <conversation_delta>/история режется первым, mandatory-секции у начала промпта
+    # сохраняются. enrich-сторона уже гарантирует X<=0; это страховка для enrich_fast/субагентов.
     user_content = _render_user_prompt(msg, hop_budget, config.enrich.context_max_chars)
+    user_content = trim_from_end_tokens(
+        build_tokenizer(config), user_content, reasoning_effective_budget(config)
+    )
 
     wrong_tool_retries = 0
     length_attempt = 0

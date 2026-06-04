@@ -460,6 +460,14 @@ class LightragSettings(BaseModel):
         description="Размерность вектора (строка для провайдера); пусто — авто из модели.",
     )
     embed_max_tokens: str = Field(default="", description="Лимит токенов на embedding; пусто — дефолт модели.")
+    tiktoken_model_name: str = Field(
+        default="gpt-4o-mini",
+        min_length=1,
+        description=(
+            "Имя модели tiktoken для LightRAG (чанкинг + усечение retrieval) и единого "
+            "token-ledger enrich/reasoning. Контракт: один токенайзер на счёт и на модель."
+        ),
+    )
     rag_loop_shutdown_timeout_sec: float = Field(
         default=30.0,
         gt=0,
@@ -635,10 +643,41 @@ class EnrichSettings(BaseModel):
         description="Лимит символов контекста: enrich-промпты, исходящее MIME-тело, reasoning user prompt.",
     )
 
+    # --- Token budgets (единый токенайзер lightrag.tiktoken_model_name) ---
+    model_context_tokens: int = Field(
+        default=262_144,
+        ge=1,
+        description="Полное контекстное окно модели в токенах (host_vars per-target).",
+    )
+    context_safety_margin_tokens: int = Field(
+        default=2_000,
+        ge=0,
+        description="Запас токенов на неточность подсчёта/служебные поля чата.",
+    )
+    lightrag_query_overhead_tokens: int = Field(
+        default=2_000,
+        ge=0,
+        description="Резерв токенов под keyword-extraction shell + rag_response system (шаг 4 cap).",
+    )
+    enrich_task_hypotheses_overhead_tokens: int = Field(
+        default=2_000,
+        ge=0,
+        description="Резерв токенов под tool spec + preamble промпта гипотез (шаг 7 cap).",
+    )
+    reasoning_overhead_tokens: int = Field(
+        default=4_000,
+        ge=0,
+        description="Резерв токенов под reasoning/user.j2 + system shell (шаг 9 effective_budget).",
+    )
+    summarize_overhead_tokens: int = Field(
+        default=2_000,
+        ge=0,
+        description="Резерв токенов под system+user shell summarize_context (pack budget).",
+    )
+
     tier1_full: int = Field(default=5, ge=1, description="Макс. сообщений с full body.")
     tier2_summary: int = Field(default=15, ge=0, description="Макс. сообщений с summary.")
     tier_preview_chars: int = Field(default=200, ge=50, description="Символов preview в tier2.")
-    plan_recent_n: int = Field(default=5, ge=1, description="Кол-во последних сообщений для query plan.")
 
     priority_user: float = Field(default=10.0, description="Вес user_message.")
     priority_graph: float = Field(default=6.0, description="Вес knowledge_graph.")
@@ -673,14 +712,6 @@ class EnrichSettings(BaseModel):
     )
 
     summarize_enabled: bool = Field(default=True, description="Включить LLM-суммаризацию при overflow unified.")
-    summarize_batch_max_messages: int = Field(
-        default=10, ge=1,
-        description="Макс. писем в одном батче суммаризации (JSON payload → summarize_context).",
-    )
-    summarize_trigger_min_excess_chars: int = Field(
-        default=500, ge=0,
-        description="Минимальный избыток символов для запуска суммаризации (порог overflow).",
-    )
 
     # Базовый вес сообщения теперь — X-Threlium-Content-Score его <history>-части
     # (скоринг отправителя), оператор настраивает через HistorySettings.score_by_stage.

@@ -7,7 +7,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from threlium.enrich_context import trim_context_text
+from threlium.context_token_count import (
+    build_tokenizer,
+    hypotheses_prompt_budget,
+    trim_from_end_tokens,
+)
 from threlium.enrich_tool_bridge import (
     parse_enrich_task_hypotheses_assistant,
     parse_enrich_task_plan_assistant,
@@ -39,12 +43,15 @@ def _invoke_enrich_task_subtasks_llm(
     context: str,
     prompt_kwargs: dict[str, object],
     parse_assistant: Callable[..., object],
-    trim_limit: int | None = None,
+    token_budget: int | None = None,
 ) -> list[str]:
     """Один required-tool вызов → список сырых текстов подзадач. Fail-open: ``[]``."""
     prompt = render_prompt(prompt_path, **prompt_kwargs).strip()
-    if trim_limit is not None:
-        prompt = trim_context_text(prompt, trim_limit)
+    if token_budget is not None:
+        prompt = trim_from_end_tokens(build_tokenizer(config), prompt, token_budget)
+        if not prompt.strip():
+            log.warning(f"{context}_prompt_empty_after_cap", token_budget=token_budget)
+            return []
     call = build_site_call(
         config,
         site,
@@ -113,7 +120,7 @@ def invoke_task_hypothesis_subtasks(
             "existing_subtasks": _existing_subtasks_kw(ledger_after_seed),
         },
         parse_assistant=parse_enrich_task_hypotheses_assistant,
-        trim_limit=config.enrich.context_max_chars,
+        token_budget=hypotheses_prompt_budget(config),
     )
 
 

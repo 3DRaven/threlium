@@ -1,0 +1,26 @@
+{#- LLM-facing text is English-only: Cyrillic uses roughly 2–3x more tokens per word.
+    This Jinja comment is stripped and never sent to the model.
+    Single-pass LightRAG query (no separate plan LLM): user intent first, then seed
+    subtasks / hints, then recent thread context (newest first). The whole render is
+    token-capped from the END (trim_from_end_tokens), so the physical tail = oldest
+    thread context is dropped first, never the user intent or subtasks.
+    Variables: incoming_user_message (str); subtasks (list[str], seed only);
+    extra_instructions (str | None); thread_context (str | None, newest-first). -#}
+{{ incoming_user_message }}
+{%- if subtasks %}
+
+--- planned subtasks (retrieve context for each) ---
+{%- for st in subtasks %}
+- {{ st }}
+{%- endfor %}
+{%- endif %}
+{%- if extra_instructions %}
+
+--- additional retrieval hints ---
+{{ extra_instructions }}
+{%- endif %}
+{%- if thread_context %}
+
+--- recent thread context (newest first) ---
+{{ thread_context }}
+{%- endif %}

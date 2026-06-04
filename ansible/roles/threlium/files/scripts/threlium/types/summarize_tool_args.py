@@ -19,11 +19,22 @@ class SummarizeResponseBufferToolArgs(msgspec.Struct, frozen=True):
     observation: str
 
 
-class SummarizeContextBatch(msgspec.Struct, frozen=True):
-    """Батч писем для overflow-сжатия: параллельные ``mids`` / ``bodies``."""
+class SummarizeHistoryUnit(msgspec.Struct, frozen=True):
+    """Одна ``<history>``-часть для overflow-сжатия (контент-адресный CID + тело).
 
-    mids: list[str]
-    bodies: list[str]
+    ``source_mid`` — notmuch inner mid письма-носителя, для ``tag:context_summarized``
+    после валидной сводки (несколько единиц могут ссылаться на один mid).
+    """
+
+    cid: str
+    text: str
+    source_mid: str
+
+
+class SummarizeContextBatch(msgspec.Struct, frozen=True):
+    """Батч ``<history>``-частей для overflow-сжатия (гранулярные units, не письма)."""
+
+    units: list[SummarizeHistoryUnit]
 
 
 class SummarizeContextStagePayload(msgspec.Struct, frozen=True):
@@ -50,6 +61,7 @@ def validated_user_query(payload: SummarizeContextStagePayload) -> "EnrichUserQu
 __all__ = [
     "SummarizeContextBatch",
     "SummarizeContextStagePayload",
+    "SummarizeHistoryUnit",
     "SummarizeResponseBufferToolArgs",
     "SummarizeThreadContextToolArgs",
     "validated_user_query",
