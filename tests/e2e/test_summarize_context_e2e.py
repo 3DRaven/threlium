@@ -1,4 +1,4 @@
-"""E2e: overflow unified weight (``estimate_unified_weight``) → summarize_context → enrich → reasoning."""
+"""E2e: token-ledger overflow (excess X) → summarize_context → enrich → reasoning."""
 from __future__ import annotations
 
 import uuid
@@ -52,7 +52,7 @@ SUMMARIZE_CONTEXT_SPEC = MailflowScenarioSpec(
     body_head=f"{REASONING_E2E_BODY_MARKER}\ne2e summarize context overflow inbound",
     summarize_overflow_body=True,
     # Каждый distill-бриф под cap (distill_max_chars=8000); 2 старых хода + основной
-    # накапливают unified (mckp_capacity≈4667 при context_max_chars=8000) → overflow → summarize.
+    # накапливают history tokens (tight model_context_tokens в e2e) → excess X → summarize.
     summarize_overflow_prior_turns=2,
     min_chat_completion_posts=2,
     min_embedding_posts=1,

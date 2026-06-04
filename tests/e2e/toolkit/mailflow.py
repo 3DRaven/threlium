@@ -267,7 +267,7 @@ def mailflow_inject_and_wait(
 
     if seed_id is not None:
         # summarize overflow: несколько старых ходов одного треда, каждый distill-бриф под
-        # cap (distill_max_chars), накапливаются в unified до переполнения mckp_capacity →
+        # cap (distill_max_chars), накапливаются в history tokens до excess X (token ledger) →
         # summarize. Каждый ход тредится на ОТВЕТ агента предыдущего (см. комментарий ниже).
         prior_turns_count = (
             max(1, spec.summarize_overflow_prior_turns)
