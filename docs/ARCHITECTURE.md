@@ -256,7 +256,7 @@ Threlium — **IRT-tree FSM** без глобального координато
 
 #### 5.1.2. Контракт тела enrich и reasoning
 
-`enrich` передаёт в `reasoning` **`multipart/mixed`** backpack с гранулярными `text/plain` частями по `Content-ID` (core-CID + leaf-`<{hash}@history>`; `<conversation_history>` / `<conversation_delta>` — синтез в `ReasoningEnrichContext` по наличию `X-Threlium-Origin`). **Token overflow** — в `enrich` (ledger → `summarize_context@`) и `enrich_fast` (`backpack_token_total` → `enrich@`); на `reasoning` — только **char-cap** per-field (`context_max_chars` / `trim_context_text`), без token-trim user prompt. Подробный контракт — [FSM.md §5.2](FSM.md#52-контракт-тела-enrich--reasoning).
+`enrich` передаёт в `reasoning` **`multipart/mixed`** backpack с гранулярными `text/plain` частями по `Content-ID` (core-CID + leaf-`<{hash}@history>`; `<conversation_history>` / `<conversation_delta>` — синтез в `ReasoningEnrichContext` по наличию `X-Threlium-Origin`). **Token overflow** — в `enrich` (ledger → `summarize_context@`) и `enrich_fast` (`backpack_token_total` → `enrich@`); `reasoning` — passthrough полных частей после ledger. Pre-RAG эфемерный cap — `trim_from_end_tokens` на строке `lightrag_query.j2`. Подробный контракт — [FSM.md §5.2](FSM.md#52-контракт-тела-enrich--reasoning).
 
 ### 5.1.3. User-editable prompts (раскладка по стадиям FSM `$THRELIUM_HOME/prompts/`)
 

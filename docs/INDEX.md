@@ -593,7 +593,7 @@ Mailfilter делает `notmuch insert` → файл в `stages/<stage>/Maildir
 6. **`<response-state>`** (extra_parts) — пересчёт из CRDT через `_collect_extra_parts`.
 7. **`<task-init>`** / **`<task-state>`** — seed `enrich_task_plan` (до RAG) + late `enrich_task_hypotheses` (после RAG), один `TaskInitOp` и reduced ledger (`_finalize_task_mime_parts`).
 
-**Char-cap** per-field — `THRELIUM_ENRICH__CONTEXT_MAX_CHARS` / `trim_context_text` (CRDT/task-state, reasoning). **Token-ledger** — `context_token_count.py`, `reasoning_effective_budget`; при `excess = total − effective_budget > 0` старые `<history>` CID → `summarize_context@` (см. [`CONTEXT_CONTRACT.md` §4](CONTEXT_CONTRACT.md), [`FSM.md` §5.2](FSM.md#52-контракт-тела-enrich--reasoning)). При отставании `ainsert` — граф может быть неполным, но сырой поток писем в granular `<history>`-частях backpack. Канонические Content-ID и порядок — [`FSM.md` §5.2](FSM.md#52-контракт-тела-enrich--reasoning).
+**Token-ledger** — `context_token_count.py`, `reasoning_effective_budget`; при `excess = total − effective_budget > 0` старые `<history>` CID → `summarize_context@` (см. [`CONTEXT_CONTRACT.md` §4](CONTEXT_CONTRACT.md), [`FSM.md` §5.2](FSM.md#52-контракт-тела-enrich--reasoning)). CRDT и core-CID в backpack — полные тексты; reasoning без char-trim. При отставании `ainsert` — граф может быть неполным, но сырой поток писем в granular `<history>`-частях backpack. Канонические Content-ID и порядок — [`FSM.md` §5.2](FSM.md#52-контракт-тела-enrich--reasoning).
 
 ### 7.5 Query-call (always-on)
 

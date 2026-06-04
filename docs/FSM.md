@@ -431,7 +431,7 @@ def emit_transition_preserving_payload(
 
 #### Секционные маркеры
 
-`extract_part_by_content_id` извлекает каждую MIME-часть по `Content-ID`; reasoning собирает промпт через char-cap per-field (`context_max_chars`) + Jinja2-шаблон (token-trim user prompt **не** применяется). LLM видит единый текстовый поток с семантическими границами:
+`extract_part_by_content_id` извлекает каждую MIME-часть по `Content-ID`; reasoning собирает промпт из полных MIME-частей (`ReasoningEnrichContext.from_email`) + Jinja2-шаблон (token-trim user prompt **не** применяется; переполнение сжимается в enrich через `summarize_context`). LLM видит единый текстовый поток с семантическими границами:
 
 ```
 <user-message>

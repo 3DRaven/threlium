@@ -537,8 +537,8 @@ Body patterns `071/055/056/060/061` — из структуры документ
 и KG контекста (`Knowledge Graph Data`), не из lightrag промптов — **безопасны**
 при редактировании промптов.
 
-Сценарий ``test_reasoning_litellm_context_trim_live``: в e2e ``context_max_chars=8000``,
-``trim_context_text`` оставляет **хвост** user-тела. Стаб reasoning ``100`` матчит
+Сценарий ``test_reasoning_litellm_context_trim_live``: overflow → ``summarize_context``;
+в reasoning journal остаётся **хвост** (``E2E-CTX-TRIM-TAIL-MARKER``), HEAD старых ходов нет. Стаб reasoning ``100`` матчит
 ``E2E-CTX-TRIM-TAIL-MARKER`` (не ``E2E-REASONING-LITELLM-BODY-MARKER`` из начала письма).
 
 Ни один стаб не использует `priority`. Ни один стаб не использует

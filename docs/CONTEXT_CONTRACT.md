@@ -327,7 +327,7 @@ summarize_memory → enrich`: enrich кладёт его в `SummarizeContextSta
 
 Каждая запись подписана `[from: <origin>]` (`X-Threlium-Origin`). **Видов-таксономии по
 стадии** (`<observation>` / `<memory_note>` / `<plan_state>`) больше нет: семантику даёт
-origin + tool spec, известный модели. Бюджет — tail-keep новейших (`context_max_chars`).
+origin + tool spec, известный модели. Полный текст частей из backpack (token-ledger + `summarize_context` на стороне enrich).
 
 ---
 
