@@ -1926,8 +1926,9 @@ def _e2e_openai_llm_coverage_missing(data: dict[str, Any], test_id: str) -> list
             "reasoning (X-Threlium-Call-Site: reasoning + <envelope> + tools, "
             "как 100_chat_reasoning_egress_tool.json)"
         )
-    if not any(_entry_has_call_site(e, "enrich_query_plan") for e in chat_entries):
-        missing.append("enrich plan (X-Threlium-Call-Site: enrich_query_plan)")
+    # enrich_query_plan removed: single-pass LightRAG query (lightrag_query.j2) replaces the
+    # separate plan LLM; the seed task plan (enrich_task_plan) and late hypotheses
+    # (enrich_task_hypotheses) are the only enrich task LLM call sites now.
     if not any(_entry_has_call_site(e, "extract_query_keywords") for e in chat_entries):
         missing.append(
             "lightrag keywords (X-Threlium-Call-Site: extract_query_keywords)"
