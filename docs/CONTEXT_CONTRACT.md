@@ -168,7 +168,10 @@ flowchart LR
 | `<response-state>` | детерминированный пересчёт CRDT-буфера |
 | `<task-init>` / `<task-state>` | стартовый набор задач (seed `enrich_task_plan` до RAG + late `enrich_task_hypotheses` после RAG, одним `TaskInitOp`) + reduced-ledger |
 
-MCKP-бюджет / тиринг контекста (`context_budget.py`) живут **только в большом enrich**.
+Бюджет — токенный (`context_token_count.py`, единый `lightrag.tiktoken_model_name`): enrich
+считает token-ledger (mandatory FULL + гранулярная `<history>`) и при overflow `X>0` шлёт
+старые `<history>` CID в `summarize_context`, иначе кладёт всю историю гранулярными leaf-CID
+в backpack (`build_context_backpack_multipart`), без merged `<unified-mail-context>` и без MCKP.
 Деталь секций — [`FSM.md` §5.2](FSM.md#52-контракт-тела-enrich--reasoning).
 
 ### 4.1 Distill → enrich: контур передачи
@@ -271,9 +274,9 @@ distill_fallback_max_chars)`; `<user-query>` = преобразованный br
 `concat_history_parts_text(m)` по письмам из `ctx.all_messages` — те же `<history>` на диске,
 что и для оценки веса (`history_body_chars` / `estimate_unified_weight`), **не** из готового
 `<unified-mail-context>` и **не** из distill как
-отдельного артефакта. Summarize сжимает **старый хвост** треда при переполнении бюджета:
-batch = первые `summarize_batch_max_messages` писем из `ctx.all_messages` (хронология
-старые→новые), по каждому — `concat_history_parts_text`. E2e:
+отдельного артефакта. Summarize сжимает **старый хвост** треда при переполнении токенного
+бюджета: batch = самые старые гранулярные `<history>` CID из `ctx.all_messages` (oldest→newest)
+до покрытия избытка `X` токенов; в payload — `SummarizeHistoryUnit` (cid + text + source_mid). E2e:
 `test_summarize_overflow_full_pipeline` — **3 prior-хода + main**, накопление unified под cap
 distill, overflow на enrich главного хода (брифинг:
 `docs/briefing/summarize_context_overflow_e2e_briefing.md`).
@@ -304,7 +307,7 @@ summarize_memory → enrich`: enrich кладёт его в `SummarizeContextSta
 - **`enrich`** (`enrich_context.py`): полный обход IRT (лист + предки, старые→новые), берёт
   `<history>`-части из **всех** писем (включая лист ingress→enrich и `To: enrich_fast`),
   исключая `tag:context_summarized` и memory-бакеты (лист ingress→enrich и дедуп — §4.1).
-  Планировщик графа (`enrich_query_plan.j2`, recent messages) и overflow summarize
+  Однопроходный графовый запрос (`lightrag_query.j2`, token-capped) и overflow summarize
   (`enrich._emit_summarize_overflow`) читают те же `<history>`-части через
   `concat_history_parts_text` / Jinja `history_text`, **не** `get_body`.
   В overflow-batch письма без непустого `<history>` пропускаются (`summarize_overflow_skip_no_history`);

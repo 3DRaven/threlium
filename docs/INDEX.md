@@ -509,7 +509,7 @@ finally:
 
 Шаблоны под `prompts/lightrag/` — единственное место, где оператор правит тексты внутренних промптов LightRAG: код Threlium их не сшивает, лишь подменяет.
 
-**Enrich → LightRAG**: сначала формируется seed-план задач (`lightrag/enrich_task_plan.j2` → LiteLLM) — **до** обращения к графу; тексты всех подзадач ledger подмешиваются в графовый запрос. Затем один вызов LLM формулирует запрос к графу (`lightrag/enrich_query_plan.j2` → LiteLLM), затем `lightrag/enrich_aquery_user.j2` собирает **user**-вопрос для `rag.aquery` (= сформулированный вопрос + перечень подзадач), `system_prompt` = `lightrag/rag_response.j2` (soft-приоритет текущего треда и `From:` memory-mailbox'ов). Ответ графа рендерится в prose (`lightrag/graph_answer*.j2`) и становится отдельной MIME-частью `<graph-answer>` в `multipart/mixed` сообщении (см. [`states/enrich.py`](../ansible/roles/threlium/files/scripts/threlium/states/enrich.py), [§7.5](#75-query-call-always-on), [§7.6](#76-per-thread-scoping-soft-через-маркеры)). После графа второй LLM-проход (`lightrag/enrich_task_hypotheses.j2` → LiteLLM, score 1) на полном контексте добавляет **новые проверяемые гипотезы** в тот же ledger; seed + гипотезы пишутся одним `<task-init>` и единым детерминированным `<task-state>` (без отдельного письма / `tasks_upsert`). Контекст треда и memory-записи рендерятся через `lightrag/mail_context.j2` в отдельные части (`<unified-mail-context>`, `<thread-memory>`, `<global-memory>`). Подсказки к обвязке `aquery` — ENV `THRELIUM_LIGHTRAG_AQUERY_HINTS` в шаблоне `enrich_aquery_user.j2`.
+**Enrich → LightRAG**: сначала формируется seed-план задач (`lightrag/enrich_task_plan.j2` → LiteLLM) — **до** обращения к графу; тексты всех подзадач ledger подмешиваются в графовый запрос. Затем **один** Jinja-шаблон `lightrag/lightrag_query.j2` (без отдельного plan-LLM) собирает строку запроса (user intent → seed-подзадачи → recent thread context), которая капится по токенам с конца (`trim_from_end_tokens` / `lightrag_query_budget`) и идёт одним `rag.aquery`; `system_prompt` = `lightrag/rag_response.j2` (soft-приоритет текущего треда и `From:` memory-mailbox'ов). Ответ графа рендерится в prose (`lightrag/graph_answer*.j2`) и становится отдельной MIME-частью `<graph-answer>` в `multipart/mixed` сообщении (см. [`states/enrich.py`](../ansible/roles/threlium/files/scripts/threlium/states/enrich.py), [§7.5](#75-query-call-always-on), [§7.6](#76-per-thread-scoping-soft-через-маркеры)). После графа второй LLM-проход (`lightrag/enrich_task_hypotheses.j2` → LiteLLM, score 1) на полном контексте (порядок `graph → memory → existing_subtasks → unified`, тоже token-capped) добавляет **новые проверяемые гипотезы** в тот же ledger; seed + гипотезы пишутся одним `<task-init>` и единым детерминированным `<task-state>` (без отдельного письма / `tasks_upsert`). Контекст треда едет гранулярными `<history>`-частями (как `enrich_fast` splice), memory-записи — `lightrag/mail_context.j2` в `<thread-memory>` / `<global-memory>`.
 
 ---
 
@@ -597,37 +597,30 @@ Mailfilter делает `notmuch insert` → файл в `stages/<stage>/Maildir
 
 ### 7.5 Query-call (always-on)
 
-Скелет вызова в enrich'е (один LLM на план запроса, далее `aquery` + гранулярная сборка MIME-частей; см. [`states/enrich.py`](../ansible/roles/threlium/files/scripts/threlium/states/enrich.py), [§5b.4.5](#5b45-llm--embedding-бэкенды)):
+Скелет вызова в enrich'е (один Jinja на строку запроса — без отдельного plan-LLM, далее один `aquery` + гранулярная сборка MIME-частей; см. [`states/enrich.py`](../ansible/roles/threlium/files/scripts/threlium/states/enrich.py), [§5b.4.5](#5b45-llm--embedding-бэкенды)):
 
 ```python
 ctx = build_unified_email_messages(settings=config, leaf_inner=inner, thread_id=tid)
 user_message_text = render_prompt("lightrag/enrich_incoming_user_text.j2", incoming=msg).strip()
-# План задач формируется ДО графа; его подзадачи подмешиваются в запрос.
-task_parts, combined_ledger = _build_task_parts(config=config, inner=inner, user_message_text=user_message_text)
-subtask_texts = [s.text.value for s in combined_ledger.subtasks]
-plan_prompt = render_prompt(
-    "lightrag/enrich_query_plan.j2",
+# Seed-план задач формируется ДО графа; его подзадачи подмешиваются в запрос.
+task_parts, ledger_after_seed = _build_task_seed_defs(config=config, inner=inner, user_message_text=user_message_text)
+subtask_texts = [s.text.value for s in ledger_after_seed.subtasks]
+# Один Jinja собирает строку запроса (user intent → seed subtasks → recent thread context).
+query = render_prompt(
+    "lightrag/lightrag_query.j2",
     incoming_user_message=user_message_text,
-    scope=f"thread:{tid}",
-    unified_messages=ctx.all_messages,
     subtasks=subtask_texts,
+    extra_instructions=config.lightrag.aquery_hints,
+    thread_context=_render_thread_context(ctx.all_messages),
 )
-formulated = (await enrich_llm_plan(cfg, plan_prompt)).strip()
-aquery_question = render_prompt(
-    "lightrag/enrich_aquery_user.j2",
-    formulated_query=formulated,
-    extra_instructions=cfg.lightrag.aquery_hints,
-    subtasks=subtask_texts,
-).strip()
-raw_result = await rag.aquery(aquery_question, param=QueryParam(...), system_prompt=...)
+# Cap с конца по токенам (единый tiktoken_model_name): хвост = старый thread context режется первым.
+query = trim_from_end_tokens(build_tokenizer(config), query, lightrag_query_budget(config))
+raw_result = await rag.aquery(query, param=QueryParam(...), system_prompt=...)  # один проход
 envelope = _build_lightrag_envelope(raw_result=raw_result, ...)
-result = EnrichResult(
-    graph_answer=EnrichGraphAnswerText.parse(json.dumps(envelope, indent=2)),
-    unified_mail_context=EnrichUnifiedMailContextText.parse(render_prompt("lightrag/mail_context.j2", messages=ctx.all_messages)),
-    thread_memory=EnrichThreadMemoryText.parse(render_prompt("lightrag/mail_context.j2", messages=ctx.thread_memory_msgs)),
-    global_memory=EnrichGlobalMemoryText.parse(render_prompt("lightrag/mail_context.j2", messages=ctx.global_memory_msgs)),
-)
-enriched = build_enriched_multipart(msg, user_message_text=..., graph_answer=result.graph_answer, ...)
+graph_answer = EnrichGraphAnswerText.parse(json.dumps(envelope, indent=2))
+# Шаг 7: late hypotheses на полном контексте (graph → memory → existing_subtasks → unified), тоже token-capped.
+# Backpack: granular <history> CID (не merged unified) + <graph-answer> + <task-init> + memory.
+backpack = build_context_backpack_multipart(msg, user_message_text=..., graph_answer=graph_answer, history_parts=..., ...)
 ```
 
 **Опции `QueryParam.mode`** (см. `lightrag/base.py`):

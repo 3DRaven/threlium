@@ -403,15 +403,16 @@ def emit_transition_preserving_payload(
 
 ### 5.2. Контракт тела `enrich` → `reasoning`
 
-Результат стадии `enrich` передаётся в `reasoning` как **`multipart/mixed`** MIME-сообщение с гранулярными `text/plain` частями по `Content-ID` (`build_enriched_multipart` в `threlium/mime_reform.py`). Лимит символов — `enrich.context_max_chars` / `trim_context_text`.
+Результат стадии `enrich` передаётся в `reasoning` как **`multipart/mixed`** MIME-сообщение с гранулярными `text/plain` частями по `Content-ID` (`build_context_backpack_multipart` в `threlium/mime_reform.py`). Бюджет — токенный: `enrich` считает token-ledger (mandatory FULL + гранулярная `<history>`) и при `X = total − effective_budget(reasoning) > 0` шлёт самые старые `<history>` CID в `summarize_context` (overflow-by-X), иначе кладёт всю историю в backpack. `reasoning` дополнительно применяет один глобальный token-cap (`reasoning_effective_budget`) на собранный промпт. Единый токенайзер — `lightrag.tiktoken_model_name`.
 
 #### После полного `enrich` (reflect → enrich → reasoning): до 7 частей
 
 | Content-ID | Источник | Примечание |
 |---|---|---|
 | `<user-message>` | `lightrag/enrich_incoming_user_text.j2` | ВСЕГДА. Canonical user message. |
-| `<graph-answer>` | Prose из `lightrag/graph_answer*.j2` (`format_graph_answer_part`) | Если RAG не пуст. Query + subgraph + answer; `formulated_query` в тексте. |
-| `<unified-mail-context>` | `lightrag/mail_context.j2` по `ctx.all_messages` | Полная хронология треда + memory-письма. |
+| `<graph-answer>` | Prose из `lightrag/graph_answer*.j2` (`format_graph_answer_part`) | Если RAG не пуст. Один проход `lightrag_query.j2` → один `aquery` (без отдельного plan-LLM). |
+| `<{sha256(body)}@history>` × N | Гранулярные `<history>` leaf-части из `ctx.all_messages` | Unified-история едет отдельными CID (как `enrich_fast` splice), не merged блобом; reducible под overflow-by-X. |
+| `<task-init>` / `<task-state>` | `_finalize_task_mime_parts` (seed + late hypotheses) | Шаг 7–8; mandatory. |
 | `<thread-memory>` | `lightrag/mail_context.j2` по `ctx.thread_memory_msgs` | Только `to:thread_memory@localhost` текущего треда. |
 | `<global-memory>` | `lightrag/mail_context.j2` по `ctx.global_memory_msgs` | `to:global_memory@localhost` из ВСЕХ тредов. |
 | `<response-state>` | Пересчёт из CRDT (`_collect_extra_parts`) | Если буфер не пуст. |
