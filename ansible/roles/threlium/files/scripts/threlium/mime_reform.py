@@ -43,7 +43,6 @@ class EnrichPartId(StrEnum):
 
     USER_MESSAGE = "<user-message>"
     GRAPH_ANSWER = "<graph-answer>"
-    UNIFIED_MAIL_CONTEXT = "<unified-mail-context>"
     THREAD_MEMORY = "<thread-memory>"
     GLOBAL_MEMORY = "<global-memory>"
     RESPONSE_STATE = "<response-state>"
@@ -71,14 +70,15 @@ _CONTENT_ADDRESSED_FAMILIES: Final[tuple[EnrichPartId, ...]] = (
     EnrichPartId.SYSTEM,
 )
 
-# Фиксированные Content-ID полного ``enrich`` (build_enriched_multipart): не relay,
-# enrich_fast их не дописывает из входящего письма (``<response-state>`` / ``<task-state>``
-# он пересобирает сам; ``<task-init>`` переносится как есть для durable-collect).
+# Фиксированные Content-ID полного ``enrich`` (backpack): не relay, enrich_fast их не
+# дописывает из входящего письма (``<response-state>`` / ``<task-state>`` пересобирает
+# сам; ``<task-init>`` переносится как есть для durable-collect).
+_LEGACY_UNIFIED_MAIL_CONTEXT_CID = "<unified-mail-context>"
+
 _CORE_PART_IDS: Final[frozenset[EnrichPartId]] = frozenset(
     {
         EnrichPartId.USER_MESSAGE,
         EnrichPartId.GRAPH_ANSWER,
-        EnrichPartId.UNIFIED_MAIL_CONTEXT,
         EnrichPartId.THREAD_MEMORY,
         EnrichPartId.GLOBAL_MEMORY,
         EnrichPartId.RESPONSE_STATE,
@@ -331,51 +331,6 @@ def _copy_envelope_headers(src: EmailMessage, dst: EmailMessage) -> None:
             dst.add_header(k, v)
         else:
             dst[k] = v
-
-
-def build_enriched_multipart(
-    incoming: EmailMessage,
-    *,
-    user_message_text: str,
-    graph_answer: EnrichGraphAnswerText | None,
-    unified_mail_context: EnrichUnifiedMailContextText | None,
-    thread_memory: EnrichThreadMemoryText | None,
-    global_memory: EnrichGlobalMemoryText | None,
-    stage: str,
-    extra_parts: list[tuple[EnrichContentId, str]] | None = None,
-) -> EmailMessage:
-    """``multipart/mixed`` с MIME-частями по ``Content-ID`` (RFC 2045/2046).
-
-    Каждый смысловой блок — отдельная ``text/plain`` part с
-    ``Content-Disposition: inline`` и уникальным ``Content-ID``.
-    """
-    container = EmailMessage()
-    container.make_mixed()
-    _copy_envelope_headers(incoming, container)
-
-    container.attach(
-        _make_inline_text_part(EnrichPartId.USER_MESSAGE, user_message_text.strip())
-    )
-
-    _VO_PARTS: list[tuple[EnrichPartId, _EnrichOptionalText]] = [
-        (EnrichPartId.GRAPH_ANSWER, graph_answer),
-        (EnrichPartId.UNIFIED_MAIL_CONTEXT, unified_mail_context),
-        (EnrichPartId.THREAD_MEMORY, thread_memory),
-        (EnrichPartId.GLOBAL_MEMORY, global_memory),
-    ]
-    part_ids = [EnrichPartId.USER_MESSAGE.value]
-    for pid, vo in _VO_PARTS:
-        if vo is not None and vo.value:
-            container.attach(_make_inline_text_part(pid, vo.value))
-            part_ids.append(pid.value)
-
-    if extra_parts:
-        for cid, text in extra_parts:
-            container.attach(_make_inline_text_part(cid, text))
-            part_ids.append(cid.value)
-
-    logger.bind(stage=stage).info("built_enriched_multipart", parts=part_ids)
-    return container
 
 
 def build_context_backpack_multipart(
@@ -713,6 +668,8 @@ def splice_e_prev_with_history(
 
     for cid, part in _iter_relay_leaf_parts(e_prev):
         if cid.family is EnrichPartId.SYSTEM:
+            continue
+        if cid.value == _LEGACY_UNIFIED_MAIL_CONTEXT_CID:
             continue
         if cid == rs:
             out.attach(_make_inline_text_part(EnrichPartId.RESPONSE_STATE, response_state_text))

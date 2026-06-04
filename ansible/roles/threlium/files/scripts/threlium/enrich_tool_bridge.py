@@ -1,4 +1,4 @@
-"""Parse tool_calls → args стадии ``enrich`` (task plan / query plan).
+"""Parse tool_calls → args стадии ``enrich`` (task plan / hypotheses).
 
 Тонкие обёртки над :func:`~threlium.litellm_tool_bridge.parse_single_tool`
 (общий каркас ``docs/TYPES.md`` § tool bridge).
@@ -10,7 +10,6 @@ from litellm.types.utils import Message
 from threlium.litellm_tool_bridge import parse_single_tool
 from threlium.types import PromptPath
 from threlium.types.enrich_tool_args import (
-    EnrichQueryPlanToolArgs,
     EnrichTaskHypothesesToolArgs,
     EnrichTaskPlanToolArgs,
 )
@@ -44,19 +43,7 @@ def parse_enrich_task_hypotheses_assistant(
     )
 
 
-def parse_enrich_query_plan_assistant(assistant: Message) -> EnrichQueryPlanToolArgs:
-    return parse_single_tool(
-        assistant,
-        expected=EnrichToolFunctionName.ENRICH_QUERY_PLAN,
-        tool_spec_path=PromptPath.LIGHTRAG_ENRICH_QUERY_PLAN_TOOL_SPEC,
-        args_type=EnrichQueryPlanToolArgs,
-        bridge_error=EnrichToolBridgeError,
-        context="enrich_query_plan",
-    )
-
-
 __all__ = [
-    "parse_enrich_query_plan_assistant",
     "parse_enrich_task_hypotheses_assistant",
     "parse_enrich_task_plan_assistant",
 ]

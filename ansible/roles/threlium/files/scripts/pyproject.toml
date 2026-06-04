@@ -24,7 +24,6 @@ dependencies = [
     "pybase62>=1.0.0",
     "pyshacl>=0.31.0",
     "rdflib>=7.6.0",
-    "scipy>=1.17.1,<2.0.0",
     "python-telegram-bot>=22.7,<23",
     "structlog>=25.5.0",
 ]

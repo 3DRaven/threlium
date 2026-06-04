@@ -675,21 +675,7 @@ class EnrichSettings(BaseModel):
         description="Резерв токенов под system+user shell summarize_context (pack budget).",
     )
 
-    tier1_full: int = Field(default=5, ge=1, description="Макс. сообщений с full body.")
-    tier2_summary: int = Field(default=15, ge=0, description="Макс. сообщений с summary.")
     tier_preview_chars: int = Field(default=200, ge=50, description="Символов preview в tier2.")
-
-    priority_user: float = Field(default=10.0, description="Вес user_message.")
-    priority_graph: float = Field(default=6.0, description="Вес knowledge_graph.")
-    priority_unified: float = Field(default=8.0, description="Вес conversation_history.")
-    priority_thread_mem: float = Field(default=4.0, description="Вес thread_memory.")
-    priority_global_mem: float = Field(default=3.0, description="Вес global_memory.")
-    priority_extra: float = Field(default=5.0, description="Вес response_state + task_state + response_observation.")
-
-    tier1_medium_ratio: int = Field(
-        default=2, ge=1,
-        description="Делитель tier1_full для MEDIUM-варианта unified MCKP (tier1_med = tier1_full // ratio).",
-    )
 
     graph_answer_max_entities: int = Field(
         default=40,

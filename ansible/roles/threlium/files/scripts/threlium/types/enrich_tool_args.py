@@ -1,4 +1,4 @@
-"""Аргументы tool-вызовов стадии ``enrich`` (task plan / query plan).
+"""Аргументы tool-вызовов стадии ``enrich`` (task plan / hypotheses).
 
 После :class:`~threlium.types.litellm_tool_call.LiteLlmToolCallArgumentsWire`
 и ``validate_tool_args_json`` — см. ``enrich_tool_bridge``. Отдельные VO на каждый
@@ -25,14 +25,7 @@ class EnrichTaskHypothesesToolArgs(msgspec.Struct, frozen=True):
     subtasks: list[str]
 
 
-class EnrichQueryPlanToolArgs(msgspec.Struct, frozen=True):
-    """Сформулированный запрос к графу LightRAG для ``aquery``."""
-
-    formulated_query: str
-
-
 __all__ = [
-    "EnrichQueryPlanToolArgs",
     "EnrichTaskHypothesesToolArgs",
     "EnrichTaskPlanToolArgs",
 ]

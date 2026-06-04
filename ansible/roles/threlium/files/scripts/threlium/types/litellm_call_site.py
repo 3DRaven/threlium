@@ -39,7 +39,6 @@ class LitellmCallSite(StrEnum):
     CONFIRM_CLI_HITL = "confirm_cli_hitl"
     ENRICH_TASK_PLAN = "enrich_task_plan"
     ENRICH_TASK_HYPOTHESES = "enrich_task_hypotheses"
-    ENRICH_QUERY_PLAN = "enrich_query_plan"
     SUMMARIZE_THREAD_CONTEXT = "summarize_thread_context"
     SUMMARIZE_RESPONSE_BUFFER = "summarize_response_buffer"
 

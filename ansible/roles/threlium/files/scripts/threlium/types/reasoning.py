@@ -161,16 +161,31 @@ class ReasoningEnrichContext(msgspec.Struct, frozen=True, kw_only=True):
 
     @classmethod
     def from_email(cls, msg: EmailMessage, *, max_chars: int) -> Self:
-        entries: list[ReasoningHistoryEntry] = []
+        delta_entries: list[ReasoningHistoryEntry] = []
+        chronology_chunks: list[str] = []
         for _cid, part in iter_history_parts(msg):
             text = history_part_text(part).strip()
             if not text:
                 continue
-            entries.append(ReasoningHistoryEntry(origin=part_origin_label(part), text=text))
+            origin_raw = part.get(_HDR.ORIGIN.value)
+            if origin_raw and str(origin_raw).strip():
+                delta_entries.append(
+                    ReasoningHistoryEntry(origin=part_origin_label(part), text=text)
+                )
+            else:
+                chronology_chunks.append(text)
         # Бюджет хронологии (<conversation_history>/<conversation_delta>, §6): tail-keep
         # новейших записей в пределах max_chars (context_max_chars). Старые отбрасываются
         # первыми; хотя бы одна новейшая запись сохраняется всегда.
-        history = _tail_keep_history_entries(entries, max_chars)
+        history = _tail_keep_history_entries(delta_entries, max_chars)
+        mail_context: EnrichUnifiedMailContextText | None = None
+        if chronology_chunks:
+            from threlium.enrich_context import trim_context_text
+
+            merged = "\n\n---\n\n".join(chronology_chunks)
+            trimmed = trim_context_text(merged, max_chars)
+            if trimmed:
+                mail_context = EnrichUnifiedMailContextText.parse(trimmed)
         return cls(
             user_message=_extract_context_part_vo(
                 ReasoningUserMessageText, msg, EnrichPartId.USER_MESSAGE, max_chars
@@ -178,9 +193,7 @@ class ReasoningEnrichContext(msgspec.Struct, frozen=True, kw_only=True):
             knowledge_graph=_extract_context_part_vo(
                 EnrichGraphAnswerText, msg, EnrichPartId.GRAPH_ANSWER, max_chars
             ),
-            mail_context=_extract_context_part_vo(
-                EnrichUnifiedMailContextText, msg, EnrichPartId.UNIFIED_MAIL_CONTEXT, max_chars
-            ),
+            mail_context=mail_context,
             thread_memory=_extract_context_part_vo(
                 EnrichThreadMemoryText, msg, EnrichPartId.THREAD_MEMORY, max_chars
             ),

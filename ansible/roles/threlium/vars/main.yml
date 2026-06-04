@@ -135,16 +135,7 @@ _threlium_enrich_base:
   enrich_task_hypotheses_overhead_tokens: 2000
   reasoning_overhead_tokens: 4000
   summarize_overhead_tokens: 2000
-  tier1_full: 5
-  tier2_summary: 15
   tier_preview_chars: 200
-  priority_user: 10.0
-  priority_graph: 6.0
-  priority_unified: 8.0
-  priority_thread_mem: 4.0
-  priority_global_mem: 3.0
-  priority_extra: 5.0
-  tier1_medium_ratio: 2
   summarize_enabled: true
 
 # Эффективная конфигурация = base ⊕ пользовательские overrides (host_vars / group_vars / -e).
@@ -189,7 +180,6 @@ threlium_required_prompts:
   - lightrag/tools/generate_rag_answer_tool_spec.j2
   - lightrag/tools/enrich_task_plan_tool_spec.j2
   - lightrag/tools/enrich_task_hypotheses_tool_spec.j2
-  - lightrag/tools/enrich_query_plan_tool_spec.j2
   - reflect/continue.j2
   - reflect/final.j2
   - thread_memory/base.j2
