@@ -67,7 +67,7 @@ domain) — поэтому пара «команда + её history-копия»
 - **`X-Threlium-Content-Score`** — базовый вес части, ставит **источник** из настроек
   (`settings.history.score_for(from_stage)`, `HistorySettings`: `score_default` +
   per-stage override `score_by_stage`). Финальный вес считает потребитель (recency × size ×
-  score, `context_budget.py`).
+  score, token ledger в `enrich`).
 - **`X-Threlium-Origin`** — стадия-автор части. По умолчанию **штампует `enrich_fast`** из
   конвертного `From:` несущего письма, только на частях **без** origin (единая точка origin).
   Исключение — эхо-запрос (ниже): его предзаштамповывает callee.
@@ -105,7 +105,7 @@ flowchart LR
 | Стадия | To: | echo | resp | sys | Роль |
 |---|---|:--:|:--:|:--:|---|
 | `ingress` | `enrich` (или `cli_resume`) | — | да | **нет** | **Только bridge + HITL router:** distill gateway (`From:` email/telegram/matrix@localhost) → `enrich` с `<user-query>` + distill `<history>`; HITL → `cli_resume` только `<system>`. Internal стадии в ingress **не** эмитят. |
-| `enrich` | `reasoning` / `summarize_context` | — | — | да² | → `reasoning`: **`<system>` НЕТ** (reasoning не читает payload, см. ниже) — собирает core-CID §4 + `<unified-mail-context>` из `<history>`-частей треда; своих `<history>` не создаёт. ²Только → `summarize_context` есть `<system>`. |
+| `enrich` | `reasoning` / `summarize_context` | — | — | да² | → `reasoning`: **`<system>` НЕТ** — backpack (§4): core-CID + гранулярные `<history>` leaf; reasoning собирает `<conversation_history>` из частей без `X-Threlium-Origin`, `<conversation_delta>` — с origin (enrich_fast). ²Только → `summarize_context` есть `<system>`. |
 | `enrich_fast` | `reasoning` | — | — | **релей** | Relay-сборщик дельты: `<history>` + `<system>` из окна (штампует `origin`); replace `<response-state>`/`<task-state>`. Старые `@system` из `E_prev` не копируются — только свежие из дельты. `reasoning` не кладёт их в LLM-промпт, но читает для FSM gate (`formal_reason`). |
 | `reasoning` | tool | **нет** | **нет** | да | Чистый `<system>`-эмиттер tool-call (команда адресату). История — забота callee. На ВХОДЕ сам `<system>` не читает. |
 
@@ -156,14 +156,14 @@ flowchart LR
 ## 4. Core-CID полного enrich → reasoning
 
 Полный `enrich` собирает структурный контекст для reasoning как фиксированные секции
-(`build_enriched_multipart`, `EnrichPartId`) — это **не** контракт `<system>` и **не**
+(`build_context_backpack_multipart`, `EnrichPartId`) — это **не** контракт `<system>` и **не**
 `<history>`-память:
 
 | Content-ID | Источник |
 |---|---|
 | `<user-message>` | canonical user text (§4.1: `enrich_incoming_user_text.j2` + `<user-query>` CID) |
 | `<graph-answer>` | Prose-сэмпл LightRAG (`graph_answer*.j2`: query + subgraph + answer) |
-| `<unified-mail-context>` | хронология треда + memory из `<history>`-частей (`message_has_history`) |
+| `<{hash}@history>` × N | хронология треда из `<history>`-частей писем (`message_has_history`), гранулярно |
 | `<thread-memory>` / `<global-memory>` | memory-письма (намеренное дублирование маркеров) |
 | `<response-state>` | детерминированный пересчёт CRDT-буфера |
 | `<task-init>` / `<task-state>` | стартовый набор задач (seed `enrich_task_plan` до RAG + late `enrich_task_hypotheses` после RAG, одним `TaskInitOp`) + reduced-ledger |
@@ -178,8 +178,8 @@ flowchart LR
 
 Distill **не передаёт** в enrich отдельный JSON или заголовок: результат — только
 `<history>`-части на том же `EmailMessage`, который fdm кладёт в `stages/enrich/Maildir`.
-Части `<user-message>` / `<unified-mail-context>` появляются **позже**, на выходе полного
-enrich→reasoning (`build_enriched_multipart`, §4).
+Части `<user-message>` / гранулярная unified-история появляются **позже**, на выходе полного
+enrich→reasoning (`build_context_backpack_multipart`, §4).
 
 ```mermaid
 flowchart TB
@@ -210,7 +210,7 @@ flowchart TB
   end
   subgraph enrich_out["enrich → reasoning (выход)"]
     P1["&lt;user-message&gt;"]
-    P2["&lt;unified-mail-context&gt;"]
+    P2["leaf &lt;hash@history&gt; × N"]
     UM --> P1
     UNI --> P2
   end
@@ -233,11 +233,11 @@ flowchart TB
 
 | Поле tool `ingress_distill` | Heading в `<history>` | Кто читает на enrich |
 |---|---|---|
-| (bridge `<system>`, не tool) | `## Original user message` | `<unified-mail-context>` |
+| (bridge `<system>`, не tool) | `## Original user message` | leaf-`<history>` / `<conversation_history>` |
 | `user_intent` | `## User intent` | unified / task plan; **не** `<user-message>` |
 | `user_reply_language` | `## User reply language` | reasoning egress / `response_finalize` |
-| `step_back_notes` | `## Step-back context` | `<unified-mail-context>`, reasoning history |
-| `open_gaps` | `## Open gaps` | `<unified-mail-context>`, reasoning history |
+| `step_back_notes` | `## Step-back context` | leaf-`<history>`, reasoning history |
+| `open_gaps` | `## Open gaps` | leaf-`<history>`, reasoning history |
 | `<user-query>` (bridge) | (fixed CID) | **`user_query_text` → `<user-message>`** |
 
 **Шаг 2 — вход enrich (`states/enrich.py`).** Handler читает **текущее** письмо листа
@@ -256,14 +256,14 @@ flowchart TB
    thread_id=…)` (`enrich_context.py`): обход IRT **старые→новые**, лист (текущий
    ingress→enrich) **включается**; из каждого письма — все непустые `<history>` (дедуп по
    `EnrichContentId`, без `tag:context_summarized`, memory — отдельные бакеты). Рендер в
-   `<unified-mail-context>` — `lightrag/mail_context.j2` + `history_text` (§5).
+   хронология — leaf-`<history>` в backpack; hypotheses — `lightrag/mail_context.j2` + `history_text` (§5).
 
 Последняя history листа **может кратко дублировать** тело `<user-message>` (один и тот же
 `user_query`, разная обёртка: у `<user-message>` есть envelope-заголовки в шаблоне).
 
-**Шаг 3 — выход enrich→reasoning.** После LightRAG/MCKP `build_enriched_multipart` создаёт
-core-CID (§4): в т.ч. `<user-message>` из `user_message_text` и `<unified-mail-context>` из
-`ctx.all_messages`. Distill-части листа попадают в unified **как элементы хронологии**, а не
+**Шаг 11 — выход enrich→reasoning.** После LightRAG + token ledger `build_context_backpack_multipart` создаёт
+core-CID (§4): в т.ч. `<user-message>` из `user_message_text` и гранулярные `<history>` из
+`ctx.all_messages`. Distill-части листа попадают в хронологию **как leaf-CID**, а не
 как отдельный «пакет distill».
 
 **Fallback distill** (`ingress_distill_llm` после исчерпания retry): одна `<history>` =
@@ -272,8 +272,7 @@ distill_fallback_max_chars)`; `<user-query>` = преобразованный br
 
 **Связь с overflow summarize** (§5): `_emit_summarize_overflow` берёт
 `concat_history_parts_text(m)` по письмам из `ctx.all_messages` — те же `<history>` на диске,
-что и для оценки веса (`history_body_chars` / `estimate_unified_weight`), **не** из готового
-`<unified-mail-context>` и **не** из distill как
+что и для token-ledger overflow (§5), **не** из merged blob и **не** из distill как
 отдельного артефакта. Summarize сжимает **старый хвост** треда при переполнении токенного
 бюджета: batch = самые старые гранулярные `<history>` CID из `ctx.all_messages` (oldest→newest)
 до покрытия избытка `X` токенов; в payload — `SummarizeHistoryUnit` (cid + text + source_mid). E2e:

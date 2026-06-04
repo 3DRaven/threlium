@@ -45,7 +45,7 @@
 - **Union notmuch index**: один `notmuch database.path = ~/threlium/stages` индексирует все stage Maildir'ы. Логический «архив» = весь индекс (`notmuch search '*'`). Запрос `thread:<tid>` возвращает все сообщения треда из всех стадий, через которые он прошёл, — без ARCHIVE-cross-reference.
 - **LightRAG внутри `threlium-engine`**: один процесс движка держит выделенный asyncio-loop для `LightRAG`; батч-индексация **только settled** сообщений (выборка `* AND NOT tag:unread AND NOT tag:lightrag_indexed`) запускается **после** `nm_settle()` в FSM. Стабильные `file_paths` в графе (всегда `cur/<id>:2,S`), естественная защита от индексации полу-обработанных сообщений (если stage worker упал между `notmuch insert` и `nm_settle` — письмо в `new/+unread`, селектор его отсекает).
 - **Ошибки без почтового recovery**: bridge и stage worker при сбое только логируют (journald) и завершаются с ненулевым кодом там, где это задано контрактом (§5.6, `threlium-bridge@.service` с `Restart=on-failure`). Отдельной стадии `errors/` и цепочки error-mail нет.
-- **Контекст без барьера**: индексация после `nm_settle` не блокирует FSM (`schedule_index_pending`); enrich передаёт в `reasoning` гранулярные MIME-части (`<graph-answer>`, `<unified-mail-context>`, `<thread-memory>`, `<global-memory>`) через `build_enriched_multipart`, см. [§7](#7-enrich-notmuch-context--query--lightrag) и [`FSM.md` §5.2](FSM.md#52-контракт-тела-enrich--reasoning).
+- **Контекст без барьера**: индексация после `nm_settle` не блокирует FSM (`schedule_index_pending`); enrich передаёт в `reasoning` гранулярный backpack (`<graph-answer>`, leaf-`<{hash}@history>`, `<thread-memory>`, `<global-memory>`) через `build_context_backpack_multipart`, см. [§7](#7-enrich-notmuch-context--query--lightrag) и [`FSM.md` §5.2](FSM.md#52-контракт-тела-enrich--reasoning).
 
 ---
 
@@ -583,17 +583,17 @@ Mailfilter делает `notmuch insert` → файл в `stages/<stage>/Maildir
 
 ### 7.3 Composing the enrichment payload (granular multipart)
 
-Результат enrich — `multipart/mixed` с гранулярными MIME-частями по Content-ID (`build_enriched_multipart`):
+Результат enrich — `multipart/mixed` с гранулярными MIME-частями по Content-ID (`build_context_backpack_multipart`):
 
 1. **`<user-message>`** — рендер `prompts/lightrag/enrich_incoming_user_text.j2` по входящему `EmailMessage`.
 2. **`<graph-answer>`** — prose-сэмпл LightRAG (`graph_answer*.j2`: formulated query, subgraph, answer).
-3. **`<unified-mail-context>`** — хронология треда + memory-письма, рендер `lightrag/mail_context.j2` по `UnifiedEmailContext.all_messages`.
+3. **`<{hash}@history>` × N** — хронология треда (leaf-CID из `<history>`-частей писем); в reasoning → `<conversation_history>` (синтез без `X-Threlium-Origin`).
 4. **`<thread-memory>`** — только thread_memory-записи текущего треда (`lightrag/mail_context.j2` по `thread_memory_msgs`).
 5. **`<global-memory>`** — global_memory-записи из всех тредов (`lightrag/mail_context.j2` по `global_memory_msgs`).
 6. **`<response-state>`** (extra_parts) — пересчёт из CRDT через `_collect_extra_parts`.
 7. **`<plan-state>`** (extra_parts) — carry-over из предыдущего enriched-сообщения.
 
-Общий лимит размера — `THRELIUM_ENRICH__CONTEXT_MAX_CHARS` / `trim_context_text`. При отставании `ainsert` — граф может быть неполным, но сырой поток писем в `<unified-mail-context>`. Канонические Content-ID и порядок — [`FSM.md` §5.2](FSM.md#52-контракт-тела-enrich--reasoning).
+Общий лимит размера — `THRELIUM_ENRICH__CONTEXT_MAX_CHARS` / `trim_context_text`. При отставании `ainsert` — граф может быть неполным, но сырой поток писем в granular `<history>`-частях backpack. Канонические Content-ID и порядок — [`FSM.md` §5.2](FSM.md#52-контракт-тела-enrich--reasoning).
 
 ### 7.5 Query-call (always-on)
 
@@ -954,7 +954,7 @@ python -c "import lightrag; from importlib.metadata import version; print(versio
 | **Indexed** | Состояние письма: `rag.ainsert(...)` для письма успешно завершён. Маркируется тегом `+lightrag_indexed`. |
 | **Settled** | Состояние письма: `nm_settle(file_path)` выполнен — файл в `cur/<id>:2,S`, тег `unread` снят. Эквивалентно «обработано stage worker'ом» и одновременно «допускается селектором индексации» (`NOT tag:unread`). |
 | **Barrier** | *Исторически:* ожидание `+lightrag_indexed` в `enrich` с таймаутом. **Сейчас** не используется: drain ставится через `schedule_index_pending`, опора на теги в enrich снята; тредовая хронология — `unified_messages` ([§7](#7-enrich-notmuch-context--query--lightrag)). |
-| **Enrichment multipart (`build_enriched_multipart`)** | Гранулярные MIME-части по Content-ID: `<user-message>`, `<graph-answer>`, `<unified-mail-context>`, `<thread-memory>`, `<global-memory>`, `<response-state>`, `<plan-state>`. `extract_part_by_content_id` извлекает отдельную часть по Content-ID; reasoning собирает промпт через per-part trim + Jinja2-шаблон (см. [§7.3](#73-composing-the-enrichment-payload-granular-multipart); [`FSM.md` §5.2](FSM.md#52-контракт-тела-enrich--reasoning)). |
+| **Enrichment backpack (`build_context_backpack_multipart`)** | Гранулярные MIME-части: `<user-message>`, `<graph-answer>`, leaf-`<{hash}@history>`, `<thread-memory>`, `<global-memory>`, `<response-state>`, `<task-init>`/`<task-state>`. `extract_part_by_content_id` извлекает отдельную часть по Content-ID; reasoning собирает промпт через per-part trim + Jinja2-шаблон (см. [§7.3](#73-composing-the-enrichment-payload-granular-multipart); [`FSM.md` §5.2](FSM.md#52-контракт-тела-enrich--reasoning)). |
 | **Stale graph vs mail context** | `aquery` читает текущее состояние графа (может отставать от последних `ainsert`); параллельно тот же MIME передаёт хронологию писем треда через `unified_messages`, чтобы reasoning не зависела только от скорости индексации. |
 | **Synthetic ingest document** | `multipart/mixed` RFC822-текст для `ainsert`: копия заголовков в `EmailMessage` + `X-Threlium-Thread-Id` + по одной inline `text/plain` на каждую `<history>`-часть (CID `<{sha256(body)}@history>`, без слияния), сериализация `policy.default` (согласована с чанкером). Заголовок `X-Threlium-Thread-Id` только в этой строке (не в Maildir). См. [ADR 0001](adr/0001-lightrag-ingest-chunking-enrich.md), [§5b.3](#5b3-цикл-индексации). |
 | **Atomic insert** | Запись письма в stage Maildir через `notmuch insert`: файл создаётся в Maildir и индексируется одной транзакцией. Split-brain «есть файл, нет в индексе» исключён. Делает только shell внутри fdm `pipe` ([§4](#4-mailfilter-terminating-insert)). |

@@ -68,7 +68,7 @@ readonly, без правок.
 **Минимум проверить:**
 
 - `threlium.bridges`, `threlium.common` (билдеры MIME), `threlium.mail`, `threlium.states.<соседние_стадии>`.
-- Если задача про enrich/context — `build_enriched_multipart`, `graph_answer_view`, промпты `prompts/<stage>/`.
+- Если задача про enrich/context — `build_context_backpack_multipart`, `graph_answer_view`, промпты `prompts/<stage>/`.
 - Если задача про настройки — только `ThreliumSettings` / `load_settings()`, не новые env-VO.
 
 ### 3.2. Типы и [`docs/TYPES.md`](../TYPES.md)
@@ -208,7 +208,7 @@ readonly.
 
 ## 7. Антипаттерны
 
-- Начать с `states/enrich.py` до чтения CONTEXT_CONTRACT и текущего `build_enriched_multipart`.
+- Начать с `states/enrich.py` до чтения CONTEXT_CONTRACT и `build_context_backpack_multipart`.
 - Добавить `class FooWire` без поиска по `threlium/types/` и TYPES.md.
 - План «сделаем рефакторинг всего bridge» без таблицы переиспользования.
 - Один подагент «изучи всё» вместо четырёх осей — теряются типы и docs.

@@ -323,7 +323,7 @@ package "Запись (async, после settle)" {
 
 package "Чтение (sync, в FSM)" {
   rectangle "enrich" as ENR
-  rectangle "LLM: enrich_query_plan.j2" as PLAN
+  rectangle "Jinja: lightrag_query.j2" as PLAN
   rectangle "rag.aquery(...)" as AQ
   rectangle "Payload:\n--- user message ---\n--- lightrag context ---" as PAY
   rectangle "reasoning" as REA

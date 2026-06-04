@@ -417,7 +417,7 @@ def emit_transition_preserving_payload(
 | `<global-memory>` | `lightrag/mail_context.j2` по `ctx.global_memory_msgs` | `to:global_memory@localhost` из ВСЕХ тредов. |
 | `<response-state>` | Пересчёт из CRDT (`_collect_extra_parts`) | Если буфер не пуст. |
 
-Дублирование `<thread-memory>` / `<global-memory>` с содержимым `<unified-mail-context>` — **намеренное**: явные маркеры повышают усвоение LLM при рассуждениях; `<global-memory>` содержит записи из **всех** тредов, не только текущего.
+Дублирование `<thread-memory>` / `<global-memory>` с хронологией в leaf-`<history>` — **намеренное**: явные маркеры повышают усвоение LLM при рассуждениях; `<global-memory>` содержит записи из **всех** тредов, не только текущего.
 
 #### После `enrich_fast` (без reflect): до 9 частей
 
@@ -425,7 +425,7 @@ def emit_transition_preserving_payload(
 - `<response-state>` / `<task-state>` — пересчёт из CRDT (**replace** единственной части).
 - `<history>`-части окна-дельты — **аддитивно**: всё содержательное (`message_has_history`), появившееся с прошлого `To: reasoning` (E_prev) до текущего листа, едет **сырыми** `<history>`-частями с контент-адресным `Content-ID` `<{sha256(body)}@history>`. `enrich_fast` (stage-agnostic) собирает их по окну IRT (`collect_unified_delta_msgs`), штампует `X-Threlium-Origin` из конвертного `From:` и дописывает в хвост. Дедуп — по равенству `EnrichContentId` (= по телу): relay-копия схлопывается с оригиналом, без `To:`-логики. Граница окна — ближайший `To: reasoning` (в multi-cycle = выход прошлого `enrich_fast`), прошлые дельты уже лежат частями E_prev.
 
-`reasoning` рендерит `<history>`-части единым хронологическим потоком в `<conversation_delta>`, каждая запись подписана `[from: origin]` (`X-Threlium-Origin`); семантику стадии модель знает из tool spec. Видов-таксономии по стадии (`<observation>`/`<memory_note>`/`<plan_state>`) больше нет. History на границе reasoning **без** `_budget_history` — все `<history>`-части письма как есть; лимитирование хвоста — ответственность `enrich` / `enrich_fast` (TBD). FSM gate `formal_reason` читает relayed `<system>` (не prose из delta); отсутствие или
+`reasoning` рендерит `<history>`-части **с** `X-Threlium-Origin` в `<conversation_delta>` (`[from: origin]`); части **без** origin (хронология треда из full enrich backpack) — в `<conversation_history>` (синтез из leaf-CID без `X-Threlium-Origin`). Видов-таксономии по стадии (`<observation>`/`<memory_note>`/`<plan_state>`) больше нет. History на границе reasoning **без** `_budget_history` — все `<history>`-части письма как есть; лимитирование хвоста — ответственность `enrich` / `enrich_fast` (TBD). FSM gate `formal_reason` читает relayed `<system>` (не prose из delta); отсутствие или
 битый `FormalReasonResultPayload` после formal_reason в дельте enrich_fast — `RuntimeError`.
 См. [`FORMAL_REASON_GATE.md`](FORMAL_REASON_GATE.md).
 
@@ -446,9 +446,9 @@ Graph query: ...
 ## Answer
 ...
 
-<unified-mail-context>
---- message 1 ---
-From: user@example.com
+<{hash}@history>
+--- distilled history leaf (example) ---
+## User intent
 ...
 
 <thread-memory>

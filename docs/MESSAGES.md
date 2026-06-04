@@ -300,7 +300,7 @@ Crash matrix — в [`INDEX.md` §9.1](INDEX.md#91-crash-matrix). Краткая
 
 Stage submit делает settle. Индексация LightRAG — **в том же процессе** `threlium-engine` (RAG-loop, `schedule_index_pending` **не блокирует** FSM). FSM-стадия `enrich` — потребитель graph'а: seed-план задач формируется **до** `aquery`, и его подзадачи подмешиваются в графовый запрос; сам `aquery` идёт через `run_rag_coroutine` плюс notmuch-контекст треда `unified_messages` в Jinja (см. [`INDEX.md` §7](INDEX.md#7-enrich-notmuch-context--query--lightrag)).
 
-Пока очередь `ainsert` не догнала свежие письма, граф может отставать; параллельно enrich включает те же письма в `<unified-mail-context>` MIME-часть. Контракт Content-ID частей — [`FSM.md` §5.2](FSM.md#52-контракт-тела-enrich--reasoning); сборка — [`INDEX.md` §7.3](INDEX.md#73-composing-the-enrichment-payload-granular-multipart).
+Пока очередь `ainsert` не догнала свежие письма, граф может отставать; параллельно enrich включает те же письма гранулярными `<history>`-частями в backpack. Контракт Content-ID частей — [`FSM.md` §5.2](FSM.md#52-контракт-тела-enrich--reasoning); сборка — [`INDEX.md` §7.3](INDEX.md#73-composing-the-enrichment-payload-granular-multipart).
 
 ---
 
@@ -364,4 +364,4 @@ Stage submit делает settle. Индексация LightRAG — **в том 
 
 **Устаревшие имена (не использовать в новых текстах и примерах):** `X-Threlium-FSM-Hops` и `X-Threlium-FSM-Hop-Budget` — в документации и на целевом wire везде **`X-Threlium-Hop-Budget`** (роль — лимит шагов / стек бюджетов по фреймам; детали шагов — [`SUBAGENT_TABLE.md`](SUBAGENT_TABLE.md)).
 
-Заголовков, которых в системе **нет**, в доках не вводить: контекст LightRAG для `enrich → reasoning` живёт в **теле** `multipart/mixed` с гранулярными MIME-частями по `Content-ID` (`<user-message>`, `<graph-answer>`, `<unified-mail-context>` и др.; см. [`FSM.md` §5.2](FSM.md#52-контракт-тела-enrich--reasoning), [`INDEX.md` §7.3](INDEX.md#73-composing-the-enrichment-payload-granular-multipart)), отдельного поля «LightRAG-контекст» / «GraphRAG-контекст» в заголовках нет.
+Заголовков, которых в системе **нет**, в доках не вводить: контекст LightRAG для `enrich → reasoning` живёт в **теле** `multipart/mixed` с гранулярными MIME-частями по `Content-ID` (`<user-message>`, `<graph-answer>`, гранулярные `<{hash}@history>` и др.; см. [`FSM.md` §5.2](FSM.md#52-контракт-тела-enrich--reasoning), [`INDEX.md` §7.3](INDEX.md#73-composing-the-enrichment-payload-granular-multipart)), отдельного поля «LightRAG-контекст» / «GraphRAG-контекст» в заголовках нет.

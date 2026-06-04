@@ -1,5 +1,7 @@
 # Брифинг: overflow summarize — фикс оценки веса + e2e multi-turn
 
+> **Обновление:** MCKP/`context_budget.py`/`estimate_unified_weight` удалены; overflow — token ledger (`excess > 0`) в `enrich.main`. Ниже — исторический контекст отладки.
+
 Документ для передачи контекста в другую сессию. Нормативные контракты — в
 [`CONTEXT_CONTRACT.md`](../CONTEXT_CONTRACT.md) §4.1, §5 и [`E2E_ISOLATION.md`](../E2E_ISOLATION.md);
 см. также [`system_cid_lightrag_per_history_briefing.md`](system_cid_lightrag_per_history_briefing.md)
@@ -35,7 +37,7 @@ reasoning, e2e падал с `NOTMUCH_STAGE_FOLDER_EMPTY stage='summarize_contex
 | Слой | Поведение |
 |------|-----------|
 | Рендер unified, summarize input, Jinja `history_text` | **Все** непустые `<history>` (`concat_history_parts_text`) |
-| `history_body_chars` → `estimate_unified_weight` → overflow в `enrich.main` | Было: длина **только первой** `<history>` |
+| token ledger: `excess = total − effective_budget` → overflow в `enrich.main` | Старый MCKP/`estimate_unified_weight` удалён |
 
 После успешного `ingress_distill` порядок частей: `user_reply_language` → `step_back_notes` →
 `open_gaps` → **`user_query` последним** (`types/ingress_distill.py`). Первая часть ~30 символов,
@@ -45,7 +47,7 @@ reasoning, e2e падал с `NOTMUCH_STAGE_FOLDER_EMPTY stage='summarize_contex
 
 ### Исправление
 
-**`context_budget.py` — `history_body_chars`**
+**`context_token_count.py` + token ledger (MCKP/`context_budget.py` удалены)**
 
 ```python
 combined = concat_history_parts_text(msg)
@@ -243,7 +245,7 @@ flowchart LR
 
 | Вопрос | Ответ |
 |--------|--------|
-| Когда вызывается summarize? | `enrich.main`: `estimate_unified_weight(...) - mckp_capacity > summarize_trigger_min_excess_chars` |
+| Когда вызывается summarize? | `enrich.main`: `excess > 0` (token ledger, без порога chars) |
 | Что суммаризируется? | `concat_history_parts_text` по `ctx.all_messages[:batch_max]` |
 | Откуда user_message в enrich? | `<user-query>` CID (`user_query_text`), **не** весь unified |
 | Почему overflow только на main? | `user_query` в summarize-cycle без изменений; prior raw body несёт PAD |

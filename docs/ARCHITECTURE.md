@@ -242,7 +242,7 @@ Threlium — **IRT-tree FSM** без глобального координато
 Подготовка данных для LightRAG разделена между двумя независимыми компонентами:
 
 1. **После settle шага FSM** — `schedule_index_pending` на выделенном asyncio-loop в `threlium-engine` (single writer на `lightrag/working_dir/`) сливает pending-документы в граф. Stage handler'ы сами `ainsert` не вызывают.
-2. **Синхронно в FSM-шаге** — `enrich` вызывает `rag.aquery(...)` (через `run_rag_coroutine`) и собирает гранулярные MIME-части (`<graph-answer>`, `<unified-mail-context>`, `<thread-memory>`, `<global-memory>`) через `build_enriched_multipart` (см. [`INDEX.md` §7](INDEX.md#7-enrich-notmuch-context--query--lightrag); Content-ID контракт — [`FSM.md` §5.2](FSM.md#52-контракт-тела-enrich--reasoning)).
+2. **Синхронно в FSM-шаге** — `enrich` вызывает `rag.aquery(...)` (через `run_rag_coroutine`) и собирает гранулярный backpack (`<graph-answer>`, leaf-`<{hash}@history>`, `<thread-memory>`, `<global-memory>`) через `build_context_backpack_multipart` (см. [`INDEX.md` §7](INDEX.md#7-enrich-notmuch-context--query--lightrag); Content-ID контракт — [`FSM.md` §5.2](FSM.md#52-контракт-тела-enrich--reasoning)).
 
 Полный контракт обоих контуров (селектор pending, синтетический ingest-RFC822, кастомный `chunking_func`, цепочка enrich Jinja+LLM+`aquery` + `unified_messages`) — [`INDEX.md` §5b](INDEX.md#5b-lightrag-worker) и [§7](INDEX.md#7-enrich-notmuch-context--query--lightrag).
 
@@ -256,7 +256,7 @@ Threlium — **IRT-tree FSM** без глобального координато
 
 #### 5.1.2. Контракт тела enrich и reasoning
 
-`enrich` передаёт в `reasoning` **`multipart/mixed`** MIME-сообщение с гранулярными `text/plain` частями по `Content-ID` (до 7 частей: `<user-message>`, `<graph-answer>`, `<unified-mail-context>`, `<thread-memory>`, `<global-memory>`, `<response-state>`, `<plan-state>`). `reasoning` извлекает каждую часть через `extract_part_by_content_id`, применяет per-part trim и собирает промпт через Jinja2-шаблон. Подробный контракт и перечисление билдеров MIME — [FSM.md §5.2](FSM.md#52-контракт-тела-enrich--reasoning).
+`enrich` передаёт в `reasoning` **`multipart/mixed`** MIME-сообщение с гранулярными `text/plain` частями по `Content-ID` (core-CID + leaf-`<{hash}@history>`; `<conversation_history>` в reasoning — синтез из history без origin). `reasoning` извлекает каждую часть через `extract_part_by_content_id`, применяет per-part trim и собирает промпт через Jinja2-шаблон. Подробный контракт и перечисление билдеров MIME — [FSM.md §5.2](FSM.md#52-контракт-тела-enrich--reasoning).
 
 ### 5.1.3. User-editable prompts (раскладка по стадиям FSM `$THRELIUM_HOME/prompts/`)
 
@@ -264,7 +264,7 @@ Threlium — **IRT-tree FSM** без глобального координато
 
 Контракты:
 
-- Секционные маркеры для LLM формируются автоматически: `extract_part_by_content_id` извлекает каждую MIME-часть по `Content-ID`; reasoning собирает промпт через per-part trim + Jinja2-шаблон, Content-ID каждой части используется как семантический маркер секции. RFC822-заголовки бриджей (`From:`, `To:`, `Message-ID:`, `Date:`, `In-Reply-To:`, `References:`, `Content-Type:`) — **статика**; пустые части опускаются в `build_enriched_multipart`. Код не собирает маркеры вручную.
+- Секционные маркеры для LLM формируются автоматически: `extract_part_by_content_id` извлекает каждую MIME-часть по `Content-ID`; reasoning собирает промпт через per-part trim + Jinja2-шаблон, Content-ID каждой части используется как семантический маркер секции. RFC822-заголовки бриджей (`From:`, `To:`, `Message-ID:`, `Date:`, `In-Reply-To:`, `References:`, `Content-Type:`) — **статика**; пустые части опускаются в `build_context_backpack_multipart`. Код не собирает маркеры вручную.
 - Единый рендерер — `threlium.prompts.render_prompt(name, **vars)` (вынесен в отдельный модуль во избежание циклических импортов; `Environment(FileSystemLoader($THRELIUM_HOME/prompts), StrictUndefined, autoescape=False, keep_trailing_newline=True)`).
 - Деплой — одна Ansible-таска копирует `roles/threlium/files/prompts/` → `$THRELIUM_HOME/prompts/`; acceptance-loop проверяет существование всех имён из `threlium_required_prompts`.
 - Тесты сверяют либо содержимое самих шаблонов, либо стабильные признаки (например, наличие `[Threlium notice`) — точная редакция текста делается правкой шаблона без изменения кода и тестов.

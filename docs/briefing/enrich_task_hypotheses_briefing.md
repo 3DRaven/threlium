@@ -37,7 +37,7 @@
 ```text
 enrich.main (один процесс, один emit):
   seed LLM (enrich_task_plan)     → seed_defs in-memory
-  RAG (aquery + MCKP)
+  RAG (один aquery, token ledger)
   hyp LLM (enrich_task_hypotheses) → hyp_defs in-memory
   _finalize_task_mime_parts       → один TaskInitOp(seed+hyp) + <task-state>
   emit → reasoning
@@ -93,7 +93,7 @@ enrich.main (один процесс, один emit):
 | `_build_task_hypothesis_defs` | LLM после RAG; `LitellmRoutingSite.ENRICH_TASK_HYPOTHESES`; fail-open `[]` |
 | `_finalize_task_mime_parts` | Один `TaskInitOp` на `seed_defs + hyp_defs`, один `<task-state>` |
 
-`main`: seed → `_enrich_async` → hyp → finalize → `build_enriched_multipart` → emit reasoning.
+`main`: seed → lightrag → hyp → finalize → `build_context_backpack_multipart` → emit reasoning.
 
 ### Reflect
 
@@ -116,7 +116,7 @@ enrich.main (один процесс, один emit):
 
 В [`test_mailflow_e2e/`](../../tests/e2e/wiremock_stubs/test_mailflow_e2e/) **нет** отдельных стабов:
 
-- `enrich_task_plan` (есть только `080_chat_enrich_plan.json` → **`enrich_query_plan`**)
+- `enrich_task_plan` (`081_chat_enrich_task_plan.json`; `080`/`enrich_query_plan` удалён)
 - `enrich_task_hypotheses` (есть `082_chat_enrich_rag_response.json` → **не** hypotheses)
 
 Task-ledger сценарии уже имеют [`081_chat_enrich_task_plan.json`](../../tests/e2e/wiremock_stubs/test_task_ledger_bypass_e2e/081_chat_enrich_task_plan.json).

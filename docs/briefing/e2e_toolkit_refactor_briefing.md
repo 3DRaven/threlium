@@ -151,7 +151,7 @@ Bootstrap fail-open по-прежнему: `compose_bootstrap/009_*`, `010_*`.
 flowchart LR
   subgraph product [Продукт SUT]
     EN[enrich.py]
-    CB[context_budget.py]
+    CTC[context_token_count.py]
     LR[lightrag per-history ingest]
   end
   subgraph harness [tests/e2e/toolkit]
@@ -164,7 +164,7 @@ flowchart LR
   LR --> NM
 ```
 
-- **Harness** не меняет `enrich.py`, `context_budget.py`, промпты.
+- **Harness** не меняет `enrich.py`, `context_token_count.py`, промпты.
 - **`concat_history_parts_text`** в assert'ах LightRAG **не** смешивать с enrich/summarize
   ([`system_cid_lightrag_per_history_briefing.md`](system_cid_lightrag_per_history_briefing.md)).
 

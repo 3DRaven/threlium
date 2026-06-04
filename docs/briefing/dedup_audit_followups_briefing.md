@@ -30,7 +30,7 @@
 | **P1** | `require_fsm_message_id` вместо ручного parse | enrich, reasoning, subagent_end, egress_*, cli_resume, response_*, tasks_upsert, enrich_fast |
 | **P1** | CRDT facade `crdt_ledger_state` | `tasks_upsert`, `response_finalize`, `response_observe`, `enrich_fast` |
 | **P1** | Internal helpers ingress/egress → `config=` | `ingress`, `egress_telegram`, `egress_matrix` |
-| **P2** | Types / bootstrap hygiene | `context_budget`, Matrix structs, `EnrichContentId`, `_bootstrap.py` |
+| **P2** | Types / bootstrap hygiene | `context_token_count`, Matrix structs, `EnrichContentId`, `_bootstrap.py` |
 
 ---
 
