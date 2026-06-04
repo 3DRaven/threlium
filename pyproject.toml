@@ -9,7 +9,7 @@ requires-python = ">=3.11"
 readme = "README.md"
 description = "Ansible и скрипты Threlium (метаданные для инструментов)"
 dependencies = [
-    "lightrag-hku[api]>=1.4.16,<2.0.0",
+    "lightrag-hku[api]==1.4.16",
     "numpy>=2.4.4,<3.0.0",
     "msgspec>=0.21.1",
     "pydantic>=2.13.4,<3",
