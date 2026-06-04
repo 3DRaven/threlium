@@ -4,7 +4,6 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-import msgspec
 from pydantic import ValidationError
 
 from threlium.prompts import render_prompt
@@ -66,10 +65,7 @@ def _parse_lightrag_query_data(raw: dict[str, Any]) -> LightragQueryData:
         raise RuntimeError(
             f"graph_answer: expected data dict, got {type(data).__name__!r}"
         )
-    try:
-        return msgspec.convert(data, LightragQueryData)
-    except msgspec.ValidationError as exc:
-        raise RuntimeError(f"graph_answer: invalid query data: {exc}") from exc
+    return LightragQueryData.from_wire(data)
 
 
 def build_graph_answer_view(

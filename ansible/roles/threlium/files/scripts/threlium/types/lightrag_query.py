@@ -1,13 +1,31 @@
 """Typed snapshots of LightRAG ``aquery_data`` / ``aquery_llm`` ``data`` (retrieval API).
 
 Отдельно от :mod:`lightrag_tool_args` (схема **индексации** ``extract_knowledge_graph``).
-Поля 1:1 с ``lightrag.operate.convert_to_user_format`` (lightrag-hku 1.4.x).
+Ключи полей 1:1 с ``lightrag.utils.convert_to_user_format`` (lightrag-hku 1.4.x+).
+Скалярные значения на wire гетерогенны (``created_at`` — int/float/str); сборка через
+:meth:`LightragAqueryEntity.from_wire` приводит всё к ``str`` без msgspec-валидации.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Self
 
 import msgspec
+
+
+def _wire_str(d: Mapping[str, Any], key: str, default: str = "") -> str:
+    """Присутствие ключа достаточно; любое значение → ``str`` (для текстового graph-answer)."""
+    if key not in d:
+        return default
+    return str(d[key]).strip()
+
+
+def _keywords_from_wire(raw: object) -> str:
+    if isinstance(raw, list):
+        return ", ".join(str(x).strip() for x in raw if str(x).strip())
+    if raw is None:
+        return ""
+    return str(raw).strip()
 
 
 class LightragAqueryEntity(msgspec.Struct, frozen=True):
@@ -20,6 +38,17 @@ class LightragAqueryEntity(msgspec.Struct, frozen=True):
     file_path: str = ""
     created_at: str = ""
 
+    @classmethod
+    def from_wire(cls, d: Mapping[str, Any]) -> Self:
+        return cls(
+            entity_name=_wire_str(d, "entity_name"),
+            entity_type=_wire_str(d, "entity_type") or "UNKNOWN",
+            description=_wire_str(d, "description"),
+            source_id=_wire_str(d, "source_id"),
+            file_path=_wire_str(d, "file_path"),
+            created_at=_wire_str(d, "created_at"),
+        )
+
 
 class LightragAqueryRelation(msgspec.Struct, frozen=True):
     """Одна связь в ``data.relationships``."""
@@ -27,11 +56,25 @@ class LightragAqueryRelation(msgspec.Struct, frozen=True):
     src_id: str
     tgt_id: str
     description: str = ""
-    keywords: str | list[Any] = ""
-    weight: float = 1.0
+    keywords: str = ""
+    weight: str = "1.0"
     source_id: str = ""
     file_path: str = ""
     created_at: str = ""
+
+    @classmethod
+    def from_wire(cls, d: Mapping[str, Any]) -> Self:
+        weight_raw = d.get("weight", "1.0")
+        return cls(
+            src_id=_wire_str(d, "src_id"),
+            tgt_id=_wire_str(d, "tgt_id"),
+            description=_wire_str(d, "description"),
+            keywords=_keywords_from_wire(d.get("keywords", "")),
+            weight=str(weight_raw).strip() if weight_raw is not None else "1.0",
+            source_id=_wire_str(d, "source_id"),
+            file_path=_wire_str(d, "file_path"),
+            created_at=_wire_str(d, "created_at"),
+        )
 
 
 class LightragQueryData(msgspec.Struct, frozen=True):
@@ -39,6 +82,18 @@ class LightragQueryData(msgspec.Struct, frozen=True):
 
     entities: list[LightragAqueryEntity] = ()
     relationships: list[LightragAqueryRelation] = ()
+
+    @classmethod
+    def from_wire(cls, data: Mapping[str, Any]) -> Self:
+        entities: list[LightragAqueryEntity] = []
+        for row in data.get("entities") or []:
+            if isinstance(row, dict):
+                entities.append(LightragAqueryEntity.from_wire(row))
+        relationships: list[LightragAqueryRelation] = []
+        for row in data.get("relationships") or []:
+            if isinstance(row, dict):
+                relationships.append(LightragAqueryRelation.from_wire(row))
+        return cls(entities=entities, relationships=relationships)
 
 
 class GraphAnswerEntityRow(msgspec.Struct, frozen=True):
