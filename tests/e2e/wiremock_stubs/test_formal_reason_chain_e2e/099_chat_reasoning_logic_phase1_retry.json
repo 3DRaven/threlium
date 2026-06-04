@@ -23,6 +23,10 @@
       {
         "comment": "Повторные completion в том же _decide после recordState phase_formal_reason_done у 100_: тело без conforms, фаза уже выставлена.",
         "doesNotContain": "conforms: True"
+      },
+      {
+        "comment": "2-й reasoning (memory_query): unified-delta уже несёт ex:PositiveAgeShape — отдаём 101_, не retry formal_reason.",
+        "doesNotContain": "ex:PositiveAgeShape"
       }
     ],
     "customMatcher": {
