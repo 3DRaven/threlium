@@ -68,11 +68,9 @@ def compute_allowed_routes(msg: EmailMessage, remaining: int) -> frozenset[FsmSt
     return REASONING_TARGET_STAGES
 
 
-def _render_user_prompt(
-    msg: EmailMessage, hop_budget: HopBudgetLine, max_chars: int,
-) -> str:
+def _render_user_prompt(msg: EmailMessage, hop_budget: HopBudgetLine) -> str:
     envelope = ReasoningIncomingEnvelope.from_email(msg, hop_budget=hop_budget)
-    ctx = ReasoningEnrichContext.from_email(msg, max_chars=max_chars)
+    ctx = ReasoningEnrichContext.from_email(msg)
     return render_prompt(
         PromptPath.REASONING_USER,
         message_id=envelope.message_id.value if envelope.message_id is not None else None,
@@ -181,7 +179,7 @@ def _decide(
     length_recovery_system = render_prompt(
         PromptPath.REASONING_LENGTH_RECOVERY_SYSTEM
     ).strip()
-    user_content = _render_user_prompt(msg, hop_budget, config.enrich.context_max_chars)
+    user_content = _render_user_prompt(msg, hop_budget)
 
     wrong_tool_retries = 0
     length_attempt = 0

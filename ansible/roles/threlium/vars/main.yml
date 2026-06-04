@@ -128,7 +128,6 @@ _threlium_enrich_base:
   context_thread_n: 200
   context_thread_memory_n: 100
   context_global_n: 100
-  context_max_chars: 180000
   model_context_tokens: 262144
   context_safety_margin_tokens: 2000
   lightrag_query_overhead_tokens: 2000

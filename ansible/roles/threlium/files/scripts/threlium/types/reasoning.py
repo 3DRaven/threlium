@@ -112,39 +112,15 @@ def _extract_context_part_vo(
     vo_type: type[_OptionalStripEmpty],
     msg: EmailMessage,
     part_id: EnrichPartId,
-    max_chars: int,
 ) -> _OptionalStripEmpty | None:
-    from threlium.enrich_context import trim_context_text
-
     raw = extract_part_by_content_id(msg, part_id)
     if raw is None:
         return None
-    trimmed = trim_context_text(raw.strip(), max_chars)
-    if not trimmed:
+    stripped = raw.strip()
+    if not stripped:
         return None
-    parsed = vo_type.parse(trimmed)
+    parsed = vo_type.parse(stripped)
     return parsed if parsed.value else None
-
-
-def _tail_keep_history_entries(
-    entries: list[ReasoningHistoryEntry], max_chars: int
-) -> tuple[ReasoningHistoryEntry, ...]:
-    """Tail-keep новейших записей хронологии в пределах ``max_chars`` (CONTEXT_CONTRACT §6).
-
-    ``max_chars <= 0`` → без усечения. Иначе суммируем длины с конца (новейшие); как только
-    суммарная длина превышает бюджет — отбрасываем более старые. Минимум одна (самая свежая)
-    запись сохраняется всегда.
-    """
-    if max_chars <= 0 or not entries:
-        return tuple(entries)
-    kept_rev: list[ReasoningHistoryEntry] = []
-    used = 0
-    for entry in reversed(entries):
-        if kept_rev and used + len(entry.text) > max_chars:
-            break
-        kept_rev.append(entry)
-        used += len(entry.text)
-    return tuple(reversed(kept_rev))
 
 
 class ReasoningEnrichContext(msgspec.Struct, frozen=True, kw_only=True):
@@ -160,7 +136,7 @@ class ReasoningEnrichContext(msgspec.Struct, frozen=True, kw_only=True):
     history: tuple[ReasoningHistoryEntry, ...]
 
     @classmethod
-    def from_email(cls, msg: EmailMessage, *, max_chars: int) -> Self:
+    def from_email(cls, msg: EmailMessage) -> Self:
         delta_entries: list[ReasoningHistoryEntry] = []
         chronology_chunks: list[str] = []
         for _cid, part in iter_history_parts(msg):
@@ -174,39 +150,32 @@ class ReasoningEnrichContext(msgspec.Struct, frozen=True, kw_only=True):
                 )
             else:
                 chronology_chunks.append(text)
-        # Бюджет хронологии (<conversation_history>/<conversation_delta>, §6): tail-keep
-        # новейших записей в пределах max_chars (context_max_chars). Старые отбрасываются
-        # первыми; хотя бы одна новейшая запись сохраняется всегда.
-        history = _tail_keep_history_entries(delta_entries, max_chars)
         mail_context: EnrichUnifiedMailContextText | None = None
         if chronology_chunks:
-            from threlium.enrich_context import trim_context_text
-
             merged = "\n\n---\n\n".join(chronology_chunks)
-            trimmed = trim_context_text(merged, max_chars)
-            if trimmed:
-                mail_context = EnrichUnifiedMailContextText.parse(trimmed)
+            if merged.strip():
+                mail_context = EnrichUnifiedMailContextText.parse(merged)
         return cls(
             user_message=_extract_context_part_vo(
-                ReasoningUserMessageText, msg, EnrichPartId.USER_MESSAGE, max_chars
+                ReasoningUserMessageText, msg, EnrichPartId.USER_MESSAGE
             ),
             knowledge_graph=_extract_context_part_vo(
-                EnrichGraphAnswerText, msg, EnrichPartId.GRAPH_ANSWER, max_chars
+                EnrichGraphAnswerText, msg, EnrichPartId.GRAPH_ANSWER
             ),
             mail_context=mail_context,
             thread_memory=_extract_context_part_vo(
-                EnrichThreadMemoryText, msg, EnrichPartId.THREAD_MEMORY, max_chars
+                EnrichThreadMemoryText, msg, EnrichPartId.THREAD_MEMORY
             ),
             global_memory=_extract_context_part_vo(
-                EnrichGlobalMemoryText, msg, EnrichPartId.GLOBAL_MEMORY, max_chars
+                EnrichGlobalMemoryText, msg, EnrichPartId.GLOBAL_MEMORY
             ),
             response_state=_extract_context_part_vo(
-                ReasoningResponseStateText, msg, EnrichPartId.RESPONSE_STATE, max_chars
+                ReasoningResponseStateText, msg, EnrichPartId.RESPONSE_STATE
             ),
             task_state=_extract_context_part_vo(
-                ReasoningTaskStateText, msg, EnrichPartId.TASK_STATE, max_chars
+                ReasoningTaskStateText, msg, EnrichPartId.TASK_STATE
             ),
-            history=history,
+            history=tuple(delta_entries),
         )
 
 

@@ -67,4 +67,4 @@ threlium_egress:
 
 # Enrich — partial override:
 # threlium_enrich:
-#   context_max_chars: 180000
+#   model_context_tokens: 262144

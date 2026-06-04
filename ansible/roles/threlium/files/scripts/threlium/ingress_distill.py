@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import jsonschema
 from email.message import EmailMessage
-from threlium.enrich_context import trim_context_text
 from threlium.ingress_distill_tool_bridge import parse_ingress_distill_assistant
 from threlium.litellm_correlation_headers import fsm_correlation_snap
 from threlium.litellm_required_tool import (
@@ -29,6 +28,13 @@ from threlium.types import (
 log = logger.bind(stage="ingress")
 
 _MAX_INGRESS_DISTILL_RETRIES = 2
+
+
+def _trim_fallback_body(text: str, max_chars: int) -> str:
+    """Fail-safe fallback only: tail-keep тела bridge (ingress distill, вне enrich summarize)."""
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text
+    return text[-max_chars:]
 
 
 def ingress_distill_llm(
@@ -90,7 +96,7 @@ def ingress_distill_llm(
 
     def _fallback(last_error: BaseException) -> IngressDistillResult:
         log.warning("ingress_distill_fallback", error=str(last_error))
-        trimmed = trim_context_text(
+        trimmed = _trim_fallback_body(
             envelope.full_body.value,
             config.ingress.distill_fallback_max_chars,
         )

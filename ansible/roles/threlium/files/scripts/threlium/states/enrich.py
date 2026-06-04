@@ -37,7 +37,6 @@ from threlium.context_token_count import (
 from threlium.enrich_context import (
     build_unified_email_messages,
     message_inner_from_email,
-    trim_context_text,
     UnifiedEmailContext,
 )
 from threlium.graph_answer_view import format_graph_answer_part
@@ -274,7 +273,6 @@ def _finalize_task_mime_parts(
     existing_ops: list[TaskOp],
     fallback_ledger: TaskLedger,
     inner: NotmuchMessageIdInner,
-    limit: int,
 ) -> tuple[list[tuple[EnrichContentId, str]], TaskLedger]:
     """Один ``<task-init>`` (seed + late-гипотезы) + детерминированный ``<task-state>``.
 
@@ -300,12 +298,10 @@ def _finalize_task_mime_parts(
     else:
         combined = fallback_ledger
 
-    # <task-state> усекается симметрично <response-state> (CONTEXT_CONTRACT §4/§6):
-    # детерминированный recompute не должен переполнять бюджет extra-части.
     parts.append(
         (
             EnrichContentId.from_part_id(EnrichPartId.TASK_STATE),
-            trim_context_text(build_task_state_summary(combined), limit),
+            build_task_state_summary(combined),
         )
     )
     log.info(
@@ -573,9 +569,6 @@ def main(
     )
 
     tokenizer = build_tokenizer(config)
-    # Малые CRDT-части (<response-state>/<task-state>) усекаются по символам отдельно от
-    # токенного overflow unified-истории (они mandatory и невелики).
-    state_limit = config.enrich.context_max_chars
 
     user_message_text = render_prompt(
         PromptPath.LIGHTRAG_ENRICH_INCOMING_USER_TEXT,
@@ -630,10 +623,9 @@ def main(
             existing_ops=existing_task_ops,
             fallback_ledger=ledger_after_seed,
             inner=inner,
-            limit=state_limit,
         )
 
-    extra_parts = ledger_context_parts(inner, state_limit) if inner is not None else []
+    extra_parts = ledger_context_parts(inner) if inner is not None else []
     extra_parts.extend(task_parts)
 
     # --- Шаг 9: token ledger (mandatory FULL + гранулярная history) ---
@@ -653,6 +645,10 @@ def main(
     history_tokens = sum(u.tokens for u in history_units)
     effective_budget = reasoning_effective_budget(config)
 
+    # Mandatory-части (user_message + graph + memory + CRDT) регенерируются на каждом enrich
+    # (RAG/mailbox/ledger), а не хранятся как <history> CID. summarize их не уменьшит на
+    # re-enrich (вернутся в полном размере) → fail-fast граница: только избыток ИСТОРИИ
+    # сжимается через summarize_context (CONTEXT_CONTRACT §4/§5).
     if mandatory_tokens > effective_budget:
         raise RuntimeError(
             f"enrich: mandatory context {mandatory_tokens} tok exceeds reasoning "

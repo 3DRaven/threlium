@@ -27,9 +27,7 @@ if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
 from threlium.mail import parse_rfc822
-from threlium.enrich_context import trim_context_text
 from threlium.mail import canonicalize_mime
-from threlium.mime_reform import extract_plain_body
 from threlium.prompts import init_prompts_root, render_prompt
 from threlium.settings import load_settings, resolve_llm_endpoint
 from threlium.states.reasoning import _render_user_prompt
@@ -417,11 +415,6 @@ def main() -> None:
     raw = path.read_bytes()
     msg = canonicalize_mime(parse_rfc822(raw))
     hop = HopBudgetLine.parse(msg.get(_HDR.HOP_BUDGET))
-    body_text = trim_context_text(
-        extract_plain_body(msg).strip(),
-        cfg.enrich.context_max_chars,
-    )
-
     ep = resolve_llm_endpoint(cfg.litellm, LitellmRoutingSite.REASONING)
     if USE_BUILTIN_REPLAY_TOOLS:
         tools, _schemas = build_replay_tool_specs()
@@ -431,8 +424,8 @@ def main() -> None:
         tools, _schemas = load_tools_for_routes(routes)
         tool_spec_source = "template_j2"
     system = render_prompt(PromptPath.REASONING_SYSTEM).strip()
-    del body_text  # replay: контекст как в проде — из MIME-частей enrich
-    user_content = _render_user_prompt(msg, hop, cfg.enrich.context_max_chars)
+    # replay: контекст как в проде — из MIME-частей enrich (без отдельного body trim)
+    user_content = _render_user_prompt(msg, hop)
 
     model = ep.model
     if model.startswith("openai/"):
@@ -452,7 +445,6 @@ def main() -> None:
 
     meta = {
         "mail_path": str(path),
-        "body_text_len": len(body_text),
         "user_content_len": len(user_content),
         "model": model,
         "api_base": ep.api_base,

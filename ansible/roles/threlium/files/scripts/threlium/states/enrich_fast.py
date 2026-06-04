@@ -37,7 +37,7 @@ from threlium.mime_reform import (
     iter_system_parts,
     splice_e_prev_with_history,
 )
-from threlium.ledger_context_parts import crdt_ledger_state, trimmed_crdt_state_texts
+from threlium.ledger_context_parts import crdt_ledger_state, crdt_state_texts
 from threlium.nm import require_fsm_message_id
 from threlium.settings import ThreliumSettings
 from threlium.thread_context_filter import iter_irt_ancestors_filtered
@@ -106,8 +106,7 @@ def main(
             "(addressed to reasoning@localhost) in IRT chain"
         )
 
-    limit = config.enrich.context_max_chars
-    trimmed_summary, task_state_text = trimmed_crdt_state_texts(inner, limit=limit)
+    response_state_text, task_state_text = crdt_state_texts(inner)
     ops = crdt_ledger_state(inner).response_ops
 
     delta_msgs = collect_unified_delta_msgs(inner)
@@ -116,7 +115,7 @@ def main(
 
     spliced = splice_e_prev_with_history(
         e_prev,
-        response_state_text=trimmed_summary,
+        response_state_text=response_state_text,
         task_state_text=task_state_text,
         history_parts=history_parts,
         system_parts=system_parts,
@@ -131,7 +130,7 @@ def main(
     log.info(
         "spliced_history_parts",
         ops_count=len(ops),
-        response_state_chars=len(trimmed_summary),
+        response_state_chars=len(response_state_text),
         delta_msgs=len(delta_msgs),
         delta_history_parts=len(history_parts),
         delta_system_parts=len(system_parts),

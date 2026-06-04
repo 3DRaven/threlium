@@ -87,18 +87,6 @@ def _sort_email_messages_oldest_first(msgs: list[EmailMessage]) -> list[EmailMes
     return sorted(msgs, key=_ts)
 
 
-def trim_prompt_text(text: str, max_chars: int) -> str:
-    """Обрезка **с начала** строки при превышении лимита (старое уходит первым)."""
-    if max_chars <= 0 or len(text) <= max_chars:
-        return text
-    return text[-max_chars:]
-
-
-def trim_context_text(text: str, max_chars: int) -> str:
-    """Единая обрезка контекста enrich/reasoning: хвост, ``max_chars`` из ``enrich.context_max_chars``."""
-    return trim_prompt_text(text, max_chars)
-
-
 @dataclass(frozen=True)
 class UnifiedEmailContext:
     """Три бакета unified-контекста, сохраняющие разделение по источнику."""

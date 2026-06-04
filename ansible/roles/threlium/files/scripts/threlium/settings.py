@@ -637,11 +637,6 @@ class EnrichSettings(BaseModel):
     context_thread_n: int = Field(default=200, ge=1, description="Глубина треда для unified-контекста.")
     context_thread_memory_n: int = Field(default=100, ge=1, description="Глубина для thread memory.")
     context_global_n: int = Field(default=100, ge=1, description="Глубина глобальной памяти.")
-    context_max_chars: int = Field(
-        default=180_000,
-        ge=0,
-        description="Лимит символов контекста: enrich-промпты, исходящее MIME-тело, reasoning user prompt.",
-    )
 
     # --- Token budgets (единый токенайзер lightrag.tiktoken_model_name) ---
     model_context_tokens: int = Field(

@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from threlium.enrich_context import trim_context_text
 from threlium.mime_reform import EnrichContentId, EnrichPartId
 from threlium.response.collect import collect_ops
 from threlium.response.ops import ResponseOp
@@ -34,19 +33,19 @@ def crdt_ledger_state(inner: NotmuchMessageIdInner) -> CrdtLedgerState:
     )
 
 
-def trimmed_crdt_state_texts(inner: NotmuchMessageIdInner, *, limit: int) -> tuple[str, str]:
-    """Trimmed ``<response-state>`` and ``<task-state>`` texts from CRDT at ``inner``."""
+def crdt_state_texts(inner: NotmuchMessageIdInner) -> tuple[str, str]:
+    """Full ``<response-state>`` and ``<task-state>`` texts from CRDT at ``inner``."""
     state = crdt_ledger_state(inner)
-    response = trim_context_text(build_state_summary(list(state.response_ops)), limit)
-    task = trim_context_text(build_task_state_summary(state.task_ledger), limit)
+    response = build_state_summary(list(state.response_ops))
+    task = build_task_state_summary(state.task_ledger)
     return response, task
 
 
 def ledger_context_parts(
-    inner: NotmuchMessageIdInner, limit: int
+    inner: NotmuchMessageIdInner,
 ) -> list[tuple[EnrichContentId, str]]:
     """MIME part texts for ``<response-state>`` (enrich extra bucket)."""
-    response, _ = trimmed_crdt_state_texts(inner, limit=limit)
+    response, _ = crdt_state_texts(inner)
     parts: list[tuple[EnrichContentId, str]] = []
     if response:
         parts.append(
@@ -58,6 +57,6 @@ def ledger_context_parts(
 __all__ = [
     "CrdtLedgerState",
     "crdt_ledger_state",
+    "crdt_state_texts",
     "ledger_context_parts",
-    "trimmed_crdt_state_texts",
 ]

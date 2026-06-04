@@ -43,14 +43,12 @@ def main(
     )
 
     answer = str(result) if result else ""
-    max_chars = config.knowledge.observation_max_chars
-    truncated = answer[:max_chars] if answer else ""
 
     observation = render_prompt(
         PromptPath.MEMORY_QUERY_OBSERVATION,
         reasoning=payload.reasoning,
-        no_results=not truncated,
-        answer=truncated,
+        no_results=not answer.strip(),
+        answer=answer,
     ).strip()
 
     # Callee владеет историей: в память едут ЗАПРОС (что искали: payload.query, эхо с
