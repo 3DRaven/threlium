@@ -1,4 +1,4 @@
-"""E2e: enrich overflow (summarize_enabled) → summarize_context — TAIL контекста доходит до reasoning, HEAD нет."""
+"""E2e: enrich overflow → summarize_context — TAIL контекста доходит до reasoning, HEAD нет."""
 from __future__ import annotations
 
 from pathlib import Path

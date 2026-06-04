@@ -106,6 +106,7 @@ from .notmuch_assert import (
     assert_notmuch_thread_fully_in_stages,
     assert_notmuch_thread_has_messages_in_folders,
     assert_notmuch_thread_has_no_unread,
+    assert_notmuch_thread_stage_message_count_at_least,
     assert_notmuch_thread_tag_count,
     poll_notmuch_positive,
     poll_notmuch_thread_in_stage_folder,

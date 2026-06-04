@@ -434,6 +434,100 @@ sys.exit(0)
     )
 
 
+def assert_notmuch_thread_stage_message_count_at_least(
+    project_name: str,
+    *,
+    anchor_message_id: str,
+    stage_folder_id: str,
+    min_count: int = 2,
+    repo_root: Path | None = None,
+    poll_timeout: float | None = None,
+) -> None:
+    """В треде якоря не меньше ``min_count`` сообщений в ``folder:<stage>/Maildir``."""
+    if min_count < 1:
+        raise ValueError("min_count must be >= 1")
+    root = repo_root or REPO_ROOT
+    w = float(poll_timeout) if poll_timeout is not None else float(TIMEOUT_POLL_SHORT)
+    _id_q_lit = repr(notmuch_id_search_term(anchor_message_id))
+    sid_lit = repr(str(stage_folder_id).strip())
+    want = int(min_count)
+    py = f"""import json, os, subprocess, sys
+{REMOTE_PROBE_LOGGER_BOOT}os.environ.setdefault("HOME", "{E2E_REMOTE_POSIX_HOME}")
+os.environ.setdefault("NOTMUCH_CONFIG", "{E2E_REMOTE_POSIX_HOME}/.notmuch-config")
+id_q = {_id_q_lit}
+sid = {sid_lit}
+want = {want}
+def _first_thread(raw: str) -> str:
+    try:
+        payload = json.loads((raw or "").strip() or "[]")
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(payload, list) or not payload:
+        return ""
+    first = payload[0]
+    if isinstance(first, str):
+        tid = first.strip()
+    elif isinstance(first, dict):
+        tid = str(first.get("thread") or first.get("thread_id") or first.get("threadid") or "").strip()
+    else:
+        tid = ""
+    if not tid:
+        return ""
+    return tid if tid.startswith("thread:") else f"thread:{{tid}}"
+p = subprocess.run(
+    ["notmuch", "search", "--limit=1", "--output=threads", "--format=json", id_q],
+    capture_output=True,
+    text=True,
+)
+tid = _first_thread(p.stdout)
+if not tid:
+    sys.exit(2)
+q = f'{{tid}} AND folder:"{{sid}}/Maildir"'
+c = subprocess.run(["notmuch", "count", q], capture_output=True, text=True)
+try:
+    n = int((c.stdout or "0").strip() or "0")
+except ValueError:
+    n = 0
+if n < want:
+    _probe_out.info("NOTMUCH_THREAD_STAGE_COUNT n=" + str(n) + " want=" + str(want) + " q=" + repr(q))
+    sys.exit(5)
+sys.exit(0)
+"""
+    cmd = ["bash", "-lc", "python3 <<'PY'\n" + py + "\nPY"]
+    last: dict[str, Any] = {"r": None}
+
+    def _probe() -> bool | None:
+        r = service_exec(
+            project_name,
+            "sut",
+            cmd,
+            repo_root=root,
+            timeout=int(TIMEOUT_POLL_SHORT),
+        )
+        last["r"] = r
+        return True if r.returncode == 0 else None
+
+    try:
+        poll_until(
+            _probe,
+            timeout=w,
+            interval=2.0,
+            desc=(
+                f"notmuch thread stage count >= {min_count} "
+                f"(anchor={anchor_message_id!r}, stage={stage_folder_id!r})"
+            ),
+        )
+    except TimeoutError:
+        r = last["r"]
+        out = ""
+        if r is not None:
+            out = f"\nscript output:\n{r.stdout}\n{r.stderr}"
+        raise AssertionError(
+            f"notmuch thread had fewer than {min_count} messages in folder "
+            f"{stage_folder_id!r} within {w}s (anchor={anchor_message_id!r}).{out}"
+        ) from None
+
+
 def assert_notmuch_folder_contains_body_token(
     project_name: str,
     *,

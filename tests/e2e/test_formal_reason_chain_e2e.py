@@ -46,6 +46,7 @@ from .toolkit import (
     REPO_ROOT,
     assert_full_mailflow_pipeline,
     assert_notmuch_folder_contains_body_token,
+    assert_notmuch_thread_stage_message_count_at_least,
     discover_runtime,
     dump_failure_artifacts,
     mailflow_inject_and_wait,
@@ -125,7 +126,7 @@ def test_formal_reason_chain_full_pipeline(
     with mailflow_inject_and_wait(FORMAL_REASON_CHAIN_SPEC, e2e_runtime.project_name) as (
         project,
         raw_id,
-        _canonical_id,
+        canonical_id,
         nm_inner,
         stub_tag,
         correlation_key,
@@ -163,6 +164,13 @@ def test_formal_reason_chain_full_pipeline(
                 stage_folder_id=FsmStage.REASONING.value,
                 body_token=E2E_UNIFIED_DELTA_NOTMUCH_TOKEN,
                 min_count=1,
+                repo_root=REPO_ROOT,
+            )
+            assert_notmuch_thread_stage_message_count_at_least(
+                project,
+                anchor_message_id=canonical_id,
+                stage_folder_id=FsmStage.ENRICH.value,
+                min_count=2,
                 repo_root=REPO_ROOT,
             )
         except Exception:
