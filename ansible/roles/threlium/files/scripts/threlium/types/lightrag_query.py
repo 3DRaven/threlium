@@ -124,7 +124,6 @@ class GraphAnswerView(msgspec.Struct, frozen=True):
     answer: str | None
     entities: tuple[GraphAnswerEntityRow, ...]
     relations: tuple[GraphAnswerRelationRow, ...]
-    include_mermaid: bool
 
     def has_subgraph(self) -> bool:
         return bool(self.entities or self.relations)
@@ -139,6 +138,7 @@ class GraphAnswerView(msgspec.Struct, frozen=True):
                     "name": e.name,
                     "type": e.type,
                     "description": e.description,
+                    "mermaid_label": _entity_mermaid_label(e.name, e.type, e.description),
                 }
                 for e in self.entities
             ],
@@ -151,10 +151,12 @@ class GraphAnswerView(msgspec.Struct, frozen=True):
                     "tgt_node": r.tgt_node,
                     "description": r.description,
                     "keywords": r.keywords,
+                    "mermaid_edge_label": _relation_mermaid_edge_label(
+                        r.keywords, r.description
+                    ),
                 }
                 for r in self.relations
             ],
-            "include_mermaid": self.include_mermaid,
         }
 
     @classmethod
@@ -167,7 +169,6 @@ class GraphAnswerView(msgspec.Struct, frozen=True):
         max_entities: int,
         max_relations: int,
         desc_max_chars: int,
-        include_mermaid: bool,
     ) -> Self:
         name_to_node: dict[str, str] = {}
         entity_rows: list[GraphAnswerEntityRow] = []
@@ -206,8 +207,25 @@ class GraphAnswerView(msgspec.Struct, frozen=True):
             answer=answer_stripped,
             entities=tuple(entity_rows),
             relations=tuple(relation_rows),
-            include_mermaid=include_mermaid,
         )
+
+
+def _mermaid_label(text: str) -> str:
+    """Экранирование display-лейбла для mermaid flowchart (узлы и рёбра)."""
+    s = " ".join(text.split())
+    return s.replace('"', "'").replace("|", "/")
+
+
+def _entity_mermaid_label(name: str, entity_type: str, description: str) -> str:
+    base = f"{name} ({entity_type})"
+    if description.strip():
+        return _mermaid_label(f"{base}: {description}")
+    return _mermaid_label(base)
+
+
+def _relation_mermaid_edge_label(keywords: str, description: str) -> str:
+    raw = keywords.strip() or description.strip()
+    return _mermaid_label(raw) if raw else ""
 
 
 def _truncate_desc(text: str, max_chars: int) -> str:

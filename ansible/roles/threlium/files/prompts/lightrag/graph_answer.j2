@@ -1,32 +1,20 @@
 {#- LLM-facing prose sample of LightRAG retrieval for <graph-answer> (enrich → reasoning).
     Kwargs from GraphAnswerView.for_graph_answer_jinja(); not the internal kg_query_context overlay.
 -#}
-Graph query: {{ formulated_query }}
-
-{% if include_mermaid and (entities or relations) %}
+{% if entities or relations %}
 ```mermaid
 flowchart LR
 {% for e in entities %}
-    {{ e.id }}["{{ e.name | replace('"', "'") }}"]
+    {{ e.id }}["{{ e.mermaid_label }}"]
 {% endfor %}
 {% for r in relations %}
-    {{ r.src_node }} -->|{{ r.id }}| {{ r.tgt_node }}
+{% if r.mermaid_edge_label %}
+    {{ r.src_node }} -->|{{ r.mermaid_edge_label }}| {{ r.tgt_node }}
+{% else %}
+    {{ r.src_node }} --> {{ r.tgt_node }}
+{% endif %}
 {% endfor %}
 ```
-{% endif %}
-
-{% if entities %}
-## Entities
-{% for e in entities %}
-- {{ e.id }}: {{ e.name }} ({{ e.type }}) — {{ e.description }}
-{% endfor %}
-{% endif %}
-
-{% if relations %}
-## Relationships
-{% for r in relations %}
-- {{ r.id }}: {{ r.src_id }} → {{ r.tgt_id }}{% if r.keywords %} [{{ r.keywords }}]{% endif %} — {{ r.description }}
-{% endfor %}
 {% endif %}
 
 {% if answer %}

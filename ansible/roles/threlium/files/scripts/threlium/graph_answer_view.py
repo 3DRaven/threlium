@@ -91,7 +91,6 @@ def build_graph_answer_view(
             answer=answer,
             entities=(),
             relations=(),
-            include_mermaid=limits.graph_answer_include_mermaid,
         )
 
     if not isinstance(raw, dict):
@@ -108,7 +107,6 @@ def build_graph_answer_view(
         max_entities=limits.graph_answer_max_entities,
         max_relations=limits.graph_answer_max_relations,
         desc_max_chars=limits.graph_answer_desc_max_chars,
-        include_mermaid=limits.graph_answer_include_mermaid,
     )
     if not view.has_subgraph() and not view.answer:
         return None

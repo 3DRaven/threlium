@@ -685,10 +685,6 @@ class EnrichSettings(BaseModel):
         ge=0,
         description="Усечение description entity/relation в <graph-answer>.",
     )
-    graph_answer_include_mermaid: bool = Field(
-        default=True,
-        description="Включать блок mermaid в prose <graph-answer> при непустом subgraph.",
-    )
 
     # Базовый вес сообщения теперь — X-Threlium-Content-Score его <history>-части
     # (скоринг отправителя), оператор настраивает через HistorySettings.score_by_stage.
