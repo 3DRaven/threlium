@@ -38,7 +38,9 @@ FORMAL_REASON_INFERENCE_SPEC = MailflowScenarioSpec(
         f"{E2E_FORMAL_REASON_INFERENCE_BODY}\n"
         "e2e formal_reason inference derived triples test body"
     ),
-    min_chat_completion_posts=3,
+    min_chat_completion_posts=4,
+    min_reasoning_chat_completion_posts=2,
+    wiremock_journal_ready_needle="call_e2e_tasks_ledger_phase_formal_reason_done_ledger_done",
     min_embedding_posts=1,
     min_rerank_posts=0,
     expect_notmuch_stage_folders=(
