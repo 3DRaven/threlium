@@ -147,7 +147,7 @@ flowchart LR
 
 Legacy read CID `<unified-mail-context>` **удалён**. `splice_e_prev_with_history` **пропускает** старый blob при копировании `E_prev`.
 
-Глобальный cap в [`reasoning.py`](../../ansible/roles/threlium/files/scripts/threlium/states/reasoning.py): `trim_from_end_tokens(..., reasoning_effective_budget)` на собранный user prompt.
+Token-gate reasoning-контекста: [`enrich.py`](../../ansible/roles/threlium/files/scripts/threlium/states/enrich.py) ledger + overflow → `summarize_context`; [`enrich_fast.py`](../../ansible/roles/threlium/files/scripts/threlium/states/enrich_fast.py) `backpack_token_total` → `enrich@` при переполнении spliced-backpack. [`reasoning.py`](../../ansible/roles/threlium/files/scripts/threlium/states/reasoning.py) user prompt по токенам **не** режет.
 
 ---
 

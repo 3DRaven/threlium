@@ -106,7 +106,7 @@ flowchart LR
 |---|---|:--:|:--:|:--:|---|
 | `ingress` | `enrich` (или `cli_resume`) | — | да | **нет** | **Только bridge + HITL router:** distill gateway (`From:` email/telegram/matrix@localhost) → `enrich` с `<user-query>` + distill `<history>`; HITL → `cli_resume` только `<system>`. Internal стадии в ingress **не** эмитят. |
 | `enrich` | `reasoning` / `summarize_context` | — | — | да² | → `reasoning`: **`<system>` НЕТ** — backpack (§4): core-CID + гранулярные `<history>` leaf; reasoning собирает `<conversation_history>` из частей без `X-Threlium-Origin`, `<conversation_delta>` — с origin (enrich_fast). ²Только → `summarize_context` есть `<system>`. |
-| `enrich_fast` | `reasoning` | — | — | **релей** | Relay-сборщик дельты: `<history>` + `<system>` из окна (штампует `origin`); replace `<response-state>`/`<task-state>`. Старые `@system` из `E_prev` не копируются — только свежие из дельты. `reasoning` не кладёт их в LLM-промпт, но читает для FSM gate (`formal_reason`). |
+| `enrich_fast` | `reasoning` / `enrich` | — | — | **релей** | Relay-сборщик дельты: `<history>` + `<system>` из окна (штампует `origin`); replace `<response-state>`/`<task-state>`. Старые `@system` из `E_prev` не копируются — только свежие из дельты. При `backpack_token_total(spliced) > reasoning_effective_budget` → **`enrich@`** (canonical `user_query` по IRT). Иначе → `reasoning`; `reasoning` не кладёт `<system>` в LLM-промпт, но читает для FSM gate (`formal_reason`). Token-trim на стадии reasoning **нет**. |
 | `reasoning` | tool | **нет** | **нет** | да | Чистый `<system>`-эмиттер tool-call (команда адресату). История — забота callee. На ВХОДЕ сам `<system>` не читает. |
 
 > **`<system>` на входе `reasoning` не нужен.** `reasoning` собирает контекст из core-CID частей
