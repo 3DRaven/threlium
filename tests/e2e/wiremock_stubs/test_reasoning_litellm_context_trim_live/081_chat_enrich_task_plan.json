@@ -42,7 +42,7 @@
                 "type": "function",
                 "function": {
                   "name": "enrich_task_plan",
-                  "arguments": "{\"subtasks\": [\"Address the user request for this e2e scenario\"]}"
+                  "arguments": "{\"subtasks\": [\"Complete the user request\"]}"
                 }
               }
             ]
