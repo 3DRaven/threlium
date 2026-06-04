@@ -1,24 +1,32 @@
-"""Formal_reason gate: read ``<system origin=formal_reason>`` on reasoning ingress."""
+"""Formal_reason gate: ``FormalReasonResultPayload`` from IRT delta (reasoning hop window)."""
 from __future__ import annotations
 
 from email.message import EmailMessage
 
+from threlium.enrich_context import message_inner_from_email
+from threlium.irt_chain import IrtAncestorSnapshot
 from threlium.knowledge_fsm import parse_formal_reason_result_payload
+from threlium.logutil import logger
+from threlium.mail import email_message_from_path
 from threlium.mime_reform import (
     iter_system_parts,
     part_origin_stage,
     system_leaf_part_text,
+    system_part_text,
 )
+from threlium.thread_context_filter import iter_irt_ancestors_filtered
 from threlium.types import (
     FormalReasonErrorKind,
     FormalReasonOutcome,
     FormalReasonResultPayload,
     FsmStage,
     MailHeaderName,
+    NotmuchMessageIdInner,
     RfcMessageIdWire,
 )
 
 _HDR = MailHeaderName
+log = logger.bind(component="formal_reason_gate")
 
 
 def compute_formal_reason_outcome(
@@ -55,18 +63,70 @@ def require_formal_reason_result_payload(
         mid = message_id or "?"
         raise RuntimeError(
             "formal_reason gate: invalid FormalReasonResultPayload in "
-            f"<system origin=formal_reason> (message_id={mid!r}, content_id={content_id!r})"
+            f"<system> (message_id={mid!r}, content_id={content_id!r})"
         )
     return parsed
+
+
+def formal_reason_result_from_formal_reason_email(
+    msg: EmailMessage,
+) -> FormalReasonResultPayload | None:
+    """``FormalReasonResultPayload`` из единственной ``<system>`` на письме formal_reason→enrich_fast."""
+    mid = _message_id_wire(msg)
+    try:
+        body = system_part_text(msg).strip()
+    except RuntimeError:
+        return None
+    if not body:
+        return None
+    parts = iter_system_parts(msg)
+    cid = parts[0][0].value if parts else "<system>"
+    return require_formal_reason_result_payload(
+        body, content_id=cid, message_id=mid
+    )
+
+
+def _latest_formal_reason_output_snap(
+    leaf_inner: NotmuchMessageIdInner,
+) -> IrtAncestorSnapshot | None:
+    """Новейший hop ``formal_reason@`` в IRT-окне (лист reasoning → watermark ``To: reasoning``)."""
+    found: IrtAncestorSnapshot | None = None
+    for snap in iter_irt_ancestors_filtered(leaf_inner):
+        if snap.is_addressed_to_fsm_stage(FsmStage.REASONING):
+            break
+        if snap.is_sent_from_fsm_stage(FsmStage.FORMAL_REASON):
+            found = snap
+            break
+    return found
+
+
+def formal_reason_result_from_irt_delta(
+    leaf_inner: NotmuchMessageIdInner,
+) -> FormalReasonResultPayload | None:
+    """Machine payload последнего ``formal_reason`` в дельте текущего reasoning-hop."""
+    snap = _latest_formal_reason_output_snap(leaf_inner)
+    if snap is None:
+        return None
+    try:
+        hop_msg = email_message_from_path(snap.path)
+    except OSError as exc:
+        log.warning(
+            "formal_reason_irt_load_failed",
+            path=str(snap.path),
+            message_id=snap.message_id_inner.value,
+            exc_msg=str(exc),
+        )
+        return None
+    return formal_reason_result_from_formal_reason_email(hop_msg)
 
 
 def formal_reason_result_from_reasoning_envelope(
     msg: EmailMessage,
 ) -> FormalReasonResultPayload | None:
-    """Последний валидный ``<system origin=formal_reason>`` на письме enrich_fast→reasoning.
+    """Последний relayed ``<system origin=formal_reason>`` на spliced enrich_fast→reasoning.
 
-  На практике после splice в дельте одна такая часть; при обходе берётся последний
-  в ``iter_system_parts``. Любая непустая formal_reason ``<system>`` обязана парситься.
+    Используется ``assert_formal_reason_relay_after_splice`` (fast path); gate — IRT (см.
+    :func:`formal_reason_result_from_irt_delta`).
     """
     mid = _message_id_wire(msg)
     last: FormalReasonResultPayload | None = None
@@ -118,8 +178,19 @@ def assert_formal_reason_relay_after_splice(
 
 
 def formal_reason_gate_active(msg: EmailMessage) -> bool:
-    r = formal_reason_result_from_reasoning_envelope(msg)
-    return r is not None and r.outcome is FormalReasonOutcome.TECHNICAL_FAILED
+    inner = message_inner_from_email(msg)
+    if inner is None:
+        log.debug("formal_reason_gate_inactive", reason="no_message_id_inner")
+        return False
+    r = formal_reason_result_from_irt_delta(inner)
+    active = r is not None and r.outcome is FormalReasonOutcome.TECHNICAL_FAILED
+    log.debug(
+        "formal_reason_gate",
+        active=active,
+        outcome=r.outcome.value if r is not None else None,
+        leaf_inner=inner.value,
+    )
+    return active
 
 
 __all__ = [
@@ -127,6 +198,8 @@ __all__ = [
     "compute_formal_reason_outcome",
     "delta_had_formal_reason",
     "formal_reason_gate_active",
+    "formal_reason_result_from_formal_reason_email",
+    "formal_reason_result_from_irt_delta",
     "formal_reason_result_from_reasoning_envelope",
     "require_formal_reason_result_payload",
 ]
