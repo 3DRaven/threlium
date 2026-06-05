@@ -37,6 +37,7 @@ from threlium.context_token_count import (
 from threlium.enrich_context import (
     build_unified_email_messages,
     message_inner_from_email,
+    resolve_frame_user_turn,
     UnifiedEmailContext,
 )
 from threlium.graph_answer_view import format_graph_answer_part
@@ -523,7 +524,8 @@ def _emit_summarize_overflow(
     # Канонический ход = <user-query> CID текущего enrich-листа (не последняя <history>);
     # суммаризация его не меняет — тот же текст по enrich → summarize_context (<system>)
     # → summarize_memory → re-trigger enrich (CONTEXT_CONTRACT §5).
-    user_query = require_enrich_user_query_text(msg).value
+    _mid_w, inner = require_fsm_message_id(msg, "enrich")
+    user_query = resolve_frame_user_turn(inner).value
     payload = msgspec.json.encode(
         SummarizeContextStagePayload(
             summarize=SummarizeContextBatch(units=selected),
@@ -588,9 +590,11 @@ def main(
 
     tokenizer = build_tokenizer(config)
 
+    user_turn = resolve_frame_user_turn(inner)
     user_message_text = render_prompt(
         PromptPath.LIGHTRAG_ENRICH_INCOMING_USER_TEXT,
         incoming=msg,
+        user_turn_text=user_turn.value,
     ).strip()
     if not user_message_text:
         raise RuntimeError(

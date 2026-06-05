@@ -9,4 +9,4 @@ Subject: {{ incoming.get('Subject', '') }}
 Message-ID: {{ incoming.get('Message-ID', '') }}
 In-Reply-To: {{ incoming.get('In-Reply-To', '') }}
 
-{{ incoming | user_query_text }}
+{{ user_turn_text }}

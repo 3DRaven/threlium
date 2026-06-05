@@ -4,7 +4,7 @@ from __future__ import annotations
 import itertools
 from dataclasses import dataclass
 from email.message import EmailMessage
-from email.utils import parsedate_to_datetime
+from email.utils import parsedate_to_datetime, getaddresses
 from pathlib import Path
 
 from threlium import nm
@@ -12,6 +12,7 @@ from threlium.logutil import logger
 from threlium.settings import ThreliumSettings
 from threlium.thread_context_filter import iter_irt_ancestors_filtered
 from threlium.mail import email_message_from_path
+from threlium.ingress_bridge_user_query import enrich_user_query_from_bridge_system
 from threlium.mime_reform import (
     EnrichContentId,
     EnrichPartId,
@@ -45,6 +46,50 @@ def message_inner_from_email(msg: EmailMessage) -> NotmuchMessageIdInner | None:
     if w is None:
         return None
     return NotmuchMessageIdInner.from_optional_wire(w)
+
+
+def resolve_frame_user_turn(
+    inner: NotmuchMessageIdInner,
+    *,
+    incoming_msg: EmailMessage | None = None,
+    e_prev: EmailMessage | None = None,
+) -> EnrichUserQueryText:
+    """Stable frame anchor user turn (from ingress bridge or subagent_intent success)."""
+    # 1. IRT frame-isolated: enrich@ с <user-query> до STOP subagent_intent (skip==0)
+    for snap in iter_irt_ancestors_filtered(inner):
+        if not snap.is_addressed_to_fsm_stage(FsmStage.ENRICH):
+            continue
+        if snap.is_sent_from_fsm_stage(FsmStage.INGRESS) or snap.is_sent_from_fsm_stage(FsmStage.SUBAGENT_INTENT):
+            try:
+                m = email_message_from_path(snap.path)
+                return require_enrich_user_query_text(m)
+            except Exception:
+                continue
+
+    # 2. L0 fallback: tag:route + bridge From (skip archive-glue From: egress_*) -> <system> bridge
+    for snap in iter_irt_ancestors_filtered(inner):
+        if NotmuchTag.ROUTE.value in snap.tags:
+            from_hdr = snap.header_from.value if snap.header_from is not None else ""
+            addresses = getaddresses([from_hdr])
+            if addresses:
+                addr = addresses[0][1].lower()
+                if not addr.startswith("egress_"):
+                    try:
+                        m = email_message_from_path(snap.path)
+                        return enrich_user_query_from_bridge_system(m)
+                    except Exception:
+                        pass
+
+    # 3. e_prev fallback: <user-message> - only if e_prev is provided
+    if e_prev is not None:
+        raw = extract_part_by_content_id(e_prev, EnrichPartId.USER_MESSAGE)
+        if raw and raw.strip():
+            return EnrichUserQueryText.require(name="user-message", raw=raw)
+
+    # 4. Miss -> RuntimeError
+    raise RuntimeError(
+        "resolve_frame_user_turn: could not find stable user turn anchor in IRT chain"
+    )
 
 
 def resolve_canonical_user_query(
@@ -157,6 +202,17 @@ def build_unified_email_messages(
     # Лист (текущий ingress→enrich) включаем: distill-метаданные в unified с первого хода;
     # ``user_query`` может кратко дублировать ``<user-message>`` (последняя history).
     _summarized_tag = NotmuchTag.CONTEXT_SUMMARIZED.value
+    summarized_cids: set[EnrichContentId] = set()
+    for snap in tail_snaps:
+        if _summarized_tag in snap.tags:
+            try:
+                m = email_message_from_path(snap.path)
+                for cid, _part in iter_history_parts(m):
+                    summarized_cids.add(cid)
+            except OSError as exc:
+                log.warning("summarized_load_path_skipped", path=str(snap.path), exc_msg=str(exc))
+                continue
+
     seen_cids: set[EnrichContentId] = set()
     seen_mids: set[str] = set()
     kept: list[EmailMessage] = []
@@ -173,6 +229,19 @@ def build_unified_email_messages(
         except OSError as exc:
             log.warning("unified_load_path_skipped", path=str(snap.path), exc_msg=str(exc))
             continue
+
+        # Filter out history parts that are in summarized_cids
+        if m.is_multipart():
+            parts = m.get_payload()
+            if isinstance(parts, list):
+                new_parts = []
+                for part in parts:
+                    cid = EnrichContentId.from_mime_part(part)
+                    if cid is not None and cid.family is EnrichPartId.HISTORY and cid in summarized_cids:
+                        continue
+                    new_parts.append(part)
+                m.set_payload(new_parts)
+
         # Содержательность — строго предикат message_has_history (≥1 непустая <history>),
         # без get_body / «первый text/plain» (CONTEXT_CONTRACT §5).
         if not message_has_history(m):

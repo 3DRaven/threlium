@@ -25,7 +25,7 @@ from threlium.context_token_count import (
     build_tokenizer,
     reasoning_effective_budget,
 )
-from threlium.enrich_context import collect_unified_delta_msgs, resolve_canonical_user_query
+from threlium.enrich_context import collect_unified_delta_msgs, resolve_frame_user_turn
 from threlium.formal_reason_gate import assert_formal_reason_relay_after_splice
 from threlium.fsm_emit import emit_transition_preserving_payload
 from threlium.fsm_emit_semantic import emit_to_enrich, managed_patch_simple_fsm_step
@@ -149,7 +149,7 @@ def main(
         excess=total - budget,
     )
     if total > budget:
-        user_query = resolve_canonical_user_query(inner, e_prev=e_prev)
+        user_query = resolve_frame_user_turn(inner, e_prev=e_prev)
         log.info("relay_overflow_to_enrich", total_tokens=total, effective_budget=budget)
         return emit_to_enrich(
             msg,
