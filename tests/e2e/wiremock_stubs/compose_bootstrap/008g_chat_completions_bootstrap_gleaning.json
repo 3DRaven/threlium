@@ -39,7 +39,7 @@
                 "type": "function",
                 "function": {
                   "name": "extract_knowledge_graph_gleaning",
-                  "arguments": "{\"entities\": [], \"relations\": []}"
+                  "arguments": "{\"entities\": [], \"relationships\": []}"
                 }
               }
             ]

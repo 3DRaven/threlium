@@ -1,0 +1,60 @@
+{
+ "request": {
+  "method": "POST",
+  "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
+  "headers": {
+   "X-Threlium-Call-Site": {
+    "equalTo": "ingress_distill"
+   }
+  },
+  "bodyPatterns": [
+   {
+    "matches": "(?s).*(openai/threlium_e2e_l0|threlium_e2e_l0).*"
+   },
+   {
+    "contains": "\"tools\""
+   },
+   {
+    "contains": "ingress_distill"
+   }
+  ],
+  "customMatcher": {
+   "name": "state-matcher",
+   "parameters": {
+    "hasContext": "stub-isomorph-anthropic-json-e2e-01::{{request.headers.[X-Threlium-Thread-Root]}}"
+   }
+  }
+ },
+ "response": {
+  "status": 200,
+  "headers": {
+   "Content-Type": "application/json"
+  },
+  "jsonBody": {
+   "id": "chatcmpl-e2e-ingress-distill",
+   "object": "chat.completion",
+   "created": 0,
+   "model": "gpt-4o-mini",
+   "choices": [
+    {
+     "index": 0,
+     "finish_reason": "tool_calls",
+     "message": {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+       {
+        "id": "call_ingress_distill_e2e",
+        "type": "function",
+        "function": {
+         "name": "ingress_distill",
+         "arguments": "{\"user_intent\":\"The user asks to solve the alchemist river crossing logic puzzle: move all listed entities across a river under given safety constraints and produce a valid crossing sequence.\",\"user_reply_language\":\"Russian\",\"open_gaps\":[],\"step_back_notes\":[\"Deliver puzzle solution; standalone new thread.\"]}"
+        }
+       }
+      ]
+     }
+    }
+   ]
+  }
+ }
+}

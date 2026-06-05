@@ -1,0 +1,60 @@
+{
+ "request": {
+  "method": "POST",
+  "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
+  "headers": {
+   "X-Threlium-Call-Site": {
+    "equalTo": "extract_knowledge_graph"
+   }
+  },
+  "bodyPatterns": [
+   {
+    "matches": "(?s).*(openai/threlium_e2e_l0|threlium_e2e_l0).*"
+   },
+   {
+    "matches": "(?s)X-Threlium-LightRAG-Chunk:\\s*\\d+"
+   },
+   {
+    "contains": "\"tools\""
+   }
+  ],
+  "customMatcher": {
+   "name": "state-matcher",
+   "parameters": {
+    "hasContext": "stub-isomorph-openai-cline-e2e-01::{{request.headers.[X-Threlium-Thread-Root]}}"
+   }
+  }
+ },
+ "response": {
+  "status": 200,
+  "headers": {
+   "Content-Type": "application/json"
+  },
+  "jsonBody": {
+   "id": "chatcmpl-e2e-wiremock-entity",
+   "object": "chat.completion",
+   "created": 0,
+   "model": "gpt-4o-mini",
+   "choices": [
+    {
+     "index": 0,
+     "finish_reason": "tool_calls",
+     "message": {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+       {
+        "id": "call_lightrag_071_chat_lightrag_entity_chunk",
+        "type": "function",
+        "function": {
+         "name": "extract_knowledge_graph",
+         "arguments": "{\"entities\": [{\"name\": \"E2e Stub Entity\", \"type\": \"concept\", \"description\": \"Synthetic entity for deterministic e2e mock.\"}], \"relationships\": []}"
+        }
+       }
+      ]
+     }
+    }
+   ]
+  }
+ }
+}

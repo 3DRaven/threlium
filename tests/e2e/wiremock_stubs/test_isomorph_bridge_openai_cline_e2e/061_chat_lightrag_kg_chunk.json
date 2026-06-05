@@ -1,0 +1,63 @@
+{
+ "request": {
+  "method": "POST",
+  "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
+  "headers": {
+   "X-Threlium-Call-Site": {
+    "equalTo": "generate_rag_answer"
+   }
+  },
+  "bodyPatterns": [
+   {
+    "matches": "(?s).*(openai/threlium_e2e_l0|threlium_e2e_l0).*"
+   },
+   {
+    "matches": "(?s)X-Threlium-LightRAG-Chunk:\\s*\\d+"
+   },
+   {
+    "contains": "Knowledge Graph Data (Entity):"
+   },
+   {
+    "contains": "\"tools\""
+   }
+  ],
+  "customMatcher": {
+   "name": "state-matcher",
+   "parameters": {
+    "hasContext": "stub-isomorph-openai-cline-e2e-01::{{request.headers.[X-Threlium-Thread-Root]}}"
+   }
+  }
+ },
+ "response": {
+  "status": 200,
+  "headers": {
+   "Content-Type": "application/json"
+  },
+  "jsonBody": {
+   "id": "chatcmpl-e2e-wiremock-kg-query",
+   "object": "chat.completion",
+   "created": 0,
+   "model": "gpt-4o-mini",
+   "choices": [
+    {
+     "index": 0,
+     "finish_reason": "tool_calls",
+     "message": {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+       {
+        "id": "call_lightrag_061_chat_lightrag_kg_chunk",
+        "type": "function",
+        "function": {
+         "name": "generate_rag_answer",
+         "arguments": "{\"answer\": \"(no graph context)\"}"
+        }
+       }
+      ]
+     }
+    }
+   ]
+  }
+ }
+}

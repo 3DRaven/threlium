@@ -48,7 +48,7 @@
                 "type": "function",
                 "function": {
                   "name": "extract_knowledge_graph",
-                  "arguments": "{\"entities\": [{\"name\": \"E2e Response Buffer Entity\", \"type\": \"concept\", \"description\": \"Synthetic entity for response buffer e2e.\"}], \"relations\": []}"
+                  "arguments": "{\"entities\": [{\"name\": \"E2e Response Buffer Entity\", \"type\": \"concept\", \"description\": \"Synthetic entity for response buffer e2e.\"}], \"relationships\": []}"
                 }
               }
             ]

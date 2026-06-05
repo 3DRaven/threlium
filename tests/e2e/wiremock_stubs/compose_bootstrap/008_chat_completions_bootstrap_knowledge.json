@@ -40,7 +40,7 @@
                 "type": "function",
                 "function": {
                   "name": "extract_knowledge_graph",
-                  "arguments": "{\"entities\": [{\"name\": \"E2e Bootstrap Entity\", \"type\": \"concept\", \"description\": \"Synthetic entity from knowledge bootstrap indexing.\"}], \"relations\": []}"
+                  "arguments": "{\"entities\": [{\"name\": \"E2e Bootstrap Entity\", \"type\": \"concept\", \"description\": \"Synthetic entity from knowledge bootstrap indexing.\"}], \"relationships\": []}"
                 }
               }
             ]

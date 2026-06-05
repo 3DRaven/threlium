@@ -48,7 +48,7 @@
                 "type": "function",
                 "function": {
                   "name": "extract_knowledge_graph",
-                  "arguments": "{\"entities\": [{\"name\": \"E2e Stub Entity\", \"type\": \"concept\", \"description\": \"Synthetic entity for deterministic e2e mock.\"}], \"relations\": []}"
+                  "arguments": "{\"entities\": [{\"name\": \"E2e Stub Entity\", \"type\": \"concept\", \"description\": \"Synthetic entity for deterministic e2e mock.\"}], \"relationships\": []}"
                 }
               }
             ]

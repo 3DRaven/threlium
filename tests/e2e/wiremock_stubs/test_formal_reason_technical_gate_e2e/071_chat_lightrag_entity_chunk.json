@@ -48,7 +48,7 @@
                 "type": "function",
                 "function": {
                   "name": "extract_knowledge_graph",
-                  "arguments": "{\"entities\": [{\"name\": \"E2e Knowledge Update Entity\", \"type\": \"concept\", \"description\": \"Synthetic entity for knowledge update query e2e.\"}], \"relations\": []}"
+                  "arguments": "{\"entities\": [{\"name\": \"E2e Knowledge Update Entity\", \"type\": \"concept\", \"description\": \"Synthetic entity for knowledge update query e2e.\"}], \"relationships\": []}"
                 }
               }
             ]

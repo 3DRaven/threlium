@@ -46,7 +46,7 @@
                 "type": "function",
                 "function": {
                   "name": "extract_knowledge_graph",
-                  "arguments": "{\"entities\": [], \"relations\": []}"
+                  "arguments": "{\"entities\": [], \"relationships\": []}"
                 }
               }
             ]

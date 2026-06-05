@@ -45,7 +45,7 @@
                 "type": "function",
                 "function": {
                   "name": "extract_knowledge_graph",
-                  "arguments": "{\"entities\": [{\"name\": \"E2e Logic Validate Entity\", \"type\": \"concept\", \"description\": \"Synthetic entity for formal_reason chain e2e.\"}], \"relations\": []}"
+                  "arguments": "{\"entities\": [{\"name\": \"E2e Logic Validate Entity\", \"type\": \"concept\", \"description\": \"Synthetic entity for formal_reason chain e2e.\"}], \"relationships\": []}"
                 }
               }
             ]
