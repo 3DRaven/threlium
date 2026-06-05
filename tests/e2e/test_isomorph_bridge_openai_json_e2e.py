@@ -138,7 +138,14 @@ def test_isomorph_bridge_openai_json_multiturn_continuity(isomorph_json: E2EComp
         composite_context_key(_STUB_TAG, _thread_root()),
     )
     body2 = build_continuation_body(_SURFACE, _BODY, reply1, f"continue [{_MARKER}]")
-    s2, r2 = bridge_post_json(rt, port=_ISO_PORT, path=_PATH, body=body2, api_key=_API_KEY, surface=_SURFACE)
+    # Мост может вернуть 409 "prior turn still in flight" (под -n2 фоновые стадии хода-1 ещё дорабатывают) —
+    # штатный in-work-контракт с инструкцией "retry after its reply". 409 НЕ создаёт ingress (отказ до
+    # обработки), поэтому ретраи не дублируют ход. Ретраим, пока ход-2 не примут.
+    def _post_turn2() -> tuple[int, str] | None:
+        s, r = bridge_post_json(rt, port=_ISO_PORT, path=_PATH, body=body2, api_key=_API_KEY, surface=_SURFACE)
+        return (s, r) if s != 409 else None
+
+    s2, r2 = poll_until(_post_turn2, timeout=TIMEOUT_POLL_LIVE_MAIL, desc="turn-2 accepted (not 409 in-work)")
     assert s2 == 200, r2
     assert _REPLY_MARKER in extract_reply_text(_SURFACE, r2), r2
 

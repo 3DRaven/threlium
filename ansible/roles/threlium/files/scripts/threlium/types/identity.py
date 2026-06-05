@@ -110,10 +110,31 @@ class IsomorphContentId(msgspec.Struct, frozen=True):
     content_hash: NonEmptyStr
 
 
-NativeId = EmailNativeId | TelegramNativeId | MatrixNativeId | IsomorphContentId
+class IsomorphSnowflakeId(msgspec.Struct, frozen=True):
+    """Снежинка-идентичность isomorph-сообщения для канонического ``<b62@localhost>``.
+
+    ``snowflake`` — уникальный 63-битный k-сортируемый id (``time|instance|seq``), генерируемый
+    мостом/egress на приёме/ответе. В ОТЛИЧИЕ от :class:`IsomorphContentId` (контент-хеш) даёт
+    уникальный MID независимо от тела — идентичные сообщения НЕ сливаются в notmuch (коллизий нет
+    в корне). Тред-непрерывность: egress кладёт ``snowflake`` glue в невидимый водяной знак ответа;
+    мост декодит его из last-assistant следующего хода → ``In-Reply-To`` (без content-голосования).
+    """
+
+    v: int
+    snowflake: int
+
+
+NativeId = (
+    EmailNativeId | TelegramNativeId | MatrixNativeId | IsomorphContentId | IsomorphSnowflakeId
+)
 
 TNative = TypeVar(
-    "TNative", EmailNativeId, TelegramNativeId, MatrixNativeId, IsomorphContentId
+    "TNative",
+    EmailNativeId,
+    TelegramNativeId,
+    MatrixNativeId,
+    IsomorphContentId,
+    IsomorphSnowflakeId,
 )
 
 

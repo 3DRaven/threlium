@@ -1,18 +1,15 @@
-"""Разбор присланной истории клиента: кандидаты-голоса + хвост (чистый compute, БЕЗ notmuch).
+"""Разбор присланной истории клиента: ``In-Reply-To`` из водяного знака + хвост (чистый compute).
 
 Структурный разбор ``messages`` (НЕ поиск подстроки):
-  1. найти последний ``role=="assistant"`` (= прошлый ответ Threlium); ассистента нет → первый ход;
-  2. кандидаты = ``G_i = canon(IsomorphContentId(hash(R_i)))`` КАЖДОГО assistant-ответа, most-recent-first;
-  3. хвост = ВСЁ присланное после последнего якоря-ассистента (system + user'ы + tool-результаты),
-     слитое в один ``<system>``-body. Якоря — только наши ответы; ничего из клиентского не отбрасываем.
-     Первый ход (нет ассистента) → сливается вся история (включая Anthropic top-level ``system``).
+  1. найти последний ``role=="assistant"`` (= прошлый ответ Threlium); ассистента нет → первый ход (orphan);
+  2. ``In-Reply-To`` = glue-MID, ЗАКОДИРОВАННЫЙ egress'ом в невидимый водяной знак этого ответа
+     (`decode_glue_snowflake` → snowflake → `snowflake_to_mid`). Знака нет → orphan. БЕЗ notmuch-чтения и
+     БЕЗ голосования: знак несёт ТОЧНЫЙ MID хвоста, он и есть IRT нового сообщения (docs/THREAD_MODEL §isomorph);
+  3. хвост = ВСЁ присланное после последнего якоря-ассистента (system + user'ы + tool-результаты), слитое в
+     один ``<system>``-body. Якоря — только наши ответы; ничего из клиентского не отбрасываем. Первый ход
+     (нет ассистента) → сливается вся история (включая Anthropic top-level ``system``).
 
-``In-Reply-To`` НЕ считается здесь: его резолвит :mod:`.thread_resolve` голосованием по кандидатам в
-notmuch (устойчивость к коллизии последнего ответа + детект «прошлый ход ещё в работе»). Финальный
-``Message-ID`` нового ingress (``hash(parent=IRT, tail)``) — :func:`ingress_message_id` после резолва.
-
-Нормализация контента ассистента (для паритета хеша с ``states/egress_isomorph``) — общий модуль
-:mod:`threlium.types.isomorph_content`.
+Финальный ``Message-ID`` нового ingress (``hash(parent=IRT, tail)``) — :func:`ingress_message_id`.
 """
 from __future__ import annotations
 
@@ -20,38 +17,31 @@ import msgspec
 
 from threlium.types import (
     IsomorphApiSurface,
-    IsomorphAssistantContent,
     IsomorphContentHashWire,
     IsomorphContentId,
-    IsomorphToolCallSig,
     RfcMessageIdWire,
-    canonical_json,
 )
+
+from .snowflake_mid import decode_glue_snowflake, snowflake_to_mid
 
 
 class ParsedHistory(msgspec.Struct, frozen=True):
-    """Чистый разбор присланной истории (без notmuch): кандидаты на голосование + хвост."""
+    """Чистый разбор присланной истории (без notmuch): IRT из водяного знака + хвост."""
 
-    #: ``G_i = canon(hash(R_i))`` последних assistant-ответов, **most-recent-first**; для голосования
-    #: за целевой тред (:mod:`.thread_resolve`). Пусто ⟺ первый ход (ассистента в истории нет).
-    recent_assistant_mids: tuple[RfcMessageIdWire, ...]
+    #: ``In-Reply-To`` нового хода = glue-MID из водяного знака last-assistant; ``None`` ⟺ первый ход (orphan).
+    in_reply_to: RfcMessageIdWire | None
     #: Plain-текст хвоста (после last-assistant) → ``<system>``-body для FSM.
     tail_body: str
 
 
-# --- внутренние нормализованные представления --------------------------------------------
-
-
 class _Msg(msgspec.Struct, frozen=True):
     role: str
-    #: Для assistant — нейтральный контент для хеша; иначе ``None``.
-    assistant: IsomorphAssistantContent | None
-    #: Plain-рендер для FSM-body (любая роль).
+    #: Plain-рендер для FSM-body (любая роль); для assistant — текст (с возможным водяным знаком).
     render: str
 
 
 def _coerce_text(content: object) -> str:
-    """OpenAI/Anthropic ``content``: строка или массив блоков → плоский текст."""
+    """OpenAI/Anthropic ``content``: строка или массив блоков → плоский текст (водяной знак в тексте сохраняется)."""
     if content is None:
         return ""
     if isinstance(content, str):
@@ -71,65 +61,6 @@ def _coerce_text(content: object) -> str:
     return str(content)
 
 
-def _openai_assistant_content(m: dict[str, object]) -> IsomorphAssistantContent:
-    text = _coerce_text(m.get("content")).strip()
-    tool_calls: list[IsomorphToolCallSig] = []
-    raw_tc = m.get("tool_calls")
-    if isinstance(raw_tc, list):
-        for tc in raw_tc:
-            if not isinstance(tc, dict):
-                continue
-            fn_raw = tc.get("function")
-            fn: dict[str, object] = fn_raw if isinstance(fn_raw, dict) else {}
-            name = str(fn.get("name", ""))
-            args = fn.get("arguments", "")
-            # OpenAI усекает tool-call id на resend → НЕ включаем (tool_id="").
-            tool_calls.append(
-                IsomorphToolCallSig(name=name, arguments=_canon_args(args), tool_id="")
-            )
-    return IsomorphAssistantContent(text=text, tool_calls=tuple(tool_calls))
-
-
-def _anthropic_assistant_content(m: dict[str, object]) -> IsomorphAssistantContent:
-    texts: list[str] = []
-    tool_calls: list[IsomorphToolCallSig] = []
-    content = m.get("content")
-    if isinstance(content, str):
-        texts.append(content)
-    elif isinstance(content, list):
-        for block in content:
-            if not isinstance(block, dict):
-                continue
-            btype = block.get("type")
-            if btype == "text":
-                texts.append(str(block.get("text", "")))
-            elif btype == "tool_use":
-                # Anthropic tool_use.id echo-стабилен → включаем для уникальности.
-                tool_calls.append(
-                    IsomorphToolCallSig(
-                        name=str(block.get("name", "")),
-                        arguments=_canon_args(block.get("input")),
-                        tool_id=str(block.get("id", "")),
-                    )
-                )
-    return IsomorphAssistantContent(
-        text="\n".join(t for t in texts if t).strip(), tool_calls=tuple(tool_calls)
-    )
-
-
-def _canon_args(args: object) -> str:
-    """Аргументы tool-вызова (строка JSON или объект) → каноническая JSON-строка."""
-    if isinstance(args, str):
-        s = args.strip()
-        if not s:
-            return ""
-        try:
-            return canonical_json(msgspec.json.decode(s.encode("utf-8")))
-        except msgspec.DecodeError:
-            return canonical_json(s)
-    return canonical_json(args)
-
-
 def _render_user_or_tool(role: str, m: dict[str, object]) -> str:
     text = _coerce_text(m.get("content")).strip()
     return f"[{role}] {text}" if text else ""
@@ -141,25 +72,21 @@ def _parse_messages(surface: IsomorphApiSurface, body: dict[str, object]) -> lis
         raise ValueError("isomorph: request body has no 'messages' array")
     out: list[_Msg] = []
     # Anthropic держит system отдельным top-level полем (НЕ в messages). Это такое же сообщение
-    # клиента, как прочие, — не игнорируем: вносим первым (до anchor'ов) → сольётся в хвост turn-1.
-    # OpenAI шлёт system обычным элементом messages (role=="system") → попадает в общий проход ниже.
+    # клиента, как прочие, — вносим первым (до anchor'ов) → сольётся в хвост turn-1. OpenAI шлёт
+    # system обычным элементом messages (role=="system") → попадает в общий проход ниже.
     if surface is IsomorphApiSurface.ANTHROPIC_MESSAGES:
         sys_text = _coerce_text(body.get("system")).strip()
         if sys_text:
-            out.append(_Msg(role="system", assistant=None, render=f"[system] {sys_text}"))
+            out.append(_Msg(role="system", render=f"[system] {sys_text}"))
     for m in raw:
         if not isinstance(m, dict):
             continue
         role = str(m.get("role", "")).strip()
         if role == "assistant":
-            if surface is IsomorphApiSurface.ANTHROPIC_MESSAGES:
-                content = _anthropic_assistant_content(m)
-            else:
-                content = _openai_assistant_content(m)
-            render = content.text
-            out.append(_Msg(role=role, assistant=content, render=render))
+            # Якорь-ответ Threlium: текст (с невидимым водяным знаком glue) для декода IRT.
+            out.append(_Msg(role=role, render=_coerce_text(m.get("content"))))
         else:
-            out.append(_Msg(role=role, assistant=None, render=_render_user_or_tool(role, m)))
+            out.append(_Msg(role=role, render=_render_user_or_tool(role, m)))
     return out
 
 
@@ -172,31 +99,28 @@ def _render_body(tail_msgs: list[_Msg]) -> str:
 
 
 def parse_history(surface: IsomorphApiSurface, body: dict[str, object]) -> ParsedHistory:
-    """Полная история клиента → кандидаты-голоса (G_i, most-recent-first) + хвост. Чистый compute.
+    """Полная история клиента → ``In-Reply-To`` (из водяного знака last-assistant) + хвост. Чистый compute.
 
-    Хвост = сообщения после последнего assistant (или первый user-turn, если ассистента нет) —
-    сливаются в один ``<system>``-body. Кандидаты — ``G_i`` каждого assistant-ответа, свежайший первым;
-    их сверяет с notmuch :func:`threlium.bridges.isomorph.thread_resolve.resolve_in_reply_to`.
+    Хвост = сообщения после последнего assistant (или вся история, если ассистента нет) — сливаются в один
+    ``<system>``-body. IRT = glue-MID, который egress закодировал в невидимый знак последнего ответа; знака нет
+    (или это первый ход) → ``None`` (orphan, новый тред).
     """
     msgs = _parse_messages(surface, body)
 
     last_assistant_idx = -1
     for i in range(len(msgs) - 1, -1, -1):
-        if msgs[i].role == "assistant" and msgs[i].assistant is not None:
+        if msgs[i].role == "assistant":
             last_assistant_idx = i
             break
 
-    # Якоря — assistant-ответы Threlium. Хвост = ВСЁ, что клиент прислал после последнего якоря
-    # (system + user'ы + tool-результаты), слитое в один <system>-body. Ничего из присланного не
-    # отбрасываем. Нет якоря (первый ход) → idx=-1 → msgs[0:] = вся история сливается целиком.
-    candidates: list[RfcMessageIdWire] = []
-    for i in range(last_assistant_idx, -1, -1):  # most-recent-first
-        a = msgs[i].assistant
-        if msgs[i].role == "assistant" and a is not None:
-            candidates.append(_content_addressed_mid(IsomorphContentHashWire.from_content(a).value))
+    in_reply_to: RfcMessageIdWire | None = None
+    if last_assistant_idx >= 0:
+        sf = decode_glue_snowflake(msgs[last_assistant_idx].render)
+        if sf is not None:
+            in_reply_to = snowflake_to_mid(sf)
 
     return ParsedHistory(
-        recent_assistant_mids=tuple(candidates),
+        in_reply_to=in_reply_to,
         tail_body=_render_body(msgs[last_assistant_idx + 1:]),
     )
 
@@ -204,8 +128,8 @@ def parse_history(surface: IsomorphApiSurface, body: dict[str, object]) -> Parse
 def ingress_message_id(*, parent_value: str, tail_body: str) -> RfcMessageIdWire:
     """Контент-адресуемый ``Message-ID`` нового ingress = ``hash(parent=IRT, tail)``.
 
-    ``parent_value`` = resolved ``In-Reply-To`` (``G_j``) или ``""`` для orphan. Идемпотентность ретраев
-    + позиционная уникальность (тот же хвост под разным родителем → разные MID).
+    ``parent_value`` = resolved ``In-Reply-To`` (glue-MID из знака) или ``""`` для orphan. Идемпотентность
+    ретраев + позиционная уникальность (тот же хвост под разным родителем → разные MID).
     """
     return _content_addressed_mid(
         IsomorphContentHashWire.from_ingress_tail(parent=parent_value, tail=tail_body).value

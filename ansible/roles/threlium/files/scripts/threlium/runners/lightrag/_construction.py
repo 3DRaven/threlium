@@ -142,8 +142,15 @@ def build_rag(settings: ThreliumSettings) -> LightRAG:
             default_max_retries=settings.litellm.max_retries,
         )
     if settings.e2e.litellm_route_correlation:
-        rag_kwargs["llm_model_max_async"] = 1
-        rag_kwargs["embedding_func_max_async"] = 1
+        # max_async НЕ обязан быть 1 для детерминизма: корреляция теперь per-call (ctxvar call-site +
+        # thread-root, штампится на каждый запрос), а стабы матчатся по X-Threlium-Call-Site + hasContext
+        # (thread-root) — БЕЗ зависимости от порядка вызовов (ни seq, ни phase-state в RAG-фазах; phase-state
+        # только у FSM/reasoning-стабов, а это прямые litellm-вызовы вне RAG-loop). Параллельные LLM/embed —
+        # ключевой разлок -n2: иначе ВСЕ вызовы (индексация+запросы) обоих тестов сериализуются на одном RAG-loop.
+        # Внутритредовый порядок сохранён и так (последовательные await в aquery; per-thread-root lock для
+        # ainsert↔aquery). max_parallel_insert=1 оставляем (drain — singleton-задача, insert_batch=1).
+        rag_kwargs["llm_model_max_async"] = settings.lightrag.llm_model_max_async
+        rag_kwargs["embedding_func_max_async"] = settings.lightrag.embedding_func_max_async
         rag_kwargs["max_parallel_insert"] = 1
     else:
         rag_kwargs["llm_model_max_async"] = settings.lightrag.llm_model_max_async

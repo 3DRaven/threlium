@@ -1,6 +1,7 @@
 """SUT worker idle waits."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from tests.e2e.log import clip_log_body, log
@@ -45,6 +46,11 @@ def wait_for_sut_threlium_user_workers_idle(
     дают unmatched после холодного прогона или до ``wiremock_state_reset_all_contexts`` в ``pytest_sessionfinish``.
 
     При ``TimeoutError`` в лог уходит :func:`~tests.e2e.sut_user_systemd.e2e_sut_threlium_user_workers_stall_diag_bash`.
+
+    Под pytest-xdist (``-n>=2``) глобальный idle НЕДОСТИЖИМ: соседний тест держит ``threlium-work@``
+    занятыми. Изоляция теста при этом обеспечивается marker-scoped чисткой своих тредов + thread-root
+    корреляцией (+ glue-wait между ходами multiturn), а НЕ глобальным idle. Поэтому под xdist ожидание —
+    короткий best-effort: дожидаемся idle, если он быстро настанет, иначе логируем и идём дальше (без падения).
     """
     root = repo_root or REPO_ROOT
     script = e2e_sut_threlium_user_workers_idle_probe_bash()
@@ -66,13 +72,23 @@ def wait_for_sut_threlium_user_workers_idle(
             return None
         return True if n == 0 else None
 
+    under_xdist = bool(os.environ.get("PYTEST_XDIST_WORKER"))
+    effective_timeout = min(timeout, 12.0) if under_xdist else timeout
     try:
         poll_until_backoff(
             _probe,
-            timeout=timeout,
+            timeout=effective_timeout,
             desc="sut: threlium-work@ / threlium-sweep@ idle (user systemd)",
         )
     except TimeoutError as e:
+        if under_xdist:
+            log.warning(
+                "sut_workers_idle_wait_best_effort_xdist",
+                note="global idle unreachable under -n>=2 (concurrent test busy); proceeding "
+                "(isolation via marker-scoped cleanup + thread-root, not global idle)",
+                timeout_sec=effective_timeout,
+            )
+            return
         _e2e_log_sut_workers_stall_diag(
             project_name,
             repo_root=root,

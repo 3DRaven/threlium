@@ -448,12 +448,12 @@ class LightragSettings(BaseModel):
     llm_model_max_async: int = Field(
         default=4,
         ge=1,
-        description="Потолок LightRAG llm_model_max_async при индексации (не e2e).",
+        description="Потолок LightRAG llm_model_max_async при индексации (и в e2e: корреляция per-call).",
     )
     embedding_func_max_async: int = Field(
         default=4,
         ge=1,
-        description="Потолок LightRAG embedding_func_max_async (не e2e).",
+        description="Потолок LightRAG embedding_func_max_async (и в e2e: корреляция per-call).",
     )
     embed_dim: str = Field(
         default="",
@@ -657,17 +657,6 @@ class IsomorphBridgeSettings(BaseModel):
     enabled_surfaces: list[str] = Field(
         default_factory=lambda: ["anthropic_messages", "openai_chat_completions"],
         description="Включённые api_surface; отключать вендоров без смены кода.",
-    )
-    thread_vote_max_replies: int = Field(
-        default=3,
-        ge=1,
-        le=32,
-        description=(
-            "Сколько последних assistant-ответов из истории клиента сверять с notmuch для резолва "
-            "целевого треда (голосование по glue-MID). 1 = чистая контент-адресация по last-assistant; "
-            "≥3 устойчивее к коллизии последнего ответа. Ничья верхушки → 409 ambiguous; 0 совпадений → "
-            "новый тред."
-        ),
     )
 
 

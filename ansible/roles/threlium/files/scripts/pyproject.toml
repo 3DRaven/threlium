@@ -25,6 +25,7 @@ dependencies = [
     "pybase62>=1.0.0",
     "pyshacl>=0.31.0",
     "rdflib>=7.6.0",
+    "snowflake-id>=1.0.0",
     "python-telegram-bot>=22.7,<23",
     "starlette>=0.40.0",
     "structlog>=25.5.0",

@@ -30,10 +30,11 @@ from .toolkit.isomorph_cline import (
     clean_isomorph_test_threads,
     cline_received,
     configure_cline,
+    e2e_explicit_root_mid,
+    e2e_root_prompt_token,
     nm_count,
     nm_count_in_test_thread,
     nm_oldest_message_id,
-    precompute_isomorph_thread_root,
     start_cline_background,
     sut_exec,
     wait_bridge_health,
@@ -57,15 +58,17 @@ _STUB_DIR = Path(__file__).parent / "wiremock_stubs" / "test_isomorph_bridge_ant
 _CLINE_DATA = "/tmp/cline-anthropic-e2e"
 _CLINE_CWD = "/tmp/cline-anthropic-e2e-work"
 _CLINE_OUT = "/tmp/cline_anthropic_e2e_out.json"
-_PROMPT = "reply pong [isomorph-anthropic-cline-e2e]"
 #: Уникальный токен промпта → дата-независимая scoped-чистка ТОЛЬКО тредов этого теста (см. фикстуру).
 _MARKER = "isomorph-anthropic-cline-e2e"
+#: Промпт несёт ГОТОВЫЙ thread-root как `E2E_MID:<...>` (мост в e2e берёт его напрямую, без content-hash →
+#: нет зависимости от даты/реконструкции тела Cline). Маркер `[...]` оставлен для scoped-чистки/нотмач-скоупа.
+_PROMPT = f"reply pong {e2e_root_prompt_token(_MARKER)} [{_MARKER}]"
 #: Текст финального ответа из reasoning-стаба (100_chat_reasoning_egress_tool → response_finalize content).
 _REPLY_MARKER = "ok from llm-mock"
 
 
 def _thread_root() -> str:
-    return precompute_isomorph_thread_root(_SURFACE, prompt=_PROMPT, cwd=_CLINE_CWD)
+    return e2e_explicit_root_mid(_MARKER)
 
 
 @pytest.fixture()

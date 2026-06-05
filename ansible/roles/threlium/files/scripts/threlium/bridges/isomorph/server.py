@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Callable
 from email.message import EmailMessage
-from functools import partial
 
 import msgspec
 from anyio.to_thread import run_sync as _to_thread_run_sync
@@ -31,15 +30,11 @@ from . import encoders
 from .auth import is_authorized
 from .history import ingress_message_id, parse_history
 from .models_list import models_list_payload
+from .snowflake_mid import extract_e2e_explicit_mid
 from .pending import IsomorphPendingRegistry
 from .push import handle_push
 from .push_types import IsomorphBridgePushPayload
 from .sse import SseFrame
-from .thread_resolve import (
-    AmbiguousIsomorphThread,
-    IsomorphThreadInWork,
-    resolve_in_reply_to,
-)
 
 log = logger.bind(bridge="isomorph")
 
@@ -93,28 +88,22 @@ async def inference_handler(request: Request, surface: IsomorphApiSurface) -> Re
     except ValueError as e:
         return _surface_error(surface, f"bad messages: {e}", err_type="invalid_request_error", status=400)
 
-    # In-Reply-To: первый ход (нет assistant) → orphan; иначе голосование по notmuch (sync → to_thread):
-    # тред не найден → orphan; найден+сведён → G_j; найден+в работе → 409; ничья → 409.
-    in_reply_to = None
-    if parsed.recent_assistant_mids:
-        try:
-            in_reply_to = await _to_thread_run_sync(
-                partial(resolve_in_reply_to, parsed.recent_assistant_mids,
-                        max_replies=iso.thread_vote_max_replies)
-            )
-        except AmbiguousIsomorphThread:
-            return _surface_error(surface, "ambiguous thread (multiple candidate threads)",
-                                  err_type="invalid_request_error", status=409)
-        except IsomorphThreadInWork:
-            return _surface_error(surface, "prior turn still in flight; retry after its reply",
-                                  err_type="invalid_request_error", status=409)
-        except Exception as e:  # notmuch недоступен и т.п. — MVP: чистая 503  # noqa: BLE001
-            log.info("thread_resolve_failed", error=repr(e))
-            return _surface_error(surface, "thread resolution unavailable",
-                                  err_type="api_error", status=503)
+    # In-Reply-To: декодируется из водяного знака last-assistant в parse_history (БЕЗ notmuch/голосования).
+    # Знака нет / первый ход → None (orphan, новый тред). Знак = ТОЧНЫЙ glue-MID хвоста = IRT нового хода.
+    in_reply_to = parsed.in_reply_to
+    tail_body = parsed.tail_body
 
-    message_id = ingress_message_id(
-        parent_value=in_reply_to.value if in_reply_to else "", tail_body=parsed.tail_body)
+    # E2E-ONLY: тест может прислать ГОТОВЫЙ thread-root в теле как `E2E_MID:<...@localhost>` (генерит тем же
+    # `snowflake_to_mid`, что egress). Тогда thread-root = он, БЕЗ content-hash → нет зависимости от
+    # реконструкции тела Cline/даты (устраняет date-drift сидирования). В проде (флаг off) — обычный путь.
+    message_id = None
+    if state.settings.e2e.litellm_route_correlation:
+        e2e_mid, tail_body = extract_e2e_explicit_mid(tail_body)
+        if e2e_mid is not None:
+            message_id = e2e_mid
+    if message_id is None:
+        message_id = ingress_message_id(
+            parent_value=in_reply_to.value if in_reply_to else "", tail_body=tail_body)
     # Коррелятор pending↔push = inner-форма ingress Message-ID (та же, что egress прочитает как
     # ancestor_mid ближайшего tag:route предка). Контент-адресуем, доступен сразу (до notmuch).
     corr_inner = NotmuchMessageIdInner.from_optional_wire(message_id)
@@ -128,7 +117,7 @@ async def inference_handler(request: Request, surface: IsomorphApiSurface) -> Re
     )
     ingress = build_bridge_ingress_email(
         channel=BridgeIngressChannel.ISOMORPH,
-        body=parsed.tail_body or "(empty)",
+        body=tail_body or "(empty)",
         route=route,
         message_id=message_id,
         in_reply_to=in_reply_to,
@@ -185,13 +174,13 @@ async def _event_stream(
     try:
         while not fut.done():
             if await request.is_disconnected():
-                state.registry.discard(corr)
+                state.registry.discard(corr, fut)
                 if state.verbose:
                     log.info("client_disconnected", mid=corr)
                 return
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
-                state.registry.discard(corr)
+                state.registry.discard(corr, fut)
                 yield emit(_error_frame(surface, "upstream timeout"))
                 return
             try:
@@ -200,7 +189,7 @@ async def _event_stream(
                 yield emit(_keepalive_frame(surface))
                 continue
             except asyncio.CancelledError:
-                state.registry.discard(corr)
+                state.registry.discard(corr, fut)
                 return
 
         payload = fut.result()
@@ -211,7 +200,7 @@ async def _event_stream(
         for frame in _sse_encoder(surface)(payload):
             yield emit(frame)
     finally:
-        state.registry.forget(corr)
+        state.registry.forget(corr, fut)
 
 
 async def _await_json(
@@ -222,13 +211,13 @@ async def _await_json(
     try:
         payload = await asyncio.wait_for(asyncio.shield(fut), timeout=iso.request_timeout_sec)
     except asyncio.TimeoutError:
-        state.registry.discard(corr)
+        state.registry.discard(corr, fut)
         return _surface_error(surface, "upstream timeout", err_type="api_error", status=504)
     except asyncio.CancelledError:
-        state.registry.discard(corr)
+        state.registry.discard(corr, fut)
         return _surface_error(surface, "cancelled", err_type="api_error", status=499)
     finally:
-        state.registry.forget(corr)
+        state.registry.forget(corr, fut)
 
     if payload.error_message:
         return _surface_error(surface, payload.error_message, err_type="api_error", status=500)

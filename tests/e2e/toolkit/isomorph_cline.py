@@ -18,11 +18,13 @@ from __future__ import annotations
 
 import base64
 import datetime
+import hashlib
 import json
 import shlex
 from pathlib import Path
 
 from threlium.bridges.isomorph.history import ingress_message_id, parse_history
+from threlium.bridges.isomorph.snowflake_mid import snowflake_to_mid
 from threlium.types import IsomorphApiSurface
 
 from . import TIMEOUT_POLL_SHORT, E2EComposeRuntime, poll_until, service_exec
@@ -47,6 +49,23 @@ def cline_today_mdy(today: datetime.date | None = None) -> str:
 
 def _cline_system_prompt(*, cwd: str, date: str) -> str:
     return _SYSTEM_TEMPLATE.replace("{{DATE}}", date).replace("{{CWD}}", cwd)
+
+
+def e2e_explicit_root_mid(marker: str) -> str:
+    """E2E thread-root MID, сгенерированный ТЕМ ЖЕ ``snowflake_to_mid``, что egress — детерминированно по
+    ``marker`` (одинаков для сида и токена в промпте). Возвращает каноничную ``<b62@localhost>``.
+
+    Заменяет хрупкий :func:`precompute_isomorph_thread_root` (реконструкция тела Cline → зависела от даты/
+    шаблона системного промпта). Тест шлёт этот MID в теле как ``E2E_MID:<...>``; мост в e2e берёт его
+    напрямую как thread-root (без content-hash) — см. ``bridges.isomorph.snowflake_mid.extract_e2e_explicit_mid``.
+    """
+    seed = int.from_bytes(hashlib.sha256(marker.encode("utf-8")).digest()[:7], "big")
+    return snowflake_to_mid(seed).value
+
+
+def e2e_root_prompt_token(marker: str) -> str:
+    """Токен для вставки в prompt/тело запроса: ``E2E_MID:<root>`` — мост вынет его как thread-root."""
+    return f"E2E_MID:{e2e_explicit_root_mid(marker)}"
 
 
 def thread_root_from_body(surface: IsomorphApiSurface, body: dict[str, object]) -> str:
