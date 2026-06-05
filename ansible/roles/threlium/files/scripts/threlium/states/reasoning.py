@@ -183,17 +183,19 @@ def _decide(
 
     wrong_tool_retries = 0
     length_attempt = 0
-    length_recovery_extra: list[LiteLlmChatMessage] = []
+    length_recovery_extra: list[str] = []
 
     while True:
         notices = _mode_notices(msg, remaining, wrong_tool_retries)
+        # vLLM требует system-сообщение В НАЧАЛЕ беседы: сливаем базовый system + length-recovery + notices
+        # в ОДИН system-блок, затем user. Иначе append'нутые system-notices после user → 400
+        # "System message must be at the beginning".
+        system_blocks = [system, *length_recovery_extra, *notices]
+        merged_system = "\n\n".join(b for b in system_blocks if b and b.strip())
         messages: list[LiteLlmChatMessage] = [
-            LiteLlmChatMessage(role="system", content=system),
+            LiteLlmChatMessage(role="system", content=merged_system),
             LiteLlmChatMessage(role="user", content=user_content),
-            *length_recovery_extra,
         ]
-        for notice in notices:
-            messages.append(LiteLlmChatMessage(role="system", content=notice))
 
         call = build_site_call(
             config,
@@ -225,9 +227,7 @@ def _decide(
                 raise ReasoningStageError(
                     "LLM completion truncated (finish_reason=length) after recovery retry"
                 )
-            length_recovery_extra.append(
-                LiteLlmChatMessage(role="system", content=length_recovery_system)
-            )
+            length_recovery_extra.append(length_recovery_system)
             continue
 
         if remaining >= 1:
