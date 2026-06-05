@@ -33,7 +33,6 @@ from threlium.summarize_pack import (
 )
 from threlium.summarize_tool_bridge import parse_summarize_thread_context_assistant
 from threlium.types import (
-    EnrichUserQueryText,
     FsmStage,
     LiteLlmChatMessage,
     LitellmCallSite,
@@ -44,7 +43,6 @@ from threlium.types import (
     SummarizeContextStagePayload,
     SummarizeHistoryUnit,
     SummarizeToolBridgeError,
-    validated_user_query,
 )
 
 log = logger.bind(stage="summarize_context")
@@ -52,8 +50,11 @@ log = logger.bind(stage="summarize_context")
 
 def _parse_payload(
     text: str,
-) -> tuple[list[SummarizeHistoryUnit], EnrichUserQueryText] | None:
-    """payload → ``(units, user_query)``. Невалидный/пустой batch → ``None``."""
+) -> list[SummarizeHistoryUnit] | None:
+    """payload → ``units``. Невалидный/пустой batch → ``None``.
+
+    Канонический user turn не пробрасывается: enrich сам резолвит его по IRT на re-trigger.
+    """
     try:
         payload = msgspec.json.decode(
             text.strip().encode("utf-8"), type=SummarizeContextStagePayload
@@ -63,11 +64,7 @@ def _parse_payload(
     units = list(payload.summarize.units)
     if not units:
         return None
-    try:
-        user_query = validated_user_query(payload)
-    except ValueError:
-        return None
-    return (units, user_query)
+    return units
 
 
 def _summarize_round(
@@ -115,7 +112,7 @@ def main(
         log.error("unparseable_payload", body_preview=body_raw[:200])
         return None
 
-    units, _user_query = parsed
+    units = parsed
     source_mids = {u.source_mid for u in units}
     log.info("summarizing", unit_count=len(units), source_mids=len(source_mids))
 

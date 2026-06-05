@@ -521,15 +521,12 @@ def _emit_summarize_overflow(
             "overflow summarize: no <history> units with resolvable source_mid in batch"
         )
 
-    # Канонический ход = <user-query> CID текущего enrich-листа (не последняя <history>);
-    # суммаризация его не меняет — тот же текст по enrich → summarize_context (<system>)
-    # → summarize_memory → re-trigger enrich (CONTEXT_CONTRACT §5).
-    _mid_w, inner = require_fsm_message_id(msg, "enrich")
-    user_query = resolve_frame_user_turn(inner).value
+    # Канонический ход НЕ пробрасываем: после summarize_memory → re-trigger enrich сам
+    # резолвит user turn по IRT (resolve_frame_user_turn), поэтому relay user_query — мёртвый
+    # (summarize_context его всё равно игнорировал). Payload несёт только history units.
     payload = msgspec.json.encode(
         SummarizeContextStagePayload(
             summarize=SummarizeContextBatch(units=selected),
-            user_query=user_query,
         )
     ).decode("utf-8")
     log.info(

@@ -40,22 +40,15 @@ class SummarizeContextBatch(msgspec.Struct, frozen=True):
 class SummarizeContextStagePayload(msgspec.Struct, frozen=True):
     """Wire-форма ``<system>`` для перехода ``enrich → summarize_context`` (CONTEXT §5 overflow).
 
-    ``user_query`` — wire plain ``str`` (``<user-query>`` CID, не distill ``user_intent``);
-    decode boundary → ``EnrichUserQueryText.require``; неизменен по циклу summarize_memory → enrich.
+    Несёт только гранулярные ``<history>`` units для сжатия. Канонический user turn НЕ
+    пробрасывается: после рефакторинга enrich сам резолвит его по IRT
+    (``resolve_frame_user_turn``) на повторном входе, поэтому relay ``user_query`` стал мёртвым.
 
     TYPES (``docs/TYPES.md`` § stage payload): сериализация/разбор строго через ``msgspec`` (не
     ``json.dumps`` / ``json.loads`` + ручной ``dict``).
     """
 
     summarize: SummarizeContextBatch
-    user_query: str  # wire; validated via validated_user_query()
-
-
-def validated_user_query(payload: SummarizeContextStagePayload) -> "EnrichUserQueryText":
-    """Decode boundary: wire ``str`` → ``EnrichUserQueryText``."""
-    from threlium.types.fsm_strings import EnrichUserQueryText
-
-    return EnrichUserQueryText.require(name="summarize user_query", raw=payload.user_query)
 
 
 __all__ = [
@@ -64,5 +57,4 @@ __all__ = [
     "SummarizeHistoryUnit",
     "SummarizeResponseBufferToolArgs",
     "SummarizeThreadContextToolArgs",
-    "validated_user_query",
 ]
