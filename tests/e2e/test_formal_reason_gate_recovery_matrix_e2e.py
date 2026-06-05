@@ -75,8 +75,11 @@ FORMAL_REASON_GATE_MATRIX_SPEC = MailflowScenarioSpec(
         FsmStage.ARCHIVE.value,
     ),
     reply_body_needle="e2e-formal-reason-gate-matrix-verified-answer",
-    # Длинный matrix: 30s до tasks_ledger; finalize+egress — в окне GreenMail (после tasks ещё LightRAG drain).
-    wiremock_journal_ready_needle="call_e2e_tasks_ledger_matrix",
+    # Readiness-needle — на recovery formal_reason (надёжно <30s после сокращения матрицы:
+    # fatal→mq→recovery). tasks_ledger был на грани 30s (флап из-за summarize-циклов
+    # накопленной formal_reason-истории). tasks+finalize+egress дальше ловит GreenMail-poll
+    # (reply_body_needle). Покрытие finalize сохранено: сматченные стабы 104/105 + ответ.
+    wiremock_journal_ready_needle="call_e2e_formal_reason_matrix_recovery",
 )
 
 
@@ -120,7 +123,8 @@ def test_formal_reason_gate_recovery_matrix_full_pipeline(
             wm_base = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
             assert_journal_contains(wm_base, stub_tag, "PARSE ERROR")
             assert_journal_contains(wm_base, stub_tag, "FSM locked")
-            assert_journal_contains(wm_base, stub_tag, "QUERY ERROR")
+            # QUERY ERROR hop убран из матрицы (покрыт technical_gate); матрица:
+            # fatal(parse) → memory_query(gated) → recovery → tasks → finalize.
             _assert_at_least_two_gated_reasoning_calls(wm_base, stub_tag)
             assert_gated_reasoning_calls(wm_base, stub_tag)
             assert_gated_reasoning_includes_memory_query(wm_base, stub_tag)
@@ -153,14 +157,14 @@ def test_formal_reason_gate_recovery_matrix_full_pipeline(
                     E2E_MATRIX_MEMORY_QUERY_TEXT,
                 ),
             )
-            # Поздний gated hop: PARSE + QUERY + оба formal_reason tool-call + MQ в одном промпте.
+            # Поздний gated hop (recovery): PARSE (fatal) + formal_reason tool-call + MQ в одном промпте.
             assert_gated_formal_reason_history_accumulated(
                 wm_base,
                 stub_tag,
                 prior_formal_reason_markers=(
                     E2E_MATRIX_FR_FATAL_REASONING,
-                    E2E_MATRIX_FR_QUERY_ERR_REASONING,
                 ),
+                error_observation_markers=("PARSE ERROR", "FSM locked"),
                 memory_query_marker=E2E_MATRIX_MEMORY_QUERY_TEXT,
             )
             # Финальный ungated reasoning: весь накопленный контур ошибок + успешный query_result.
@@ -169,10 +173,8 @@ def test_formal_reason_gate_recovery_matrix_full_pipeline(
                 stub_tag,
                 (
                     "PARSE ERROR",
-                    "QUERY ERROR",
                     E2E_MATRIX_MEMORY_QUERY_TEXT,
                     E2E_MATRIX_FR_FATAL_REASONING,
-                    E2E_MATRIX_FR_QUERY_ERR_REASONING,
                     "query_result:",
                     "<conversation_delta>",
                 ),

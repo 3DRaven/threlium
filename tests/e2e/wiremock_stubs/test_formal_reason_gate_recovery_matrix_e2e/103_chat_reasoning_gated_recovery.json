@@ -18,9 +18,6 @@
         "contains": "\"tools\""
       },
       {
-        "contains": "QUERY ERROR"
-      },
-      {
         "contains": "Gate retry counter:"
       },
       {
@@ -31,7 +28,7 @@
       "name": "state-matcher",
       "parameters": {
         "hasContext": "stub-formal-reason-gate-matrix-01::{{request.headers.[X-Threlium-Thread-Root]}}",
-        "hasProperty": "phase_matrix_query_error_done",
+        "hasProperty": "phase_matrix_mq_done",
         "hasNotProperty": "phase_matrix_recovery_done"
       }
     }
