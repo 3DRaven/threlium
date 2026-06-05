@@ -4,7 +4,7 @@
 bake и Ansible в этом модуле. Проверяется, что ``threlium-bridge@isomorph.service`` поднят в baked-образе
 и отдаёт корректный wire на границе HTTP (health / models / auth / push-secret).
 
-**Соответствие модели изоляции e2e** ([E2E_ISOLATION.md](../../docs/E2E_ISOLATION.md), [TESTING.md](../../docs/TESTING.md)):
+**Изоляция e2e** ([E2E_ISOLATION.md](../../docs/E2E_ISOLATION.md), [TESTING.md](../../docs/TESTING.md)):
 эти кейсы **намеренно** дёргают только HTTP-границу моста и **не запускают FSM** (GET, либо POST,
 отбиваемый на auth/secret до ``deliver``). Значит **ни одного запроса к WireMock** не порождается →
 не нужны State-Extension setup/seed/teardown, и guard «zero unmatched» в ``pytest_runtest_call`` /
@@ -91,7 +91,7 @@ def test_isomorph_bridge_push_requires_secret(e2e_runtime: E2EComposeRuntime) ->
     _wait_bridge_health(rt)
 
     push = json.dumps({
-        "request_id": "nope", "api_surface": "openai_chat_completions", "finish_reason": "stop",
+        "ingress_mid": "nope", "api_surface": "openai_chat_completions", "finish_reason": "stop",
         "model": "x", "text": "t", "tool_blocks": [], "usage": {"prompt": 0, "completion": 0, "total": 0},
         "error_message": "",
     })
