@@ -21,6 +21,28 @@
           threlium_user должен быть задан и не равен 'root' (получено {{ threlium_user | default('(undefined)') }}).
       tags: [deploy, refresh]
 
+    # Инвариант reasoning: при enable_thinking бюджет «думанья» должен помещаться в лимит генерации,
+    # иначе LLM упирается в max_tokens на середине thinking → finish_reason=length → ReasoningStageError
+    # («LLM completion truncated after recovery retry»), и reasoning-хоп падает. См. host_vars score=2.0.
+    - name: Assert thinking_token_budget < max_tokens for each llm_endpoint
+      ansible.builtin.assert:
+        that:
+          - >-
+            item.thinking_token_budget is not defined
+            or item.thinking_token_budget is none
+            or item.max_tokens is not defined
+            or item.max_tokens is none
+            or (item.thinking_token_budget | int) < (item.max_tokens | int)
+        fail_msg: >-
+          llm_endpoint score={{ item.score | default('?') }}: thinking_token_budget
+          ({{ item.thinking_token_budget | default('?') }}) должен быть строго < max_tokens
+          ({{ item.max_tokens | default('(не задан)') }}) — иначе reasoning усекается по длине
+          (finish_reason=length) и хоп падает.
+      loop: "{{ threlium_litellm_effective.llm_endpoints | default([]) }}"
+      loop_control:
+        label: "score={{ item.score | default('?') }} budget={{ item.thinking_token_budget | default('-') }} max={{ item.max_tokens | default('-') }}"
+      tags: [deploy, refresh]
+
     # Merge base ⊕ overrides вынесен в role-vars threlium_*_effective (vars/main.yml):
     # set_fact в то же имя не работает при `-e @host_vars/<host>.yml` (extra-vars > set_fact).
     - name: Derive bridge readiness from channels and secrets
