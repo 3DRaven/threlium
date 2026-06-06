@@ -134,7 +134,7 @@ def _inject_rag_warmup(
 
     cmd = [
         "bash", "-lc",
-        "stat --printf='%s' /home/threlium/threlium/data/lightrag/vdb_chunks.json 2>/dev/null || echo 0",
+        "stat --printf='%s' /home/threlium/threlium/data/lightrag/faiss_index_chunks.index.meta.json 2>/dev/null || echo 0",
     ]
     r = service_exec(project_name, "sut", cmd, repo_root=REPO_ROOT, timeout=int(TIMEOUT_POLL_SHORT))
     try:

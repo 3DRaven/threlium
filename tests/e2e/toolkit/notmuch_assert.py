@@ -52,16 +52,17 @@ def poll_lightrag_indexed_positive(
 ) -> None:
     """Wait until LightRAG drain has actually inserted data into vectordb.
 
-    Polls ``vdb_chunks.json`` file size inside the SUT: a file > 4 bytes means
-    nano-vectordb has at least one stored vector (empty JSON list ``[]`` is 2-3 bytes).
-    This is more reliable than checking ``tag:lightrag_indexed`` which gets applied by
-    fdm on archive copies before the drain runs.
+    Polls the FAISS chunks metadata sidecar (``faiss_index_chunks.index.meta.json``) file size
+    inside the SUT: an empty meta is ``{}`` (~2 bytes), a populated one is much larger, so a file
+    > 10 bytes means at least one chunk vector is stored. (We use FaissVectorDBStorage, not nano —
+    the binary ``.index`` even when empty is ~45 bytes, so the sidecar meta is the reliable signal.)
+    More reliable than ``tag:lightrag_indexed`` which fdm applies on archive copies before drain.
     """
     root = repo_root or REPO_ROOT
     w = float(timeout) if timeout is not None else float(TIMEOUT_POLL_SHORT)
     cmd = [
         "bash", "-lc",
-        "stat --printf='%s' /home/threlium/threlium/data/lightrag/vdb_chunks.json 2>/dev/null || echo 0",
+        "stat --printf='%s' /home/threlium/threlium/data/lightrag/faiss_index_chunks.index.meta.json 2>/dev/null || echo 0",
     ]
 
     def _probe() -> str | None:

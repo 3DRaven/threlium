@@ -99,8 +99,11 @@ fi
 rm -rf "$TH/lightrag" 2>/dev/null || true
 # notmuch Xapian index — stale thread IDs interfere with isolation; recreated by `notmuch new`.
 rm -rf "$TH/stages/.notmuch" 2>/dev/null || true
+# LightRAG KV/doc-status теперь в Redis (localhost) — чистим вместе с файловым lightrag-каталогом,
+# иначе индекс/кэш прошлой сессии переживёт wipe и сломает изоляцию прогона.
+redis-cli flushall >/dev/null 2>&1 || true
 su - {E2E_THRELIUM_USER} -s /bin/bash -c {su_wrap} </dev/null || true
-echo "[e2e] SUT flushed: Maildir + lightrag + notmuch DB wiped, notmuch new done"
+echo "[e2e] SUT flushed: Maildir + lightrag(files+redis) + notmuch DB wiped, notmuch new done"
 """
     completed = service_exec(
         rt.project_name,
