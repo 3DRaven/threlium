@@ -218,15 +218,17 @@ def isomorph_error(e2e_runtime: E2EComposeRuntime) -> Generator[E2EComposeRuntim
 
 def test_isomorph_bridge_error_envelope_json(isomorph_error: E2EComposeRuntime) -> None:
     """``egress``-push с ``error_message`` → мост отдаёт held JSON-запросу error-envelope: HTTP 500 + тело
-    ошибки вендора (OpenAI ``{"error": {...}}``). Инъекция push (delay 5c) опережает FSM (~30c), который
-    при засиженных стабах доходит чисто → late push становится no-op."""
+    ошибки вендора (OpenAI ``{"error": {...}}``). Инъекция error-push должна резолвить held-запрос
+    РАНЬШЕ, чем реальный FSM-ход дойдёт до egress_isomorph (idempotent push: первый выигрывает, поздний
+    — 204). Окно инъекции: больше регистрации pending (~доли секунды), но меньше FSM-хода. После
+    dispatch-fix (enginewire) FSM-ход — единицы секунд (не ~30c), поэтому инъекция = 1.0c (а не 5.0c)."""
     rt = isomorph_error
     body = {**_body(IsomorphApiSurface.OPENAI_CHAT_COMPLETIONS, _E_MARKER), "stream": False}
     status, resp = bridge_post_json_with_pushed_error(
         rt, port=_ISO_PORT, path="/v1/chat/completions", body=body,
         api_key=_API_KEY, surface=IsomorphApiSurface.OPENAI_CHAT_COMPLETIONS,
         corr=e2e_explicit_root_corr(_E_MARKER), error_message="e2e injected fatal",
-        push_secret=_PUSH_SECRET, delay=5.0, timeout=60.0,
+        push_secret=_PUSH_SECRET, delay=1.0, timeout=60.0,
     )
     assert status == 500, resp
     assert "e2e injected fatal" in resp, resp
