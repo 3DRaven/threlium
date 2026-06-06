@@ -18,10 +18,7 @@
         "contains": "\"tools\""
       },
       {
-        "contains": "QUERY ERROR"
-      },
-      {
-        "contains": "Gate retry counter:"
+        "contains": "PARSE ERROR"
       },
       {
         "contains": "E2E-FORMAL-REASON-GATE-MATRIX-BODY"
@@ -31,8 +28,8 @@
       "name": "state-matcher",
       "parameters": {
         "hasContext": "stub-formal-reason-gate-matrix-01::{{request.headers.[X-Threlium-Thread-Root]}}",
-        "hasProperty": "phase_matrix_query_error_done",
-        "hasNotProperty": "phase_matrix_recovery_done"
+        "hasProperty": "phase_matrix_mq_done",
+        "hasNotProperty": "phase_matrix_query_error_done"
       }
     }
   },
@@ -42,7 +39,7 @@
       "Content-Type": "application/json"
     },
     "jsonBody": {
-      "id": "chatcmpl-e2e-formal-reason-matrix-reasoning-4",
+      "id": "chatcmpl-e2e-formal-reason-matrix-reasoning-3",
       "object": "chat.completion",
       "created": 0,
       "model": "gpt-4o-mini",
@@ -55,11 +52,11 @@
             "content": null,
             "tool_calls": [
               {
-                "id": "call_e2e_formal_reason_matrix_recovery",
+                "id": "call_e2e_formal_reason_matrix_query_err",
                 "type": "function",
                 "function": {
                   "name": "formal_reason",
-                  "arguments": "{\"reasoning\": \"e2e matrix: recovery with valid SPARQL after QUERY ERROR gate\", \"query\": \"PREFIX ex: <http://example.org/> SELECT ?name WHERE { ?p ex:name ?name }\", \"shapes_ttl\": \"@prefix sh: <http://www.w3.org/ns/shacl#> .\\n@prefix ex: <http://example.org/> .\\n\\nex:PersonShape a sh:NodeShape ;\\n  sh:targetClass ex:Person ;\\n  sh:property [ sh:path ex:name ; sh:minCount 1 ] .\", \"facts_ttl\": \"@prefix ex: <http://example.org/> .\\n\\nex:alice a ex:Person ;\\n  ex:name \\\"Alice\\\" .\\n\"}"
+                  "arguments": "{\"reasoning\": \"e2e matrix: valid Turtle but broken SPARQL for second QUERY ERROR under gate\", \"query\": \"PREFIX ex: <http://example.org/> SELECT ?name WHERE { ?p ex:name ?name\", \"shapes_ttl\": \"@prefix sh: <http://www.w3.org/ns/shacl#> .\\n@prefix ex: <http://example.org/> .\\n\\nex:PersonShape a sh:NodeShape ;\\n  sh:targetClass ex:Person ;\\n  sh:property [ sh:path ex:name ; sh:minCount 1 ] .\", \"facts_ttl\": \"@prefix ex: <http://example.org/> .\\n\\nex:alice a ex:Person ;\\n  ex:name \\\"Alice\\\" .\\n\"}"
                 }
               }
             ]
@@ -74,7 +71,7 @@
       "parameters": {
         "context": "stub-formal-reason-gate-matrix-01::{{request.headers.[X-Threlium-Thread-Root]}}",
         "state": {
-          "phase_matrix_recovery_done": "1"
+          "phase_matrix_query_error_done": "1"
         }
       }
     }

@@ -3,15 +3,29 @@
 Один inject, фазовый WireMock State (``stub-formal-reason-gate-matrix-01``).
 Стабы: ``wiremock_stubs/test_formal_reason_gate_recovery_matrix_e2e/``.
 
-Post-assert: несколько циклов gate ON; ``enrich_fast`` не затирает прошлые
-observation/tool-call контексты ``formal_reason`` (PARSE + QUERY + memory_query relay).
+**Расширенный цикл (намеренно проверяется).** При e2e-бюджете (``model_context_tokens``)
+накопленная за несколько провалов ``formal_reason`` ``<history>`` превышает бюджет → ``enrich``
+запускает **``summarize_context`` → ``summarize_memory``** (overflow). Гейт ``formal_reason``
+**state-driven** (``formal_reason_gate_active`` читает IRT-предков formal_reason, а не промпт
+reasoning — ``formal_reason_gate.py``), поэтому **переживает summarize** и корректно снимается
+на чистом recovery. Тест проверяет именно это:
+
+- ``enrich_fast`` relay на **раннем** gated-хопе (до summarize) переносит fatal-наблюдение и
+  его reasoning-нарратив verbatim;
+- error-**наблюдения** (PARSE/QUERY/FSM locked) + результат memory_query **переживают
+  summarize-цикл** и доходят до позднего gated-хопа в одном промпте;
+- summarize-цикл **реально сработал** (тег ``context_summarized`` в треде);
+- гейт снялся → ungated finalize с ``query_result``.
+
+Verbatim самого старого reasoning-нарратива НЕ требуется на позднем хопе: summarize законно
+сжимает вербальный нарратив (для механики гейта он не нужен — гейт читает IRT, не промпт).
 """
 from __future__ import annotations
 
 from pathlib import Path
 
 
-from threlium.types import FsmStage
+from threlium.types import FsmStage, NotmuchTag
 
 from .formal_reason_assertions import (
     assert_chat_request_contains_all,
@@ -27,6 +41,7 @@ from .toolkit import (
     MailflowScenarioSpec,
     REPO_ROOT,
     assert_full_mailflow_pipeline,
+    assert_notmuch_thread_tag_count,
     discover_runtime,
     dump_failure_artifacts,
     mailflow_inject_and_wait,
@@ -75,11 +90,8 @@ FORMAL_REASON_GATE_MATRIX_SPEC = MailflowScenarioSpec(
         FsmStage.ARCHIVE.value,
     ),
     reply_body_needle="e2e-formal-reason-gate-matrix-verified-answer",
-    # Readiness-needle — на recovery formal_reason (надёжно <30s после сокращения матрицы:
-    # fatal→mq→recovery). tasks_ledger был на грани 30s (флап из-за summarize-циклов
-    # накопленной formal_reason-истории). tasks+finalize+egress дальше ловит GreenMail-poll
-    # (reply_body_needle). Покрытие finalize сохранено: сматченные стабы 104/105 + ответ.
-    wiremock_journal_ready_needle="call_e2e_formal_reason_matrix_recovery",
+    # Длинный matrix: 30s до tasks_ledger; finalize+egress — в окне GreenMail (после tasks ещё LightRAG drain).
+    wiremock_journal_ready_needle="call_e2e_tasks_ledger_matrix",
 )
 
 
@@ -123,8 +135,7 @@ def test_formal_reason_gate_recovery_matrix_full_pipeline(
             wm_base = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
             assert_journal_contains(wm_base, stub_tag, "PARSE ERROR")
             assert_journal_contains(wm_base, stub_tag, "FSM locked")
-            # QUERY ERROR hop убран из матрицы (покрыт technical_gate); матрица:
-            # fatal(parse) → memory_query(gated) → recovery → tasks → finalize.
+            assert_journal_contains(wm_base, stub_tag, "QUERY ERROR")
             _assert_at_least_two_gated_reasoning_calls(wm_base, stub_tag)
             assert_gated_reasoning_calls(wm_base, stub_tag)
             assert_gated_reasoning_includes_memory_query(wm_base, stub_tag)
@@ -157,24 +168,35 @@ def test_formal_reason_gate_recovery_matrix_full_pipeline(
                     E2E_MATRIX_MEMORY_QUERY_TEXT,
                 ),
             )
-            # Поздний gated hop (recovery): PARSE (fatal) + formal_reason tool-call + MQ в одном промпте.
+            # Расширенный цикл сработал: overflow накопленной gate-истории → summarize.
+            # Гейт state-driven (читает IRT, не промпт), поэтому переживает сжатие.
+            assert_notmuch_thread_tag_count(
+                project,
+                anchor_message_id=nm_inner,
+                tag=NotmuchTag.CONTEXT_SUMMARIZED.value,
+                min_count=1,
+                repo_root=REPO_ROOT,
+            )
+            # Поздний gated hop ПОСЛЕ summarize: оба error-НАБЛЮДЕНИЯ (PARSE+QUERY+FSM locked)
+            # и результат memory_query пережили сжатие и дошли в одном gated-промпте.
+            # (Verbatim старейшего reasoning-нарратива не требуем: summarize его законно сжимает;
+            #  его relay через enrich_fast проверен на раннем gated-хопе выше, до summarize.)
             assert_gated_formal_reason_history_accumulated(
                 wm_base,
                 stub_tag,
-                prior_formal_reason_markers=(
-                    E2E_MATRIX_FR_FATAL_REASONING,
-                ),
-                error_observation_markers=("PARSE ERROR", "FSM locked"),
+                prior_formal_reason_markers=(),
+                error_observation_markers=("PARSE ERROR", "QUERY ERROR", "FSM locked"),
                 memory_query_marker=E2E_MATRIX_MEMORY_QUERY_TEXT,
             )
-            # Финальный ungated reasoning: весь накопленный контур ошибок + успешный query_result.
+            # Финальный ungated reasoning: накопленные наблюдения ошибок + успешный query_result
+            # (гейт снят на чистом formal_reason несмотря на summarize в середине).
             assert_chat_request_contains_all(
                 wm_base,
                 stub_tag,
                 (
                     "PARSE ERROR",
+                    "QUERY ERROR",
                     E2E_MATRIX_MEMORY_QUERY_TEXT,
-                    E2E_MATRIX_FR_FATAL_REASONING,
                     "query_result:",
                     "<conversation_delta>",
                 ),

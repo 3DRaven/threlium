@@ -24,6 +24,9 @@
         "contains": "Gate retry counter:"
       },
       {
+        "contains": "disallowed tool"
+      },
+      {
         "contains": "E2E-FORMAL-REASON-GATE-MATRIX-BODY"
       }
     ],
@@ -42,7 +45,7 @@
       "Content-Type": "application/json"
     },
     "jsonBody": {
-      "id": "chatcmpl-e2e-formal-reason-matrix-reasoning-4",
+      "id": "chatcmpl-e2e-formal-reason-matrix-reasoning-4-retry",
       "object": "chat.completion",
       "created": 0,
       "model": "gpt-4o-mini",
@@ -55,7 +58,7 @@
             "content": null,
             "tool_calls": [
               {
-                "id": "call_e2e_formal_reason_matrix_recovery",
+                "id": "call_e2e_formal_reason_matrix_recovery_retry",
                 "type": "function",
                 "function": {
                   "name": "formal_reason",
