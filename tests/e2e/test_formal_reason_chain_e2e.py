@@ -52,6 +52,7 @@ from .toolkit import (
     mailflow_inject_and_wait,
 )
 from .wiremock_client import (
+    _wiremock_headers_get_ci,
     find_wiremock_requests_by_body_contains,
     wiremock_public_base,
 )
@@ -150,18 +151,35 @@ def test_formal_reason_chain_full_pipeline(
             mq_matches = find_wiremock_requests_by_body_contains(
                 wm_base, E2E_MEMORY_QUERY_REASONING_MARKER, stub_tag=stub_tag
             )
+            # Маркер reasoning-контента попадает и в lightrag-индексацию (gleaning/extract) — его
+            # текст индексируется как сущности. Поэтому фильтруем СТРОГО по call-site=reasoning
+            # (а не берём [0] из всех chat-совпадений: на пустом индексе свежей сборки первым в
+            # журнале оказывается gleaning-вызов, и тест ложно падал на его tool-наборе).
             mq_chat = [
                 e
                 for e in mq_matches
                 if "/chat/completions" in (e.get("request", {}).get("url") or "")
+                and _wiremock_headers_get_ci(
+                    (e.get("request") or {}).get("headers"), "X-Threlium-Call-Site"
+                ) == FsmStage.REASONING.value
             ]
-            assert mq_chat, "expected memory_query reasoning journal entry"
-            mq_body = mq_chat[0].get("request", {}).get("body") or ""
-            mq_tools = frozenset(tool_names_from_chat_body(str(mq_body)))
-            assert mq_tools != GATE_TOOL_NAMES
-            assert FsmStage.MEMORY_QUERY.value in mq_tools
-            assert FsmStage.RESPONSE_FINALIZE.value in mq_tools
-            assert mq_tools <= FULL_TOOL_NAMES
+            assert mq_chat, "expected memory_query reasoning journal entry (call-site=reasoning)"
+            # Среди reasoning-хопов с маркером должен быть memory_query-фазовый: предлагает полный
+            # набор тулов с memory_query + response_finalize, и это НЕ gate-only хоп.
+            mq_tool_sets = [
+                frozenset(tool_names_from_chat_body(str(e.get("request", {}).get("body") or "")))
+                for e in mq_chat
+            ]
+            assert any(
+                ts != GATE_TOOL_NAMES
+                and FsmStage.MEMORY_QUERY.value in ts
+                and FsmStage.RESPONSE_FINALIZE.value in ts
+                and ts <= FULL_TOOL_NAMES
+                for ts in mq_tool_sets
+            ), (
+                "expected a memory_query-phase reasoning hop offering "
+                f"{{memory_query, response_finalize}} ⊆ FULL (got tool-sets {mq_tool_sets})"
+            )
             assert_notmuch_folder_contains_body_token(
                 project,
                 stage_folder_id=FsmStage.REASONING.value,
