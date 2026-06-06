@@ -25,8 +25,10 @@ from threlium.types import IsomorphApiSurface
 from .toolkit import E2EComposeRuntime, poll_until
 from .toolkit.constants import TIMEOUT_POLL_LIVE_MAIL
 from .toolkit.isomorph_cline import (
+    bridge_post_json_with_pushed_error,
     bridge_post_sse,
     clean_isomorph_test_threads,
+    e2e_explicit_root_corr,
     e2e_explicit_root_mid,
     e2e_root_prompt_token,
     nm_count_in_test_thread,
@@ -194,3 +196,38 @@ def test_isomorph_bridge_client_disconnect_mid_hold(isomorph_disconnect: E2EComp
         lambda: True if nm_count_in_test_thread(rt, _D_MARKER, "from:egress_isomorph@localhost") >= 1 else None,
         timeout=TIMEOUT_POLL_LIVE_MAIL, desc="turn completes despite client disconnect (glue archived)",
     )
+
+
+# ============================ FSM error → error envelope ============================
+
+_E_MARKER = "isomorph-error-envelope-e2e"
+_E_STUB_TAG = "stub-isomorph-openai-json-e2e-01"  # зашитый tag json-стабов (см. _A_STUB_TAG)
+_E_STUB_DIR = _STUBS_ROOT / "test_isomorph_bridge_openai_json_e2e"
+_PUSH_SECRET = "e2e-isomorph-push-secret"  # group_vars/e2e.yml bridges.isomorph.push_secret
+
+
+@pytest.fixture()
+def isomorph_error(e2e_runtime: E2EComposeRuntime) -> Generator[E2EComposeRuntime, None, None]:
+    # Стабы засижены → реальный ход доезжает чисто в фоне (late push = no-op), teardown idle без зависа.
+    _seed(e2e_runtime, stub_tag=_E_STUB_TAG, stub_dir=_E_STUB_DIR, marker=_E_MARKER)
+    try:
+        yield e2e_runtime
+    finally:
+        wait_for_sut_threlium_user_workers_idle(e2e_runtime.project_name, timeout=60.0)
+
+
+def test_isomorph_bridge_error_envelope_json(isomorph_error: E2EComposeRuntime) -> None:
+    """``egress``-push с ``error_message`` → мост отдаёт held JSON-запросу error-envelope: HTTP 500 + тело
+    ошибки вендора (OpenAI ``{"error": {...}}``). Инъекция push (delay 5c) опережает FSM (~30c), который
+    при засиженных стабах доходит чисто → late push становится no-op."""
+    rt = isomorph_error
+    body = {**_body(IsomorphApiSurface.OPENAI_CHAT_COMPLETIONS, _E_MARKER), "stream": False}
+    status, resp = bridge_post_json_with_pushed_error(
+        rt, port=_ISO_PORT, path="/v1/chat/completions", body=body,
+        api_key=_API_KEY, surface=IsomorphApiSurface.OPENAI_CHAT_COMPLETIONS,
+        corr=e2e_explicit_root_corr(_E_MARKER), error_message="e2e injected fatal",
+        push_secret=_PUSH_SECRET, delay=5.0, timeout=60.0,
+    )
+    assert status == 500, resp
+    assert "e2e injected fatal" in resp, resp
+    assert "error" in resp.lower(), resp

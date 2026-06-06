@@ -25,7 +25,7 @@ from pathlib import Path
 
 from threlium.bridges.isomorph.history import ingress_message_id, parse_history
 from threlium.bridges.isomorph.snowflake_mid import snowflake_to_mid
-from threlium.types import IsomorphApiSurface
+from threlium.types import IsomorphApiSurface, NotmuchMessageIdInner, RfcMessageIdWire
 
 from . import TIMEOUT_POLL_SHORT, E2EComposeRuntime, poll_until, service_exec
 from .constants import E2E_SUT_NOTMUCH_BASH_EXPORT
@@ -51,6 +51,11 @@ def _cline_system_prompt(*, cwd: str, date: str) -> str:
     return _SYSTEM_TEMPLATE.replace("{{DATE}}", date).replace("{{CWD}}", cwd)
 
 
+def _e2e_explicit_root_wire(marker: str) -> RfcMessageIdWire:
+    seed = int.from_bytes(hashlib.sha256(marker.encode("utf-8")).digest()[:7], "big")
+    return snowflake_to_mid(seed)
+
+
 def e2e_explicit_root_mid(marker: str) -> str:
     """E2E thread-root MID, сгенерированный ТЕМ ЖЕ ``snowflake_to_mid``, что egress — детерминированно по
     ``marker`` (одинаков для сида и токена в промпте). Возвращает каноничную ``<b62@localhost>``.
@@ -59,8 +64,16 @@ def e2e_explicit_root_mid(marker: str) -> str:
     шаблона системного промпта). Тест шлёт этот MID в теле как ``E2E_MID:<...>``; мост в e2e берёт его
     напрямую как thread-root (без content-hash) — см. ``bridges.isomorph.snowflake_mid.extract_e2e_explicit_mid``.
     """
-    seed = int.from_bytes(hashlib.sha256(marker.encode("utf-8")).digest()[:7], "big")
-    return snowflake_to_mid(seed).value
+    return _e2e_explicit_root_wire(marker).value
+
+
+def e2e_explicit_root_corr(marker: str) -> str:
+    """pending↔push коррелятор (inner-форма explicit-root MID) — РОВНО как его считает мост (server.py:
+    ``NotmuchMessageIdInner.from_optional_wire(message_id).value``). Нужен для прямого ``/internal/v1/push``."""
+    inner = NotmuchMessageIdInner.from_optional_wire(_e2e_explicit_root_wire(marker))
+    if inner is None:
+        raise ValueError(f"e2e explicit root has no inner form for marker {marker!r}")
+    return inner.value
 
 
 def e2e_root_prompt_token(marker: str) -> str:
@@ -359,3 +372,44 @@ def parse_sse_events(raw: str) -> list[tuple[str | None, str]]:
         if event is not None or data_lines:
             events.append((event, "\n".join(data_lines)))
     return events
+
+
+def bridge_post_json_with_pushed_error(
+    rt: E2EComposeRuntime, *, port: int, path: str, body: dict[str, object], api_key: str,
+    surface: IsomorphApiSurface, corr: str, error_message: str, push_secret: str,
+    delay: float = 5.0, timeout: float = 60.0,
+) -> tuple[int, str]:
+    """held ``stream:false`` POST (мост держит) + инъекция error-push в ``/internal/v1/push`` через ``delay``c.
+
+    Мост резолвит held-запрос ОШИБКОЙ раньше, чем доедет FSM (~30c) → проверяем error-envelope (500 + тело
+    ошибки вендора). ``corr`` — inner-форма ingress-MID (как мост: :func:`e2e_explicit_root_corr`); тело несёт
+    тот же ``E2E_MID:<...>``, поэтому мост регистрирует pending именно под ``corr``. Один ``sut_exec``:
+    фоновый запрос → sleep → push → ``wait`` → печать ответа held-запроса."""
+    b64 = base64.b64encode(json.dumps(body).encode("utf-8")).decode("ascii")
+    auth = (
+        f"-H 'x-api-key: {api_key}'"
+        if surface is IsomorphApiSurface.ANTHROPIC_MESSAGES
+        else f"-H 'authorization: Bearer {api_key}'"
+    )
+    push = json.dumps({
+        "ingress_mid": corr, "api_surface": surface.value, "finish_reason": "stop",
+        "model": "x", "text": "", "tool_blocks": [],
+        "usage": {"prompt": 0, "completion": 0, "total": 0}, "error_message": error_message,
+    })
+    pb64 = base64.b64encode(push.encode("utf-8")).decode("ascii")
+    script = (
+        f"echo {b64} | base64 -d | curl -sS --max-time {int(timeout)} -w '\\n%{{http_code}}' "
+        f"-X POST -H 'content-type: application/json' {auth} --data-binary @- "
+        f"http://127.0.0.1:{port}{path} > /tmp/iso_err_resp 2>&1 & RP=$!; "
+        f"sleep {delay}; "
+        f"echo {pb64} | base64 -d | curl -sS -o /dev/null -w 'pushrc=%{{http_code}}' "
+        f"-X POST -H 'content-type: application/json' -H 'X-Threlium-Push-Secret: {push_secret}' "
+        f"--data-binary @- http://127.0.0.1:{port}/internal/v1/push; "
+        f"wait $RP; echo '::RESP::'; cat /tmp/iso_err_resp"
+    )
+    out = sut_exec(rt, script, timeout=timeout + 30.0)
+    resp = out.split("::RESP::", 1)[-1].strip()
+    lines = resp.rsplit("\n", 1)
+    if len(lines) == 2 and lines[1].strip().isdigit():
+        return (int(lines[1].strip()), lines[0])
+    return (-1, out)
