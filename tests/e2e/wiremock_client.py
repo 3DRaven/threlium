@@ -1587,6 +1587,40 @@ def remove_wiremock_journal_by_stub_tag(
     )
 
 
+def remove_wiremock_journal_by_thread_root(
+    base_url: str,
+    correlation_key: str,
+    *,
+    timeout: float = TIMEOUT_POLL_SHORT,
+) -> None:
+    """Удалить из журнала matched-записи **своего** треда по заголовку ``X-Threlium-Thread-Root``.
+
+    Изоляция журнала — по корреллятору-заголовку (docs §2), а не по ``stub_tag``: ``stub_tag`` зашит
+    в JSON каталога стабов и потому совпадает у тестов, переиспользующих один каталог (telegram
+    private, summarize, task-ledger chain). Удаление по тегу (``remove_wiremock_journal_by_stub_tag``)
+    на общем ``-n2``-WireMock стирало бы matched-записи ПАРАЛЛЕЛЬНОГО теста с тем же тегом → ложные
+    «0» в его journal-ассертах. Здесь матчим только записи с inner-формой thread-root этого прогона
+    (``contains`` — на случай angle-bracket/inner расхождений); чужие треды и записи без заголовка
+    (egress Bot API без correlation-заголовков) не затрагиваются. ``unmatched`` не трогаем.
+
+    Безопасно по построению: при несовпадении формата заголовка матчер не удалит ничего (стейл-записи
+    игнорируются journal-поиском по thread-root + cold-reset журнала на старте сессии), но НИКОГДА не
+    заденет чужой параллельный тест.
+    """
+    inner = correlation_key.strip().strip("<>")
+    if not inner:
+        return
+    pattern = {
+        "method": "ANY",
+        "headers": {"X-Threlium-Thread-Root": {"contains": inner}},
+    }
+    root = _normalize_wiremock_public_root(base_url)
+    url = f"{root}/__admin/requests/remove"
+    with _wiremock_admin_api_exclusive(timeout=timeout):
+        r = _wm_session().post(url, json=pattern, timeout=timeout)
+        r.raise_for_status()
+
+
 def prepare_wiremock_scenario(
     public_base: str,
     *,
@@ -1639,7 +1673,10 @@ def prepare_wiremock_scenario(
             timeout=timeout,
             reuse_admin_lock=True,
         )
-        remove_wiremock_journal_by_stub_tag(public_base, tag=stub_tag, timeout=timeout)
+        # Изоляция журнала — по thread-root заголовку (docs §2), НЕ по stub_tag: при общем каталоге
+        # стабов tag совпадает у параллельных тестов, и remove-by-tag стирал бы их matched-записи
+        # под -n2 (ложные «0» в journal-ассертах). Чистим только СВОЙ тред.
+        remove_wiremock_journal_by_thread_root(public_base, correlation_key, timeout=timeout)
         if (stub_dir / "008_e2e_state_reset_formal_reason_phases.json").is_file():
             wiremock_state_reset_formal_reason_phases(
                 public_base, ctx_key, timeout=timeout
