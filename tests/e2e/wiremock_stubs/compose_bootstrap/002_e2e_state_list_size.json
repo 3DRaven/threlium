@@ -1,0 +1,17 @@
+{
+  "id": "674826fa-13c4-577c-bcf4-ad96bd59af1d",
+  "request": {
+    "method": "POST",
+    "urlPath": "/__threlium/e2e/state/list_size"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "transformers": [
+      "response-template"
+    ],
+    "body": "{\"list_size\": {{state context=(jsonPath request.body '$.correlation_key') property='listSize' default='0'}} }"
+  }
+}

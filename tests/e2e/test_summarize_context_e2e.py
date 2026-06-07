@@ -37,6 +37,7 @@ from .wiremock_client import (
     find_wiremock_requests_by_body_contains,
     journal_entries_for_stub_tag,
     wiremock_public_base,
+    wiremock_state_thread_root_list_size,
     _journal_chat_completion_user_content,
     _journal_request_anchor_haystack,
     _wiremock_headers_get_ci,
@@ -73,14 +74,12 @@ SUMMARIZE_CONTEXT_SPEC = MailflowScenarioSpec(
 )
 
 
-def _count_summarize_llm_posts(wm_base: str, *, stub_tag: str) -> int:
-    return len(
-        find_wiremock_requests_by_body_contains(
-            wm_base,
-            E2E_SUMMARIZE_LLM_NEEDLE,
-            stub_tag=stub_tag,
-        )
-    )
+def _count_summarize_llm_posts(wm_base: str, *, correlation_key: str) -> int:
+    # Счётчик summarize_thread_context — по STATE (``recordState`` на лету в
+    # ``075_chat_summarize_context.json`` → ``list.addLast`` на каждый матч; читаем ``listSize``), а НЕ
+    # сканом журнала по ``stub_tag``. Изоляция = thread-root заголовок (§2/§3.6): устойчиво на ``-n2``
+    # (нет cross-tag, нет зависимости от ёмкости/вытеснения журнала). Образец миграции journal→state.
+    return wiremock_state_thread_root_list_size(wm_base, correlation_key)
 
 
 def _summarize_context_user_content_merged(
@@ -184,7 +183,7 @@ def _assert_summarize_pipeline_artifacts(
     )
     rt = discover_runtime(project, repo_root=REPO_ROOT)
     wm_base = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
-    n_summarize = _count_summarize_llm_posts(wm_base, stub_tag=stub_tag)
+    n_summarize = _count_summarize_llm_posts(wm_base, correlation_key=correlation_key)
     assert n_summarize >= 1, (
         f"expected at least one summarize_context LLM POST, got {n_summarize}"
     )
@@ -326,7 +325,7 @@ def test_summarize_idempotent_second_enrich(e2e_runtime: E2EComposeRuntime) -> N
         # ход треда МОЖЕТ маргинально переполниться и сжать СВОЙ новый остаток — это не нарушение
         # идемпотентности. Инвариант идемпотентности: уже помеченные context_summarized оригиналы
         # НЕ суммаризируются повторно (rolling summary сходится, без rework того же контента).
-        n_after_second = _count_summarize_llm_posts(wm_base, stub_tag=stub_tag)
+        n_after_second = _count_summarize_llm_posts(wm_base, correlation_key=correlation_key)
         # Каждый ход тегирует ТОЛЬКО новые source_mid (tag идемпотентен): помеченных ≥1 и они не
         # пересжимаются (нет infinite re-summarize). summarize-count монотонен.
         assert_notmuch_thread_tag_count(

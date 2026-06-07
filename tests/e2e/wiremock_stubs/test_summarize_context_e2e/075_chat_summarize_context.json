@@ -53,5 +53,18 @@
         }
       ]
     }
-  }
+  },
+  "serveEventListeners": [
+    {
+      "name": "recordState",
+      "parameters": {
+        "context": "{{request.headers.[X-Threlium-Thread-Root]}}",
+        "list": {
+          "addLast": {
+            "summarize_hit": "1"
+          }
+        }
+      }
+    }
+  ]
 }

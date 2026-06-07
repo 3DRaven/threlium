@@ -352,6 +352,30 @@ def wiremock_state_seed_context(
         r.raise_for_status()
 
 
+def wiremock_state_thread_root_list_size(
+    public_base: str, correlation_key: str, *, timeout: float = TIMEOUT_POLL_SHORT
+) -> int:
+    """Размер ``list`` контекста, ключёванного ЧИСТО по thread-root (``X-Threlium-Thread-Root``).
+
+    Счётчик попаданий стаба, записанный ``recordState`` **на лету** во время обслуживания
+    (``list.addLast`` на каждый матч) — assert по **state**, без скана журнала и без ``stub_tag``
+    (docs §3.6). Изоляция = коррелятор-заголовок (§2): ``correlation_key`` совпадает со значением
+    ``X-Threlium-Thread-Root`` в запросах своего треда, поэтому счётчик не пересекается с соседями
+    на общем ``-n2``-WireMock и не зависит от ёмкости/вытеснения журнала.
+
+    Чтение — через probe-стаб ``POST /__threlium/e2e/state/list_size`` (helper ``state`` по handlebars;
+    Admin ``GET /contexts/{name}`` ломается на ``::``/``<``/``>``/``@`` в имени, см. §3.5).
+    """
+    root = _normalize_wiremock_public_root(public_base)
+    url = f"{root}/__threlium/e2e/state/list_size"
+    r = _wm_session().post(url, json={"correlation_key": correlation_key}, timeout=timeout)
+    r.raise_for_status()
+    try:
+        return int(r.json().get("list_size") or 0)
+    except (ValueError, AttributeError):
+        return 0
+
+
 def wiremock_state_reset_phase(
     public_base: str, correlation_key: str, *, timeout: float = TIMEOUT_POLL_SHORT
 ) -> None:
