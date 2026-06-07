@@ -16,7 +16,6 @@ from .toolkit import (
     MailflowScenarioSpec,
     REPO_ROOT,
     assert_full_mailflow_pipeline,
-    assert_notmuch_folder_contains_body_token,
     discover_runtime,
     dump_failure_artifacts,
     mailflow_inject_and_wait,
@@ -75,13 +74,11 @@ CLI_DISCOVERY_CHAIN_SPEC = MailflowScenarioSpec(
 def _assert_cli_stdout_in_reasoning_journal(
     project: str, stub_tag: str, correlation_key: str
 ) -> None:
-    """cli_exec stdout must reach reasoning via enrich_fast relay (on-disk + LLM prompt)."""
-    assert_notmuch_folder_contains_body_token(
-        project,
-        stage_folder_id=FsmStage.ENRICH_FAST.value,
-        body_token=E2E_CLI_DISCOVERY_STDOUT,
-        repo_root=REPO_ROOT,
-    )
+    """cli_exec stdout must reach reasoning via enrich_fast relay (LLM prompt).
+
+    «На диске в ENRICH_FAST-папке» (раньше notmuch docker-exec) избыточно: следующая journal-проверка
+    подтверждает попадание stdout в reasoning-ПРОМПТ — строго сильнее (дошёл до LLM, а не только лёг в
+    папку), и без захода в контейнер. См. §3.6.1 / Phase 3."""
     rt = discover_runtime(project, repo_root=REPO_ROOT)
     wm_base = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
     wait_for_wiremock_stub_journal_contains(
@@ -161,12 +158,8 @@ CLI_ROUTE_COLLISION_SPEC = MailflowScenarioSpec(
 def _assert_route_collision_observation_in_journal(
     project: str, stub_tag: str, correlation_key: str
 ) -> None:
-    assert_notmuch_folder_contains_body_token(
-        project,
-        stage_folder_id=FsmStage.ENRICH_FAST.value,
-        body_token=E2E_ROUTE_COLLISION_OBSERVATION,
-        repo_root=REPO_ROOT,
-    )
+    # ENRICH_FAST-папка (notmuch docker-exec) избыточна: journal-проверка ниже подтверждает попадание
+    # observation в reasoning-промпт (сильнее, без контейнера). §3.6.1 / Phase 3.
     rt = discover_runtime(project, repo_root=REPO_ROOT)
     wm_base = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
     wait_for_wiremock_stub_journal_contains(
