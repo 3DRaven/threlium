@@ -1,0 +1,70 @@
+{
+  "metadata": {
+    "comment": [
+      "Post-reject фаза (live_hitl_h03_reject выставлен): lightrag-query на этапе absorb/resume снова",
+      "зовёт extract_query_keywords, но 090 (hasNotProperty hitl_classified) и 078d (classified, !reject)",
+      "его уже не матчат → 4 unmatched. Этот стаб закрывает фазу после reject, по аналогии с",
+      "078n_post_reject_absorb_lightrag (hasProperty live_hitl_h03_reject). Изоляция — композитный",
+      "hasContext '<stub_tag>::<X-Threlium-Thread-Root>'."
+    ]
+  },
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
+    "headers": {
+      "X-Threlium-Call-Site": {
+        "equalTo": "extract_query_keywords"
+      }
+    },
+    "bodyPatterns": [
+      {
+        "matches": "(?s).*(openai/threlium_e2e_l0|threlium_e2e_l0).*"
+      },
+      {
+        "contains": "\"tools\""
+      }
+    ],
+    "customMatcher": {
+      "name": "state-matcher",
+      "parameters": {
+        "hasContext": "stub-mailflow-live-hitl-mx-no-01::{{request.headers.[X-Threlium-Thread-Root]}}",
+        "hasProperty": "live_hitl_h03_reject"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "transformers": [
+      "response-template"
+    ],
+    "jsonBody": {
+      "id": "chatcmpl-e2e-wiremock-keywords",
+      "object": "chat.completion",
+      "created": 0,
+      "model": "gpt-4o-mini",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "tool_calls",
+          "message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_lightrag_078o_post_reject_keywords",
+                "type": "function",
+                "function": {
+                  "name": "extract_query_keywords",
+                  "arguments": "{\"high_level_keywords\": [\"e2e\"], \"low_level_keywords\": [\"hitl\"]}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}
