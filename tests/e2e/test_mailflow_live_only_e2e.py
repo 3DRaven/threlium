@@ -70,7 +70,6 @@ from email.message import EmailMessage
 from pathlib import Path
 
 import imaplib
-import os
 import re
 
 import uuid
@@ -81,20 +80,6 @@ import smtplib
 
 from tests.e2e.log import clip_log_body, log
 from threlium.types import FsmStage
-
-# Глубокие вложенные subagent-сценарии (L0→L1 фрейм + pop) под ``-n2`` ловят повторную обработку
-# backstop-ом (``threlium-sweep@``) недопоселившегося вложенного фрейма под нагрузкой → лишние
-# reasoning-вызовы ПОСЛЕ исчерпания фазовой цепочки (disjoint-phase стабы по дизайну one-shot) →
-# unmatched → каскад по глобальному guard. Контур корректен (зелено на ``-n0``); это parallel-
-# incompatibility тайминга, а не логики. Serial-only по E2E.md §5: под xdist пропускаем, валидируем
-# в ``-n0``. Настоящий фикс — в тайминге sweep/settle вложенных фреймов (продукт, по согласованию).
-_SUBAGENT_NESTED_FRAME_SERIAL_ONLY = pytest.mark.skipif(
-    os.environ.get("PYTEST_XDIST_WORKER") is not None,
-    reason=(
-        "nested-subagent frame settle races with sweep backstop under -n2 load → serial only "
-        "(-n0); validated outside xdist (E2E.md §5)"
-    ),
-)
 
 from .toolkit import (
     E2EComposeRuntime,
@@ -612,7 +597,6 @@ def test_live_subagent_table_shallow_chain_on_running_stack(e2e_runtime: E2EComp
         assert_wiremock_zero_unmatched_requests(wm_base)
 
 
-@_SUBAGENT_NESTED_FRAME_SERIAL_ONLY
 def test_live_subagent_budget_exhausted_on_running_stack(e2e_runtime: E2EComposeRuntime) -> None:
     """L1 ``subagent_intent`` when hop budget exhausted → enrich notice (``budget_exhausted.j2``)."""
     rt = e2e_runtime
@@ -876,7 +860,6 @@ def test_live_reflect_then_egress_on_running_stack(e2e_runtime: E2EComposeRuntim
         assert_wiremock_zero_unmatched_requests(wm_base)
 
 
-@_SUBAGENT_NESTED_FRAME_SERIAL_ONLY
 def test_live_subagent_hitl_matrix_full_cycle_on_running_stack(e2e_runtime: E2EComposeRuntime) -> None:
     """Полный путь ``docs/SUBAGENT_TABLE.md`` (L0→L1→L2, HITL на L2): WireMock даёт L1→subagent, L2→cli_intent.
 

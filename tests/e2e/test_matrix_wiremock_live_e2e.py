@@ -70,25 +70,6 @@ MATRIX_WIREMOCK_STUB_TAG = "stub-matrix-wiremock-live-e2e-01"
 MATRIX_WIREMOCK_STUB_DIR = _WIREMOCK_STUBS_ROOT / "test_matrix_wiremock_live_e2e"
 
 
-def _matrix_bridge_journal_suggests_missing_env(project_name: str) -> bool:
-    """По journal user unit matrix-бриджа: типичная ошибка деплоя без THRELIUM_MATRIX_* в unit."""
-    jc = e2e_threlium_user_unit_journalctl_bash(
-        "threlium-bridge@matrix.service",
-        80,
-        shell_redirect="2>/dev/null",
-    )
-    inner = (
-        "if "
-        + jc
-        + " | grep -qE 'required via systemd EnvironmentFile|THRELIUM_MATRIX_'; then echo MISCONFIG; fi"
-    )
-    r = service_exec(
-        project_name,
-        "sut",
-        ["bash", "-lc", inner],
-    )
-    return r.returncode == 0 and "MISCONFIG" in (r.stdout or "")
-
 @contextmanager
 def wiremock_correlation_scope(
     e2e_runtime: E2EComposeRuntime,
@@ -166,13 +147,6 @@ def test_live_matrix_wiremock_full_contour_on_running_stack(
                 interval=3.0,
                 desc="WireMock journal: PUT Matrix m.room.message send",
             )
-        except TimeoutError:
-            if _matrix_bridge_journal_suggests_missing_env(rt.project_name):
-                pytest.skip(
-                    "Нет PUT send/m.room.message в WireMock: matrix-бридж без THRELIUM_MATRIX_* "
-                    "(по journal user unit)."
-                )
-            raise
         finally:
             try:
                 wiremock_matrix_unregister_room(base, room_id=room_id)

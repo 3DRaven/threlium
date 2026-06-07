@@ -65,25 +65,6 @@ TELEGRAM_WIREMOCK_STUB_DIR_TAIL_307 = (
 TELEGRAM_AGENT_REPLY_BODY_TAIL_307 = "ok telegram wiremock live e2e private tail 307"
 
 
-def _telegram_bridge_journal_suggests_missing_env(project_name: str) -> bool:
-    """По journal user unit telegram-бриджа: типичная ошибка деплоя без THRELIUM_TELEGRAM_* в unit."""
-    jc = e2e_threlium_user_unit_journalctl_bash(
-        "threlium-bridge@telegram.service",
-        80,
-        shell_redirect="2>/dev/null",
-    )
-    inner = (
-        "if "
-        + jc
-        + " | grep -qE 'required via systemd EnvironmentFile|THRELIUM_TELEGRAM_'; then echo MISCONFIG; fi"
-    )
-    r = service_exec(
-        project_name,
-        "sut",
-        ["bash", "-lc", inner],
-    )
-    return r.returncode == 0 and "MISCONFIG" in (r.stdout or "")
-
 @contextmanager
 def wiremock_correlation_scope(
     e2e_runtime: E2EComposeRuntime,
@@ -170,13 +151,6 @@ def test_live_telegram_wiremock_full_contour_private(
                 interval=3.0,
                 desc="WireMock journal: POST editMessageText (private)",
             )
-        except TimeoutError:
-            if _telegram_bridge_journal_suggests_missing_env(rt.project_name):
-                pytest.skip(
-                    "Нет POST editMessageText в WireMock: telegram-бридж без THRELIUM_TELEGRAM_* "
-                    "(по journal user unit)."
-                )
-            raise
         finally:
             try:
                 wiremock_telegram_unregister_update(base, update_id=update_id)
@@ -256,13 +230,6 @@ def test_live_telegram_wiremock_full_contour_forum_topic(
                 interval=3.0,
                 desc="WireMock journal: POST editMessageText (forum topic)",
             )
-        except TimeoutError:
-            if _telegram_bridge_journal_suggests_missing_env(rt.project_name):
-                pytest.skip(
-                    "Нет POST editMessageText в WireMock: telegram-бридж без THRELIUM_TELEGRAM_* "
-                    "(по journal user unit)."
-                )
-            raise
         finally:
             try:
                 wiremock_telegram_unregister_update(base, update_id=update_id)
@@ -363,20 +330,12 @@ def test_live_telegram_wiremock_private_tail_307_second_message(
             )
             registered_update_ids.append(update_id_1)
 
-            try:
-                poll_until(
-                    lambda: _reasoning_chat_completion_seen(tok1),
-                    timeout=TIMEOUT_POLL_SHORT,
-                    interval=2.0,
-                    desc="WireMock: reasoning POST chat/completions с текстом msg1 (307 gate)",
-                )
-            except TimeoutError:
-                if _telegram_bridge_journal_suggests_missing_env(rt.project_name):
-                    pytest.skip(
-                        "Нет reasoning для msg1: telegram-бридж без THRELIUM_TELEGRAM_* "
-                        "(по journal user unit)."
-                    )
-                raise
+            poll_until(
+                lambda: _reasoning_chat_completion_seen(tok1),
+                timeout=TIMEOUT_POLL_SHORT,
+                interval=2.0,
+                desc="WireMock: reasoning POST chat/completions с текстом msg1 (307 gate)",
+            )
 
             # Детерминизм tail-attachment: msg2 привяжется к треду msg1 только если bridge-сообщение
             # msg1 уже проиндексировано в notmuch с тегом ``route`` (anchor-запрос
@@ -428,23 +387,15 @@ def test_live_telegram_wiremock_private_tail_307_second_message(
                 )
                 return True if len(bs) >= 2 else None
 
-            try:
-                poll_until(
-                    _two_agent_sendmessages_seen,
-                    timeout=TIMEOUT_POLL_SHORT,
-                    interval=3.0,
-                    desc=(
-                        "WireMock journal: ≥2 POST editMessageText с chat_id и текстом ответа агента "
-                        f"({TELEGRAM_AGENT_REPLY_BODY_TAIL_307!r})"
-                    ),
-                )
-            except TimeoutError:
-                if _telegram_bridge_journal_suggests_missing_env(rt.project_name):
-                    pytest.skip(
-                        "Нет двух editMessageText с ответом агента: telegram-бридж без THRELIUM_TELEGRAM_* "
-                        "(по journal user unit)."
-                    )
-                raise
+            poll_until(
+                _two_agent_sendmessages_seen,
+                timeout=TIMEOUT_POLL_SHORT,
+                interval=3.0,
+                desc=(
+                    "WireMock journal: ≥2 POST editMessageText с chat_id и текстом ответа агента "
+                    f"({TELEGRAM_AGENT_REPLY_BODY_TAIL_307!r})"
+                ),
+            )
 
             assert_wiremock_telegram_e2e_openai_coverage(
                 base,
