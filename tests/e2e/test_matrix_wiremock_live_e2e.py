@@ -56,6 +56,7 @@ from .toolkit import (
 from .wiremock_client import (
     WiremockCorrelation,
     assert_wiremock_matrix_e2e_openai_coverage,
+    assert_wiremock_transport_egress_via_state,
     journal_has_compose_bootstrap_request,
     journal_has_request,
     log_wiremock_correlation_journal,
@@ -130,32 +131,19 @@ def test_live_matrix_wiremock_full_contour_on_running_stack(
             room_name="E2E Matrix Live Room",
         )
 
-        def _matrix_send_put_seen() -> bool | None:
-            if journal_has_request(
-                base,
-                stub_tag=test_id,
-                method="PUT",
-                url_contains="send/m.room.message",
-            ):
-                return True
-            return None
-
+        # Контур matrix по STATE (без journal): room_send egress записал ответ агента
+        # ('ok matrix wiremock live e2e') в content-flag saw_egress_edit (по thread-root); LLM-фазы —
+        # call_sites. Egress асинхронный (нет GreenMail-барьера) → поллим флаг. У matrix нет отдельного
+        # placeholder-вызова (один PUT room.message) → require_send_flag=False. Без stub_tag/журнала.
         try:
-            poll_until(
-                _matrix_send_put_seen,
-                timeout=TIMEOUT_POLL_SHORT,
-                interval=3.0,
-                desc="WireMock journal: PUT Matrix m.room.message send",
+            assert_wiremock_transport_egress_via_state(
+                base, correlation_key=correlation_key, require_send_flag=False
             )
         finally:
             try:
                 wiremock_matrix_unregister_room(base, room_id=room_id)
             except Exception:  # noqa: BLE001
                 pass
-
-        # Контур matrix (LLM + room_send egress в нужную комнату) проверен по WireMock выше; notmuch
-        # ARCHIVE-проверка (room token в архиве) была её более слабым дублем (docker-exec) — убрана.
-        assert_wiremock_matrix_e2e_openai_coverage(base, test_id=test_id)
 
 
 def _wait_bridge_matrix_duplicate_skip(project: str, *, event_id: str) -> None:
