@@ -1571,5 +1571,16 @@
         "total_tokens": 1
       }
     }
-  }
+  },
+  "serveEventListeners": [
+    {
+      "name": "recordState",
+      "parameters": {
+        "context": "{{request.headers.[X-Threlium-Thread-Root]}}",
+        "state": {
+          "lightrag_embedded": "1"
+        }
+      }
+    }
+  ]
 }

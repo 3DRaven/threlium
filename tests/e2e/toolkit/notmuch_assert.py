@@ -48,34 +48,42 @@ def poll_notmuch_positive(project_name: str, *, repo_root: Path | None = None) -
 
 
 def poll_lightrag_indexed_positive(
-    project_name: str, *, repo_root: Path | None = None, timeout: float | None = None
+    project_name: str,
+    *,
+    correlation_key: str,
+    repo_root: Path | None = None,
+    timeout: float | None = None,
 ) -> None:
-    """Wait until LightRAG drain has actually inserted data into vectordb.
+    """Wait until LightRAG embedded chunks **for this thread** — via WireMock state, not the global file.
 
-    Polls the FAISS chunks metadata sidecar (``faiss_index_chunks.index.meta.json``) file size
-    inside the SUT: an empty meta is ``{}`` (~2 bytes), a populated one is much larger, so a file
-    > 10 bytes means at least one chunk vector is stored. (We use FaissVectorDBStorage, not nano —
-    the binary ``.index`` even when empty is ~45 bytes, so the sidecar meta is the reliable signal.)
-    More reliable than ``tag:lightrag_indexed`` which fdm applies on archive copies before drain.
+    Индексация целиком завязана на вызовы стабов WireMock: эмбеддинг-стаб сценария (``006_embeddings_*``
+    и т.п.) на каждом обслуживании пишет ``recordState`` флаг ``lightrag_embedded`` в контекст,
+    ключёванный ЧИСТО по ``X-Threlium-Thread-Root`` (tag-free). Ждём именно этот флаг через probe-стаб
+    (HTTP), а не ``docker exec stat`` ГЛОБАЛЬНОГО ``faiss_index_chunks.index.meta.json``.
+
+    Почему так (урок ``-n2``): прежний ``stat`` (a) бил по ОДНОМУ общему faiss-файлу (не изолирован по
+    треду), (b) шёл через ``service_exec`` = ``docker exec``, который под ``-n2`` конкурирует/голодает →
+    poll выгорал по таймауту, хотя индексация шла (faiss рос). Флаг по thread-root: per-test изоляция,
+    дёшево (HTTP к WireMock), без зависимости от объёма журнала/faiss и без ``docker exec``. См. §3.6.
     """
-    root = repo_root or REPO_ROOT
+    from tests.e2e.wiremock_client import (  # noqa: PLC0415
+        wiremock_public_base,
+        wiremock_state_thread_root_property,
+    )
+
+    from .runtime import discover_runtime  # noqa: PLC0415
+
     w = float(timeout) if timeout is not None else float(TIMEOUT_POLL_SHORT)
-    cmd = [
-        "bash", "-lc",
-        "stat --printf='%s' /home/threlium/threlium/data/lightrag/faiss_index_chunks.index.meta.json 2>/dev/null || echo 0",
-    ]
+    rt = discover_runtime(project_name, repo_root=repo_root or REPO_ROOT)
+    wm = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
 
     def _probe() -> str | None:
-        r = service_exec(project_name, "sut", cmd, repo_root=root, timeout=30)
-        if r.returncode != 0:
-            return None
-        try:
-            sz = int((r.stdout or "").strip())
-        except ValueError:
-            return None
-        return str(sz) if sz > 10 else None
+        val = wiremock_state_thread_root_property(wm, correlation_key, "lightrag_embedded")
+        return val if val == "1" else None
 
-    poll_until(_probe, timeout=w, interval=2.0, desc="vdb_chunks.json size > 10 bytes")
+    poll_until(
+        _probe, timeout=w, interval=2.0, desc="lightrag_embedded state flag (thread-root)"
+    )
 
 
 def wait_for_notmuch_message(

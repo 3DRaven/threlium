@@ -184,7 +184,9 @@ def _inject_rag_warmup(
     )
     mailflow_log_phase(f"{label}: rag warmup picked up (gone from INBOX, pipeline complete)")
 
-    poll_lightrag_indexed_positive(project_name, repo_root=REPO_ROOT)
+    poll_lightrag_indexed_positive(
+        project_name, correlation_key=warmup_corr, repo_root=REPO_ROOT
+    )
     _wait_rag_drain_idle(project_name, label=label)
     mailflow_log_phase(f"{label}: rag warmup indexed in vectordb")
 

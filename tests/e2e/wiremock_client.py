@@ -376,6 +376,28 @@ def wiremock_state_thread_root_list_size(
         return 0
 
 
+def wiremock_state_thread_root_property(
+    public_base: str, correlation_key: str, prop: str, *, timeout: float = TIMEOUT_POLL_SHORT
+) -> str:
+    """Значение свойства state-контекста, ключёванного ЧИСТО по thread-root (``X-Threlium-Thread-Root``).
+
+    Флаг/выжимка, записанная ``recordState`` на лету при обслуживании стаба (docs §3.6). Чтение —
+    через probe-стаб ``POST /__threlium/e2e/state/property`` (helper ``state``; Admin GET по имени
+    ломается на ``::``/``<``/``>``/``@``). Изоляция = коррелятор-заголовок (§2), без ``stub_tag``,
+    без скана журнала и без ``docker exec`` (HTTP) → устойчиво и дёшево на ``-n2``.
+    """
+    root = _normalize_wiremock_public_root(public_base)
+    url = f"{root}/__threlium/e2e/state/property"
+    r = _wm_session().post(
+        url, json={"correlation_key": correlation_key, "property": prop}, timeout=timeout
+    )
+    r.raise_for_status()
+    try:
+        return str(r.json().get("value") or "")
+    except (ValueError, AttributeError):
+        return ""
+
+
 def wiremock_state_reset_phase(
     public_base: str, correlation_key: str, *, timeout: float = TIMEOUT_POLL_SHORT
 ) -> None:

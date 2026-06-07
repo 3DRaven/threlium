@@ -1,27 +1,38 @@
 {
- "request": {
-  "method": "POST",
-  "urlPathPattern": "^(/v1/embeddings|/embeddings)$",
-  "bodyPatterns": [
-   {
-    "contains": "threlium_e2e_embed"
-   }
-  ],
-  "customMatcher": {
-   "name": "state-matcher",
-   "parameters": {
-    "hasContext": "stub-isomorph-anthropic-cline-e2e-01::{{request.headers.[X-Threlium-Thread-Root]}}"
-   }
-  }
- },
- "response": {
-  "status": 200,
-  "headers": {
-   "Content-Type": "application/json"
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "^(/v1/embeddings|/embeddings)$",
+    "bodyPatterns": [
+      {
+        "contains": "threlium_e2e_embed"
+      }
+    ],
+    "customMatcher": {
+      "name": "state-matcher",
+      "parameters": {
+        "hasContext": "stub-isomorph-anthropic-cline-e2e-01::{{request.headers.[X-Threlium-Thread-Root]}}"
+      }
+    }
   },
-  "transformers": [
-   "response-template"
-  ],
-  "body": "{{parseJson request.body 'r'}}{\"object\":\"list\",\"model\":\"openai/threlium_e2e_embed\",\"usage\":{\"prompt_tokens\":1,\"total_tokens\":1},\"data\":[{{#each r.input as |txt|}}{{#unless @first}},{{/unless}}{\"object\":\"embedding\",\"index\":{{@index}},\"embedding\":[{{#arrayJoin ',' (range 0 1535) as |d|}}{{#if @first}}0.01{{else}}0.0{{/if}}{{/arrayJoin}}]}{{/each}}]}"
- }
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "transformers": [
+      "response-template"
+    ],
+    "body": "{{parseJson request.body 'r'}}{\"object\":\"list\",\"model\":\"openai/threlium_e2e_embed\",\"usage\":{\"prompt_tokens\":1,\"total_tokens\":1},\"data\":[{{#each r.input as |txt|}}{{#unless @first}},{{/unless}}{\"object\":\"embedding\",\"index\":{{@index}},\"embedding\":[{{#arrayJoin ',' (range 0 1535) as |d|}}{{#if @first}}0.01{{else}}0.0{{/if}}{{/arrayJoin}}]}{{/each}}]}"
+  },
+  "serveEventListeners": [
+    {
+      "name": "recordState",
+      "parameters": {
+        "context": "{{request.headers.[X-Threlium-Thread-Root]}}",
+        "state": {
+          "lightrag_embedded": "1"
+        }
+      }
+    }
+  ]
 }

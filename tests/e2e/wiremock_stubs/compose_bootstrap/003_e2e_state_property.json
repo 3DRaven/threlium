@@ -1,0 +1,17 @@
+{
+  "id": "0de550cc-cad4-5243-aa6c-a8b8b9bebfd8",
+  "request": {
+    "method": "POST",
+    "urlPath": "/__threlium/e2e/state/property"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "transformers": [
+      "response-template"
+    ],
+    "body": "{\"value\": \"{{state context=(jsonPath request.body '$.correlation_key') property=(jsonPath request.body '$.property') default=''}}\"}"
+  }
+}
