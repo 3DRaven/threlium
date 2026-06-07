@@ -30,5 +30,18 @@
     "headers": {
       "Location": "{{request.baseUrl}}{{request.url}}"
     }
-  }
+  },
+  "serveEventListeners": [
+    {
+      "name": "recordState",
+      "parameters": {
+        "context": "{{request.headers.[X-Threlium-Thread-Root]}}",
+        "list": {
+          "addLast": {
+            "cs": "{{request.headers.[X-Threlium-Call-Site]}}"
+          }
+        }
+      }
+    }
+  ]
 }

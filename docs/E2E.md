@@ -239,6 +239,33 @@ helper `state` (чтение текущего контекста). То есть
 (паттерн фаз §3.3). Рекомендация: где assert сейчас зависит от полноты журнала (подсчёт LLM-POST, поиск по
 `needle`), переноси на state-счётчик/флаг — устойчивее на `-n2`.
 
+### 3.6.1. Единый call-site recorder + state-asserts (итоговое состояние) ⭐
+
+**Целевая архитектура проверок** (uniform, единый подход): весь жизненный цикл сценария наблюдаем по
+вызовам моделей в WireMock, поэтому проверяем по **state**, а наружу ходим только в **GreenMail** (финальное
+письмо). Никаких `docker exec` (`service_exec`) в SUT для ассертов, никакого скана журнала, никакой изоляции
+по `stub_tag` — только коррелятор-заголовок `X-Threlium-Thread-Root` (§2).
+
+- **Static call-site recorder.** Каждый сценарный LLM-стаб (`chat/completions` + `embeddings` со
+  `state-matcher`) СТАТИЧЕСКИ несёт листенер
+  `recordState → list.addLast { cs: "{{request.headers.[X-Threlium-Call-Site]}}" }` в контекст,
+  ключёванный ЧИСТО по `{{request.headers.[X-Threlium-Thread-Root]}}` (tag-free). Так в state копится
+  **упорядоченный список call-site всего треда** (`ingress_distill → enrich_* → lightrag_* → reasoning →
+  summarize_thread_context → …`). Листенер — **в JSON стаба** (не инъекция в рантайме: динамическая
+  правка/генерация стабов запрещена, §6.4; «динамика» = статический recordState).
+- **Чтение — probe-стабы `compose_bootstrap/` (helper `state`, не Admin path):**
+  `POST /__threlium/e2e/state/call_sites` → `{"call_sites":[…]}` (helper
+  `wiremock_state_thread_root_call_sites`), `…/state/property`, `…/state/list_size`.
+- **Все прежние journal/docker-exec проверки выводятся из списка:** число LLM-POST = `len`; покрытие стадии
+  = `cs in call_sites`; summarize-count = `count('summarize_thread_context')`; lightrag-indexed =
+  `'lightrag_index' in call_sites` (заменил `docker exec stat` глобального faiss — тот под `-n2` голодал на
+  конкуренции docker-exec, см. §9). Терминальные стадии без LLM (`egress_router`/`egress_email`/`archive`)
+  подтверждаются **ответным письмом GreenMail**, а не стабом.
+- **Идеал (финальная фаза):** полный уход от `stub_tag` и `THRELIUM_WIREMOCK_COMPOSE_BOOTSTRAP_STUB_TAG`.
+  `id` запекается статически в каждый стаб; cold-reset `reset_non_bootstrap` оставляет по **множеству id
+  bootstrap-каталога** (а не по тегу); метаданные `stub_tag` исчезают вместе с journal-поиском. Итог: чистая
+  статика стабов + state-extension, изоляция только по thread-root, наружу — только GreenMail+WireMock.
+
 ---
 
 ## 4. Каналы: коррелятор + транспорт
@@ -380,13 +407,19 @@ strategy, polling через `tenacity` (`poll_until` fixed / `poll_until_backof
 GreenMail/IMAP/notmuch waiters, WireMock-журнал, ansible, диагностика. Контракт-константы — `E2E_BAKED_SUT_IMAGE`,
 `E2E_THRELIUM_USER`, `E2E_WIREMOCK_CONTAINER_PORT`, `E2E_REPLY_SUBJECT`/`E2E_REPLY_BODY_SNIPPET`, …
 
-**Стабы — только закоммиченный JSON.** Нормативно: маппинги живут в git как `wiremock_stubs/<тест>/*.json`;
-`compose_bootstrap/` — инфраструктурный (`recordState` setup/phase_reset, matrix/telegram register, embeddings
-readiness; тег `THRELIUM_WIREMOCK_COMPOSE_BOOTSTRAP_STUB_TAG` переживает cold reset). **Запрещено** собирать/
-патчить **тела** маппингов из pytest (временные каталоги, `replace`/Jinja2 по JSON, Python-сборка `mapping`).
-**Разрешено** в рантайме: `wiremock_state_*` (сид/reset контекста), `upsert_wiremock_mapping_directory`
-(стабильный `id` = `wiremock_stub_id_for_e2e_stub_relpath`, в metadata — `stub_tag` для фильтра журнала),
-`{{randomValue …}}` в ответах. `stub_tag` **не** выбирает стаб на стороне WM — он для журнала/cleanup.
+**Стабы — только статический закоммиченный JSON (нормативно).** Маппинги живут в git как
+`wiremock_stubs/<тест>/*.json`; `compose_bootstrap/` — инфраструктурный (`recordState` setup/phase_reset,
+matrix/telegram register, embeddings readiness, **state-readout probes** §3.6; тег
+`THRELIUM_WIREMOCK_COMPOSE_BOOTSTRAP_STUB_TAG` переживает cold reset). **Запрещена любая динамическая
+генерация/модификация стабов** — ни сборка/патч тел из pytest (временные каталоги, `replace`/Jinja2 по JSON,
+Python-сборка `mapping`), ни инъекция `serveEventListeners`/полей в загрузчике на лету. «Динамика» делается
+**внутри статического стаба**: `recordState`-листенер + `state`-helper (state-extension) считают/пишут
+состояние во время обслуживания — это и есть state-asserts (§3.6), которые и позволяют не генерировать стабы
+динамически. **Разрешено** в рантайме только: `wiremock_state_*` (сид/reset/чтение контекста),
+`upsert_wiremock_mapping_directory` (грузит JSON как есть; стабильный `id` =
+`wiremock_stub_id_for_e2e_stub_relpath`, в metadata — `stub_tag` для cleanup), `{{randomValue …}}` в ответах.
+`stub_tag` **не** выбирает стаб на стороне WM и **не** основа изоляции (изоляция = thread-root, §2) — он только
+для cleanup стабов.
 
 ### 6.5. Деплой в SUT + режимы прогона
 

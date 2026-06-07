@@ -37,7 +37,7 @@ from .wiremock_client import (
     find_wiremock_requests_by_body_contains,
     journal_entries_for_stub_tag,
     wiremock_public_base,
-    wiremock_state_thread_root_list_size,
+    wiremock_state_thread_root_call_sites,
     _journal_chat_completion_user_content,
     _journal_request_anchor_haystack,
     _wiremock_headers_get_ci,
@@ -75,11 +75,10 @@ SUMMARIZE_CONTEXT_SPEC = MailflowScenarioSpec(
 
 
 def _count_summarize_llm_posts(wm_base: str, *, correlation_key: str) -> int:
-    # Счётчик summarize_thread_context — по STATE (``recordState`` на лету в
-    # ``075_chat_summarize_context.json`` → ``list.addLast`` на каждый матч; читаем ``listSize``), а НЕ
-    # сканом журнала по ``stub_tag``. Изоляция = thread-root заголовок (§2/§3.6): устойчиво на ``-n2``
-    # (нет cross-tag, нет зависимости от ёмкости/вытеснения журнала). Образец миграции journal→state.
-    return wiremock_state_thread_root_list_size(wm_base, correlation_key)
+    # Счётчик summarize_thread_context — по единому STATE-списку call-site (generic recorder, §3.6),
+    # а не сканом журнала по ``stub_tag``. Изоляция = thread-root заголовок (§2): устойчиво на ``-n2``.
+    cs = wiremock_state_thread_root_call_sites(wm_base, correlation_key)
+    return sum(1 for c in cs if c == "summarize_thread_context")
 
 
 def _summarize_context_user_content_merged(

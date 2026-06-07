@@ -1,61 +1,74 @@
 {
- "request": {
-  "method": "POST",
-  "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
-  "headers": {
-   "X-Threlium-Call-Site": {
-    "equalTo": "reasoning"
-   }
-  },
-  "bodyPatterns": [
-   {
-    "matches": "(?s).*(openai/threlium_e2e_l0|threlium_e2e_l0).*"
-   },
-   {
-    "contains": "<envelope>"
-   },
-   {
-    "contains": "\"tools\""
-   }
-  ],
-  "customMatcher": {
-   "name": "state-matcher",
-   "parameters": {
-    "hasContext": "stub-isomorph-anthropic-cline-e2e-01::{{request.headers.[X-Threlium-Thread-Root]}}",
-    "hasProperty": "phase_tasks_ledger_done"
-   }
-  }
- },
- "response": {
-  "status": 200,
-  "headers": {
-   "Content-Type": "application/json"
-  },
-  "jsonBody": {
-   "id": "chatcmpl-e2e-wiremock-reasoning",
-   "object": "chat.completion",
-   "created": 0,
-   "model": "gpt-4o-mini",
-   "choices": [
-    {
-     "index": 0,
-     "finish_reason": "tool_calls",
-     "message": {
-      "role": "assistant",
-      "content": null,
-      "tool_calls": [
-       {
-        "id": "call_threlium_e2e_wiremock_reasoning",
-        "type": "function",
-        "function": {
-         "name": "response_finalize",
-         "arguments": "{\"reasoning\": \"e2e: finalizing response with verified content\", \"subject\": \"e2e reply\", \"verification_summary\": \"e2e: direct answer, content verified\", \"content\": \"ok from llm-mock isomorph-anthropic-cline-e2e\"}"
-        }
-       }
-      ]
-     }
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
+    "headers": {
+      "X-Threlium-Call-Site": {
+        "equalTo": "reasoning"
+      }
+    },
+    "bodyPatterns": [
+      {
+        "matches": "(?s).*(openai/threlium_e2e_l0|threlium_e2e_l0).*"
+      },
+      {
+        "contains": "<envelope>"
+      },
+      {
+        "contains": "\"tools\""
+      }
+    ],
+    "customMatcher": {
+      "name": "state-matcher",
+      "parameters": {
+        "hasContext": "stub-isomorph-anthropic-cline-e2e-01::{{request.headers.[X-Threlium-Thread-Root]}}",
+        "hasProperty": "phase_tasks_ledger_done"
+      }
     }
-   ]
-  }
- }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "id": "chatcmpl-e2e-wiremock-reasoning",
+      "object": "chat.completion",
+      "created": 0,
+      "model": "gpt-4o-mini",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "tool_calls",
+          "message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_threlium_e2e_wiremock_reasoning",
+                "type": "function",
+                "function": {
+                  "name": "response_finalize",
+                  "arguments": "{\"reasoning\": \"e2e: finalizing response with verified content\", \"subject\": \"e2e reply\", \"verification_summary\": \"e2e: direct answer, content verified\", \"content\": \"ok from llm-mock isomorph-anthropic-cline-e2e\"}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "serveEventListeners": [
+    {
+      "name": "recordState",
+      "parameters": {
+        "context": "{{request.headers.[X-Threlium-Thread-Root]}}",
+        "list": {
+          "addLast": {
+            "cs": "{{request.headers.[X-Threlium-Call-Site]}}"
+          }
+        }
+      }
+    }
+  ]
 }

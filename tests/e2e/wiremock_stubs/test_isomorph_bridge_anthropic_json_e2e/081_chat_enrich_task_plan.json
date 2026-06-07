@@ -1,54 +1,67 @@
 {
- "request": {
-  "method": "POST",
-  "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
-  "headers": {
-   "X-Threlium-Call-Site": {
-    "equalTo": "enrich_task_plan"
-   }
-  },
-  "bodyPatterns": [
-   {
-    "contains": "\"tools\""
-   }
-  ],
-  "customMatcher": {
-   "name": "state-matcher",
-   "parameters": {
-    "hasContext": "stub-isomorph-anthropic-json-e2e-01::{{request.headers.[X-Threlium-Thread-Root]}}"
-   }
-  }
- },
- "response": {
-  "status": 200,
-  "headers": {
-   "Content-Type": "application/json"
-  },
-  "jsonBody": {
-   "id": "chatcmpl-e2e-mailflow-enrich-task-plan",
-   "object": "chat.completion",
-   "created": 0,
-   "model": "gpt-4o-mini",
-   "choices": [
-    {
-     "index": 0,
-     "finish_reason": "tool_calls",
-     "message": {
-      "role": "assistant",
-      "content": null,
-      "tool_calls": [
-       {
-        "id": "call_enrich_task_plan_mailflow",
-        "type": "function",
-        "function": {
-         "name": "enrich_task_plan",
-         "arguments": "{\"subtasks\": [\"Summarize the user request for the mailflow smoke\"]}"
-        }
-       }
-      ]
-     }
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
+    "headers": {
+      "X-Threlium-Call-Site": {
+        "equalTo": "enrich_task_plan"
+      }
+    },
+    "bodyPatterns": [
+      {
+        "contains": "\"tools\""
+      }
+    ],
+    "customMatcher": {
+      "name": "state-matcher",
+      "parameters": {
+        "hasContext": "stub-isomorph-anthropic-json-e2e-01::{{request.headers.[X-Threlium-Thread-Root]}}"
+      }
     }
-   ]
-  }
- }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "id": "chatcmpl-e2e-mailflow-enrich-task-plan",
+      "object": "chat.completion",
+      "created": 0,
+      "model": "gpt-4o-mini",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "tool_calls",
+          "message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_enrich_task_plan_mailflow",
+                "type": "function",
+                "function": {
+                  "name": "enrich_task_plan",
+                  "arguments": "{\"subtasks\": [\"Summarize the user request for the mailflow smoke\"]}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "serveEventListeners": [
+    {
+      "name": "recordState",
+      "parameters": {
+        "context": "{{request.headers.[X-Threlium-Thread-Root]}}",
+        "list": {
+          "addLast": {
+            "cs": "{{request.headers.[X-Threlium-Call-Site]}}"
+          }
+        }
+      }
+    }
+  ]
 }

@@ -68,7 +68,7 @@ def poll_lightrag_indexed_positive(
     """
     from tests.e2e.wiremock_client import (  # noqa: PLC0415
         wiremock_public_base,
-        wiremock_state_thread_root_property,
+        wiremock_state_thread_root_call_sites,
     )
 
     from .runtime import discover_runtime  # noqa: PLC0415
@@ -78,11 +78,11 @@ def poll_lightrag_indexed_positive(
     wm = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
 
     def _probe() -> str | None:
-        val = wiremock_state_thread_root_property(wm, correlation_key, "lightrag_embedded")
-        return val if val == "1" else None
+        cs = wiremock_state_thread_root_call_sites(wm, correlation_key)
+        return "1" if "lightrag_index" in cs else None
 
     poll_until(
-        _probe, timeout=w, interval=2.0, desc="lightrag_embedded state flag (thread-root)"
+        _probe, timeout=w, interval=2.0, desc="lightrag_index call-site (thread-root state)"
     )
 
 

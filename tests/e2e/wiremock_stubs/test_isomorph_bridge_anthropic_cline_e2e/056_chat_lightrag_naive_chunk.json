@@ -1,60 +1,73 @@
 {
- "request": {
-  "method": "POST",
-  "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
-  "headers": {
-   "X-Threlium-Call-Site": {
-    "equalTo": "generate_rag_answer"
-   }
-  },
-  "bodyPatterns": [
-   {
-    "matches": "(?s).*(openai/threlium_e2e_l0|threlium_e2e_l0).*"
-   },
-   {
-    "matches": "(?s)(?!.*Knowledge Graph Data \\(Entity\\):)(?!.*---Data to be Processed---).*(?:X-Threlium-LightRAG-Chunk:\\s*\\d+).*"
-   },
-   {
-    "contains": "\"tools\""
-   }
-  ],
-  "customMatcher": {
-   "name": "state-matcher",
-   "parameters": {
-    "hasContext": "stub-isomorph-anthropic-cline-e2e-01::{{request.headers.[X-Threlium-Thread-Root]}}"
-   }
-  }
- },
- "response": {
-  "status": 200,
-  "headers": {
-   "Content-Type": "application/json"
-  },
-  "jsonBody": {
-   "id": "chatcmpl-e2e-wiremock-naive",
-   "object": "chat.completion",
-   "created": 0,
-   "model": "gpt-4o-mini",
-   "choices": [
-    {
-     "index": 0,
-     "finish_reason": "tool_calls",
-     "message": {
-      "role": "assistant",
-      "content": null,
-      "tool_calls": [
-       {
-        "id": "call_lightrag_056_chat_lightrag_naive_chunk",
-        "type": "function",
-        "function": {
-         "name": "generate_rag_answer",
-         "arguments": "{\"answer\": \"E2e naive RAG stub: no grounded answer in mock (use graph path in e2e).\"}"
-        }
-       }
-      ]
-     }
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
+    "headers": {
+      "X-Threlium-Call-Site": {
+        "equalTo": "generate_rag_answer"
+      }
+    },
+    "bodyPatterns": [
+      {
+        "matches": "(?s).*(openai/threlium_e2e_l0|threlium_e2e_l0).*"
+      },
+      {
+        "matches": "(?s)(?!.*Knowledge Graph Data \\(Entity\\):)(?!.*---Data to be Processed---).*(?:X-Threlium-LightRAG-Chunk:\\s*\\d+).*"
+      },
+      {
+        "contains": "\"tools\""
+      }
+    ],
+    "customMatcher": {
+      "name": "state-matcher",
+      "parameters": {
+        "hasContext": "stub-isomorph-anthropic-cline-e2e-01::{{request.headers.[X-Threlium-Thread-Root]}}"
+      }
     }
-   ]
-  }
- }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "id": "chatcmpl-e2e-wiremock-naive",
+      "object": "chat.completion",
+      "created": 0,
+      "model": "gpt-4o-mini",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "tool_calls",
+          "message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_lightrag_056_chat_lightrag_naive_chunk",
+                "type": "function",
+                "function": {
+                  "name": "generate_rag_answer",
+                  "arguments": "{\"answer\": \"E2e naive RAG stub: no grounded answer in mock (use graph path in e2e).\"}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "serveEventListeners": [
+    {
+      "name": "recordState",
+      "parameters": {
+        "context": "{{request.headers.[X-Threlium-Thread-Root]}}",
+        "list": {
+          "addLast": {
+            "cs": "{{request.headers.[X-Threlium-Call-Site]}}"
+          }
+        }
+      }
+    }
+  ]
 }

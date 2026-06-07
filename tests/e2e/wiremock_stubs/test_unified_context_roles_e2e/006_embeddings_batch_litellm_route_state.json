@@ -29,8 +29,10 @@
       "name": "recordState",
       "parameters": {
         "context": "{{request.headers.[X-Threlium-Thread-Root]}}",
-        "state": {
-          "lightrag_embedded": "1"
+        "list": {
+          "addLast": {
+            "cs": "{{request.headers.[X-Threlium-Call-Site]}}"
+          }
         }
       }
     }

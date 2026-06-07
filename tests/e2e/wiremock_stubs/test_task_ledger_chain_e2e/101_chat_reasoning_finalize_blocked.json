@@ -72,6 +72,17 @@
           "phase_finalize_blocked_done": "1"
         }
       }
+    },
+    {
+      "name": "recordState",
+      "parameters": {
+        "context": "{{request.headers.[X-Threlium-Thread-Root]}}",
+        "list": {
+          "addLast": {
+            "cs": "{{request.headers.[X-Threlium-Call-Site]}}"
+          }
+        }
+      }
     }
   ]
 }

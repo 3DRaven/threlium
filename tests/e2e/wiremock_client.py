@@ -398,6 +398,30 @@ def wiremock_state_thread_root_property(
         return ""
 
 
+def wiremock_state_thread_root_call_sites(
+    public_base: str, correlation_key: str, *, timeout: float = TIMEOUT_POLL_SHORT
+) -> list[str]:
+    """Список ``X-Threlium-Call-Site`` всех LLM-вызовов треда (порядок обслуживания стабов).
+
+    Единый источник жизненного цикла в state (docs §3.6): generic call-site recorder (см.
+    :func:`_maybe_inject_call_site_recorder`) на каждый chat/completions+embeddings пишет call-site в
+    list контекста по thread-root. Отсюда выводятся ВСЕ прежние journal/docker-exec проверки:
+    подсчёт LLM-POST (``len``), покрытие стадии (``in``), summarize-count
+    (``count('summarize_thread_context')``), lightrag-indexed (``'lightrag_index' in``). Изоляция —
+    коррелятор-заголовок (§2), без ``stub_tag``/журнала/``docker exec``. Читается probe-стабом
+    ``POST /__threlium/e2e/state/call_sites`` (helper ``state list='$..cs'``).
+    """
+    root = _normalize_wiremock_public_root(public_base)
+    url = f"{root}/__threlium/e2e/state/call_sites"
+    r = _wm_session().post(url, json={"correlation_key": correlation_key}, timeout=timeout)
+    r.raise_for_status()
+    try:
+        cs = r.json().get("call_sites")
+    except (ValueError, AttributeError):
+        return []
+    return [str(x) for x in cs] if isinstance(cs, list) else []
+
+
 def wiremock_state_reset_phase(
     public_base: str, correlation_key: str, *, timeout: float = TIMEOUT_POLL_SHORT
 ) -> None:

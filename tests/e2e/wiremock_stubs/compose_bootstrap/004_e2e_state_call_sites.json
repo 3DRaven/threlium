@@ -1,0 +1,17 @@
+{
+  "id": "92464890-ec08-52ec-ada6-6a621b325bf9",
+  "request": {
+    "method": "POST",
+    "urlPath": "/__threlium/e2e/state/call_sites"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "transformers": [
+      "response-template"
+    ],
+    "body": "{\"call_sites\": {{state context=(jsonPath request.body '$.correlation_key') list='$..cs' default='[]'}} }"
+  }
+}

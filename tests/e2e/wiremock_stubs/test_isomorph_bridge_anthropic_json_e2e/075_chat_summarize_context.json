@@ -1,57 +1,70 @@
 {
- "request": {
-  "method": "POST",
-  "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
-  "headers": {
-   "X-Threlium-Call-Site": {
-    "equalTo": "summarize_thread_context"
-   }
-  },
-  "bodyPatterns": [
-   {
-    "contains": "\"tools\""
-   }
-  ],
-  "customMatcher": {
-   "name": "state-matcher",
-   "parameters": {
-    "hasContext": "stub-isomorph-anthropic-json-e2e-01::{{request.headers.[X-Threlium-Thread-Root]}}"
-   }
-  }
- },
- "response": {
-  "status": 200,
-  "headers": {
-   "Content-Type": "application/json"
-  },
-  "transformers": [
-   "response-template"
-  ],
-  "jsonBody": {
-   "id": "chatcmpl-e2e-stub-isomorph-anthropic-json-e2e-01-summarize-context",
-   "object": "chat.completion",
-   "created": 0,
-   "model": "gpt-4o-mini",
-   "choices": [
-    {
-     "index": 0,
-     "finish_reason": "tool_calls",
-     "message": {
-      "role": "assistant",
-      "content": null,
-      "tool_calls": [
-       {
-        "id": "call_summarize_stub-isomorph-anthropic-json-e2e-01",
-        "type": "function",
-        "function": {
-         "name": "summarize_thread_context",
-         "arguments": "{\"summary\": \"E2E summarize context stub for token overflow in enrich\"}"
-        }
-       }
-      ]
-     }
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
+    "headers": {
+      "X-Threlium-Call-Site": {
+        "equalTo": "summarize_thread_context"
+      }
+    },
+    "bodyPatterns": [
+      {
+        "contains": "\"tools\""
+      }
+    ],
+    "customMatcher": {
+      "name": "state-matcher",
+      "parameters": {
+        "hasContext": "stub-isomorph-anthropic-json-e2e-01::{{request.headers.[X-Threlium-Thread-Root]}}"
+      }
     }
-   ]
-  }
- }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "transformers": [
+      "response-template"
+    ],
+    "jsonBody": {
+      "id": "chatcmpl-e2e-stub-isomorph-anthropic-json-e2e-01-summarize-context",
+      "object": "chat.completion",
+      "created": 0,
+      "model": "gpt-4o-mini",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "tool_calls",
+          "message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_summarize_stub-isomorph-anthropic-json-e2e-01",
+                "type": "function",
+                "function": {
+                  "name": "summarize_thread_context",
+                  "arguments": "{\"summary\": \"E2E summarize context stub for token overflow in enrich\"}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "serveEventListeners": [
+    {
+      "name": "recordState",
+      "parameters": {
+        "context": "{{request.headers.[X-Threlium-Thread-Root]}}",
+        "list": {
+          "addLast": {
+            "cs": "{{request.headers.[X-Threlium-Call-Site]}}"
+          }
+        }
+      }
+    }
+  ]
 }

@@ -61,7 +61,7 @@
         "context": "{{request.headers.[X-Threlium-Thread-Root]}}",
         "list": {
           "addLast": {
-            "summarize_hit": "1"
+            "cs": "{{request.headers.[X-Threlium-Call-Site]}}"
           }
         }
       }
