@@ -77,6 +77,9 @@
           "addLast": {
             "cs": "{{request.headers.[X-Threlium-Call-Site]}}"
           }
+        },
+        "state": {
+          "saw_route_collision_observation": "{{#if (contains request.body 'FSM reasoning route exposed as a separate tool')}}1{{else}}{{state context=request.headers.[X-Threlium-Thread-Root] property='saw_route_collision_observation' default='0'}}{{/if}}"
         }
       }
     }

@@ -22,8 +22,8 @@ from .toolkit import (
     service_exec,
 )
 from .wiremock_client import (
-    wait_for_wiremock_stub_journal_contains,
     wiremock_public_base,
+    wiremock_state_thread_root_property,
 )
 
 _WIREMOCK_STUBS_ROOT = Path(__file__).resolve().parent / "wiremock_stubs"
@@ -71,23 +71,22 @@ CLI_DISCOVERY_CHAIN_SPEC = MailflowScenarioSpec(
 )
 
 
-def _assert_cli_stdout_in_reasoning_journal(
-    project: str, stub_tag: str, correlation_key: str
+def _assert_cli_stdout_in_reasoning_state(
+    project: str, correlation_key: str
 ) -> None:
-    """cli_exec stdout must reach reasoning via enrich_fast relay (LLM prompt).
+    """cli_exec stdout must reach reasoning via enrich_fast relay (LLM prompt) — по STATE.
 
-    «На диске в ENRICH_FAST-папке» (раньше notmuch docker-exec) избыточно: следующая journal-проверка
-    подтверждает попадание stdout в reasoning-ПРОМПТ — строго сильнее (дошёл до LLM, а не только лёг в
-    папку), и без захода в контейнер. См. §3.6.1 / Phase 3."""
+    «На диске в ENRICH_FAST-папке» (notmuch docker-exec) избыточно; вместо journal-скана читаем
+    content-flag ``saw_cli_stdout``, записанный на лету post-cli reasoning-стабом, когда stdout-маркер
+    попал в его промпт — строго сильнее (дошёл до LLM, а не только лёг в папку), дёшево из state, без
+    захода в контейнер и без скана журнала. Прямое чтение после барьера ответа GreenMail
+    (``assert_full_mailflow_pipeline``) — time-independent. См. §3.6.1 / §3.6.2."""
     rt = discover_runtime(project, repo_root=REPO_ROOT)
     wm_base = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
-    wait_for_wiremock_stub_journal_contains(
-        wm_base,
-        stub_tag=stub_tag,
-        needle=E2E_CLI_DISCOVERY_STDOUT,
-        anchor_needle=correlation_key,
-    )
-    log.info("cli_discovery_stdout_verified", stub_tag=stub_tag)
+    assert (
+        wiremock_state_thread_root_property(wm_base, correlation_key, "saw_cli_stdout") == "1"
+    ), f"cli_exec stdout marker {E2E_CLI_DISCOVERY_STDOUT!r} must reach reasoning (state saw_cli_stdout)"
+    log.info("cli_discovery_stdout_verified", correlation_key=correlation_key)
 
 
 
@@ -113,9 +112,7 @@ def test_cli_discovery_chain_full_pipeline(
                 stub_tag=stub_tag,
                 correlation_key=correlation_key,
             )
-            _assert_cli_stdout_in_reasoning_journal(
-                project, stub_tag, correlation_key
-            )
+            _assert_cli_stdout_in_reasoning_state(project, correlation_key)
         except Exception:
             log.debug(
                 "failure_artifacts",
@@ -155,20 +152,24 @@ CLI_ROUTE_COLLISION_SPEC = MailflowScenarioSpec(
 )
 
 
-def _assert_route_collision_observation_in_journal(
-    project: str, stub_tag: str, correlation_key: str
+def _assert_route_collision_observation_in_state(
+    project: str, correlation_key: str
 ) -> None:
-    # ENRICH_FAST-папка (notmuch docker-exec) избыточна: journal-проверка ниже подтверждает попадание
-    # observation в reasoning-промпт (сильнее, без контейнера). §3.6.1 / Phase 3.
+    # ENRICH_FAST-папка (notmuch docker-exec) избыточна; вместо journal-скана читаем content-flag
+    # saw_route_collision_observation, записанный post-collision reasoning-стабом при попадании observation
+    # в его промпт (сильнее, дёшево из state, без контейнера/журнала). §3.6.1 / §3.6.2.
     rt = discover_runtime(project, repo_root=REPO_ROOT)
     wm_base = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
-    wait_for_wiremock_stub_journal_contains(
-        wm_base,
-        stub_tag=stub_tag,
-        needle=E2E_ROUTE_COLLISION_OBSERVATION,
-        anchor_needle=correlation_key,
+    assert (
+        wiremock_state_thread_root_property(
+            wm_base, correlation_key, "saw_route_collision_observation"
+        )
+        == "1"
+    ), (
+        f"route-collision observation {E2E_ROUTE_COLLISION_OBSERVATION!r} must reach reasoning "
+        "(state saw_route_collision_observation)"
     )
-    log.info("cli_route_collision_observation_verified", stub_tag=stub_tag)
+    log.info("cli_route_collision_observation_verified", correlation_key=correlation_key)
 
 
 
@@ -193,9 +194,7 @@ def test_cli_route_collision_enrich_fast_not_cli_exec(
                 stub_tag=stub_tag,
                 correlation_key=correlation_key,
             )
-            _assert_route_collision_observation_in_journal(
-                project, stub_tag, correlation_key
-            )
+            _assert_route_collision_observation_in_state(project, correlation_key)
         except Exception:
             log.debug(
                 "failure_artifacts",
