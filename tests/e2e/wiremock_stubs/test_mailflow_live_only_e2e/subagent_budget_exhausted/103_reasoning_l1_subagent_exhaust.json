@@ -68,6 +68,17 @@
           "phase_l1_subagent_attempted": "1"
         }
       }
+    },
+    {
+      "name": "recordState",
+      "parameters": {
+        "context": "{{request.headers.[X-Threlium-Thread-Root]}}",
+        "list": {
+          "addLast": {
+            "cs": "{{request.headers.[X-Threlium-Call-Site]}}"
+          }
+        }
+      }
     }
   ]
 }

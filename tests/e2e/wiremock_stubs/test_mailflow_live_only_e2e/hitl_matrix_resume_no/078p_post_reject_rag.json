@@ -64,5 +64,18 @@
       "тот же запрос, что и post-classified, но раньше для неё не было стаба → unmatched generate_rag_answer.",
       "Гейт hasProperty live_hitl_h03_reject, по аналогии с 078n_post_reject_absorb_lightrag."
     ]
-  }
+  },
+  "serveEventListeners": [
+    {
+      "name": "recordState",
+      "parameters": {
+        "context": "{{request.headers.[X-Threlium-Thread-Root]}}",
+        "list": {
+          "addLast": {
+            "cs": "{{request.headers.[X-Threlium-Call-Site]}}"
+          }
+        }
+      }
+    }
+  ]
 }

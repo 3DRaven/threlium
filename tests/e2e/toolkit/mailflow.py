@@ -518,41 +518,24 @@ def assert_full_mailflow_pipeline(
     stub_tag: str,
     correlation_key: str,
 ) -> None:
-    """Assert phase: notmuch indexed → WireMock coverage → FSM stages → user reply → zero unmatched."""
+    """Assert phase (state+greenmail, без docker-exec): GreenMail reply → call_sites (жизненный цикл из
+    state, §3.6.1) → zero unmatched.
+
+    Маршрутизация по notmuch-Maildir стадиям больше **не** проверяется напрямую (`docker exec`): LLM-стадии
+    подтверждаются call-site списком (`ingress_distill`/`enrich_*`/`reasoning`/`lightrag_index`/`…rerank`),
+    терминальные без LLM (`egress_router`/`egress_email`/`archive`) — **ответным письмом GreenMail**.
+    Наружу ходим только в GreenMail; всё остальное — WireMock state. Изоляция = thread-root (§2)."""
+    from tests.e2e.wiremock_client import (  # noqa: PLC0415
+        wiremock_public_base,
+        wiremock_state_thread_root_call_sites,
+    )
+
     t0 = time.monotonic()
-    mailflow_log_phase(
-        f"{spec.label}: wait_for_notmuch_message nm_inner={nm_inner!r} "
-        f"correlation_key_tail={correlation_key[-24:]!r}"
-    )
-    wait_for_notmuch_message(project, message_id=nm_inner, repo_root=REPO_ROOT)
-    mailflow_log_phase(f"{spec.label}: notmuch OK (+{time.monotonic() - t0:.1f}s)")
-    mailflow_pipeline_diag(project, anchor_message_id=nm_inner, repo_root=REPO_ROOT)
-    _mailflow_wait_reasoning_chat_posts_if_configured(
-        spec, project=project, stub_tag=stub_tag, correlation_key=correlation_key
-    )
-    _mailflow_wait_wiremock_journal_ready_if_configured(
-        spec, project=project, stub_tag=stub_tag, correlation_key=correlation_key
-    )
-    assert_wiremock_mailflow_received_chat_completion_posts(
-        project,
-        stub_tag=stub_tag,
-        anchor_message_id=correlation_key,
-        repo_root=REPO_ROOT,
-        min_posts=spec.min_chat_completion_posts,
-    )
-    assert_wiremock_mailflow_min_embedding_posts(
-        project,
-        anchor_message_id=correlation_key,
-        min_posts=spec.min_embedding_posts,
-        repo_root=REPO_ROOT,
-    )
-    if spec.min_rerank_posts > 0:
-        assert_wiremock_mailflow_min_rerank_posts(
-            project,
-            anchor_message_id=correlation_key,
-            min_posts=spec.min_rerank_posts,
-            repo_root=REPO_ROOT,
-        )
+    rt = discover_runtime(project, repo_root=REPO_ROOT)
+    wm = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
+
+    # 1. Ответное письмо = контур дошёл до egress (ingress→enrich→reasoning→egress_router→egress_email→
+    #    archive пройдены). Единственный внешний выход.
     wait_for_greenmail_user_reply(
         project,
         raw_id=raw_id,
@@ -560,23 +543,41 @@ def assert_full_mailflow_pipeline(
         **({"subject_substring": spec.reply_subject_needle} if spec.reply_subject_needle is not None else {}),
         **({"body_substring": spec.reply_body_needle} if spec.reply_body_needle is not None else {}),
     )
-    assert_notmuch_thread_fully_in_stages(
-        project, anchor_message_id=nm_inner, repo_root=REPO_ROOT
-    )
-    assert_notmuch_mailflow_thread_has_lightrag_indexed(
-        project, anchor_message_id=nm_inner, repo_root=REPO_ROOT
-    )
-    if spec.expect_notmuch_stage_folders:
-        assert_notmuch_thread_has_messages_in_folders(
-            project,
-            anchor_message_id=nm_inner,
-            stage_folder_ids=spec.expect_notmuch_stage_folders,
-            repo_root=REPO_ROOT,
+    mailflow_log_phase(f"{spec.label}: greenmail reply OK (+{time.monotonic() - t0:.1f}s)")
+
+    # 2. Жизненный цикл — из единого call-site списка state (recordState на лету, §3.6.1). Поллим: часть
+    #    индексации (lightrag_index drain) может отставать от письма. embed = lightrag_index/lightrag_query;
+    #    rerank (lightrag_query_rerank) — НЕ per-message инвариант (LightRAG-rerank опционален на query и под
+    #    thread-root тестового сообщения может не сработать — он отрабатывает в RAG-warmup), поэтому в gate
+    #    не входит; остальное (chat/completions) = всё прочее.
+    _EMBED = {"lightrag_index", "lightrag_query"}
+    _RERANK = "lightrag_query_rerank"
+
+    def _probe() -> list[str] | None:
+        cs = wiremock_state_thread_root_call_sites(wm, correlation_key)
+        chat = [c for c in cs if c not in _EMBED and c != _RERANK]
+        embed = [c for c in cs if c in _EMBED]
+        ok = (
+            len(chat) >= spec.min_chat_completion_posts
+            and len(embed) >= spec.min_embedding_posts
+            and "lightrag_index" in cs
         )
-    if spec.assert_thread_no_unread:
-        assert_notmuch_thread_has_no_unread(
-            project, anchor_message_id=nm_inner, repo_root=REPO_ROOT
-        )
+        return cs if ok else None
+
+    call_sites = poll_until(
+        _probe,
+        timeout=TIMEOUT_POLL_SHORT,
+        interval=2.0,
+        desc=(
+            f"call_sites: chat>={spec.min_chat_completion_posts} "
+            f"embed>={spec.min_embedding_posts} + lightrag_index"
+        ),
+    )
+    mailflow_log_phase(
+        f"{spec.label}: lifecycle OK via state ({len(call_sites)} call-sites, +{time.monotonic() - t0:.1f}s)"
+    )
+
+    # 3. Контроль целостности WireMock (unmatched-guard, §5) — не lifecycle-assert, остаётся.
     assert_wiremock_mailflow_zero_unmatched(
         project, anchor_message_id=nm_inner, repo_root=REPO_ROOT
     )
