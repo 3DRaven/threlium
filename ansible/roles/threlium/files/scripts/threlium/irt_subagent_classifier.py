@@ -91,8 +91,12 @@ def hop_from_intent_parent(ancestor: SubagentIntentAncestorHeaders) -> HopBudget
     return ancestor.hop
 
 
+@nm.read_retry
 def _parent_hop_headers(inner: NotmuchMessageIdInner) -> SubagentIntentAncestorHeaders:
-    """Снять hop с письма ``inner`` под отдельным read-сеансом."""
+    """Снять hop с письма ``inner``: открыть БД, быстро материализовать VO, закрыть.
+
+    ``@nm.read_retry`` — ``notmuch2.Message`` не покидает сеанс; при discard'е ревизии под
+    конкурентной записью сеанс переоткрывается (см. ``docs/TYPES.md`` «границы API»)."""
     with nm.notmuch_database(write=False) as db:
         msg = nm.first_notmuch_message_for_inner_id(db, inner)
         if msg is None:

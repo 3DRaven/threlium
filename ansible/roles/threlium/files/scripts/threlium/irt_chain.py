@@ -203,14 +203,16 @@ def materialize_irt_chain_under_db(
     return _materialize_irt_chain(db, start_inner)
 
 
+@nm.read_retry
 def iter_in_reply_to_ancestors_from_inner_id(
     start_inner: NotmuchMessageIdInner,
 ) -> list[IrtAncestorSnapshot]:
-    """Лист → корень: мгновенная материализация под одним read-сеансом notmuch.
+    """Лист → корень: открыть БД, БЫСТРО материализовать цепочку в иммутабельные ``IrtAncestorSnapshot``,
+    закрыть; дальше — только VO (``docs/TYPES.md`` «границы API», ``docs/THREAD_MODEL.md`` §3).
 
-    Xapian-курсор закрывается сразу после вычитки; возвращённые снимки
-    ``IrtAncestorSnapshot`` валидны бессрочно (иммутабельные ``frozen dataclass``).
-    """
+    ``@nm.read_retry``: ни один ``notmuch2.Message`` не покидает сеанс; при discard'е ревизии под
+    конкурентной записью сеанс переоткрывается и материализуется заново (idempotent — наружу только
+    frozen-снимки)."""
     with nm.notmuch_database(write=False) as db:
         return _materialize_irt_chain(db, start_inner)
 

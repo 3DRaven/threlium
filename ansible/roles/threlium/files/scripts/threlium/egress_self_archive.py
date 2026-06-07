@@ -95,6 +95,14 @@ def find_existing_egress_archive(
     q = IrtHashWire.from_irt_header_value(
         task_mid.as_angle_bracket_header()
     ).as_notmuch_index_term()
+    return _find_existing_egress_archive_by_query(q)
+
+
+@nm.read_retry
+def _find_existing_egress_archive_by_query(q: str) -> ExistingEgressArchive | None:
+    """Открыть → быстро материализовать glue-MID в VO → закрыть; ``Message`` не покидает сеанс.
+
+    ``@nm.read_retry`` переоткрывает БД при discard'е ревизии под конкурентной записью."""
     with nm.notmuch_database(write=False) as db:
         msg = nm.first_message_for_query(db, q, newest_first=True)
         if msg is None:

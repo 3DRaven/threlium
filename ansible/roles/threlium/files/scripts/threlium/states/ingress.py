@@ -24,6 +24,7 @@ from threlium.mime_reform import (
 )
 from threlium import nm
 from threlium.types.ingress_hitl import (
+    HitlParentRouting,
     HitlParentWithIntent,
     HitlParentWithoutIntent,
     classify_hitl_parent_notmuch,
@@ -37,6 +38,7 @@ from threlium.types import (
     IngressRouterChildMsg,
     MailHeaderName,
     OrphanNoticePrefixLine,
+    RfcInReplyToWire,
     RfcSubjectWire,
     bridge_channel_from_email,
 )
@@ -125,13 +127,31 @@ def main(
     if irt_wire is None:
         return _emit_bridge_distill_to_enrich(msg, stage, config=config)
 
-    with nm.open_parent_message_for_in_reply_to(irt_wire) as parent_msg:
-        if parent_msg is None:
-            log.info("irt_parent_not_found_orphan")
-            return _emit_bridge_distill_to_enrich(msg, stage, orphan=True, config=config)
+    # Резолв родителя по IRT + HITL-классификация — в ОДНОМ коротком READ-сеансе, материализуем плоский
+    # HitlParentRouting (None = orphan); ``notmuch2.Message`` не покидает сеанс. LLM-эмиссия (distill /
+    # cli_resume) — ВНЕ сеанса (не идемпотентна). ``docs/TYPES.md`` «границы API».
+    routing = _classify_ingress_parent_routing(irt_wire)
+    if routing is None:
+        log.info("irt_parent_not_found_orphan")
+        return _emit_bridge_distill_to_enrich(msg, stage, orphan=True, config=config)
 
-        match classify_hitl_parent_notmuch(parent_msg):
-            case HitlParentWithoutIntent():
-                return _emit_bridge_distill_to_enrich(msg, stage, config=config)
-            case HitlParentWithIntent():
-                return _emit_to_cli_resume(msg, stage, config=config)
+    match routing:
+        case HitlParentWithoutIntent():
+            return _emit_bridge_distill_to_enrich(msg, stage, config=config)
+        case HitlParentWithIntent():
+            return _emit_to_cli_resume(msg, stage, config=config)
+
+
+@nm.read_retry
+def _classify_ingress_parent_routing(
+    irt_wire: RfcInReplyToWire,
+) -> HitlParentRouting | None:
+    """Открыть БД, найти родителя по IRT и классифицировать HITL → плоский VO (``None`` = orphan).
+
+    ``@nm.read_retry``: при discard'е ревизии под конкурентной записью сеанс (lookup + обход предков)
+    переоткрывается и материализуется заново; наружу — только ``HitlParentRouting`` / ``None``."""
+    with nm.notmuch_database(write=False) as db:
+        parent_msg = nm.parent_message_for_in_reply_in_db(db, irt_wire)
+        if parent_msg is None:
+            return None
+        return classify_hitl_parent_notmuch(db, parent_msg)

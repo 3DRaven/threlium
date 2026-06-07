@@ -467,68 +467,70 @@ def process_inbox_tail(
         found=len(uids),
     )
 
-    with nm.notmuch_database(write=False) as db:
-        for uid_int in uids:
-            uid = imap_folder_uid_from_int(uid_int)
-            uid_s = imap_folder_uid_as_imaplib_arg(uid)
-            head = parse_rfc822(
-                _imap_rfc822_by_uid(mailbox, uid, mark_seen=False, headers_only=True)
-            )
-            prev_inner = _incoming_inner_mid(head, uid)
-            mid_nm = NotmuchMessageIdInner.from_present_wire(
-                _bridge_wire_from_angle_inner(prev_inner)
-            )
+    # БЕЗ удержания read-db через IMAP I/O (контракт nm.py): каждая dedup/orphan-проверка —
+    # короткий self-opening сеанс ``nm.notmuch_index_has_message_id`` (``@nm.read_retry``,
+    # reopen-on-modified при cross-process записи движка/fdm). ``docs/TYPES.md`` «границы API».
+    for uid_int in uids:
+        uid = imap_folder_uid_from_int(uid_int)
+        uid_s = imap_folder_uid_as_imaplib_arg(uid)
+        head = parse_rfc822(
+            _imap_rfc822_by_uid(mailbox, uid, mark_seen=False, headers_only=True)
+        )
+        prev_inner = _incoming_inner_mid(head, uid)
+        mid_nm = NotmuchMessageIdInner.from_present_wire(
+            _bridge_wire_from_angle_inner(prev_inner)
+        )
 
-            if nm.notmuch_index_has_message_id_in_db(db, mid_nm):
-                log.info("duplicate_skip", message_id=prev_inner, uid=uid_s)
-                if _e2e_litellm_route_correlation(settings):
-                    log.debug("e2e_bridge_duplicate_skip", inner_incoming_mid=prev_inner, uid=uid_s)
-                _imap_finalize_message(mailbox, uid, processed_folder=processed_folder)
-                session_high_uid = max(session_high_uid, uid_int)
-                continue
-
-            parent_nm = _incoming_canonical_irt_inner(head)
-            if parent_nm is not None and not nm.notmuch_index_has_message_id_in_db(db, parent_nm):
-                log.info("orphan_skip", message_id=prev_inner, in_reply_to=parent_nm.value, uid=uid_s)
-                if _e2e_litellm_route_correlation(settings):
-                    log.debug(
-                        "e2e_bridge_orphan_skip",
-                        inner_incoming_mid=prev_inner,
-                        parent_inner=parent_nm.value,
-                        uid=uid_s,
-                    )
-                _imap_finalize_message(mailbox, uid, processed_folder=processed_folder)
-                session_high_uid = max(session_high_uid, uid_int)
-                continue
-
-            full_raw = _imap_rfc822_by_uid(mailbox, uid, mark_seen=False)
-
-            notify_status(SystemdStatusBody.bridge_email_delivering_uid(uid=uid))
-
-            data = rfc822_bytes_to_fsm_message(
-                full_raw,
-                settings=settings,
-                imap_uid=uid_int,
-                imap_uidvalidity=current_v,
-            )
-            route_w = IngressRouteB62Wire.parse_present_optional(data.get(HDR_ROUTE))
-            dec = IngressRouteB62Wire.parse_route_from_optional_header(route_w)
-            if dec is None:
-                raise RuntimeError("FSM-инвариант: каноническое письмо без X-Threlium-Route")
-            if not isinstance(dec, EmailIngressRoute):
-                raise RuntimeError(
-                    "FSM-инвариант: ожидался EmailIngressRoute в X-Threlium-Route, "
-                    f"получен {type(dec).__name__} (channel={dec.channel!r})"
-                )
-            _deliver(data)
-
+        if nm.notmuch_index_has_message_id(mid_nm):
+            log.info("duplicate_skip", message_id=prev_inner, uid=uid_s)
+            if _e2e_litellm_route_correlation(settings):
+                log.debug("e2e_bridge_duplicate_skip", inner_incoming_mid=prev_inner, uid=uid_s)
             _imap_finalize_message(mailbox, uid, processed_folder=processed_folder)
             session_high_uid = max(session_high_uid, uid_int)
+            continue
+
+        parent_nm = _incoming_canonical_irt_inner(head)
+        if parent_nm is not None and not nm.notmuch_index_has_message_id(parent_nm):
+            log.info("orphan_skip", message_id=prev_inner, in_reply_to=parent_nm.value, uid=uid_s)
             if _e2e_litellm_route_correlation(settings):
-                rw = data.get(HDR_ROUTE)
-                log.debug("e2e_bridge_delivered", inner_incoming_mid=prev_inner, uid=uid_s, route_tail=e2e_route_wire_tail(rw if isinstance(rw, str) else None))
-            log.info("delivered", message_id=prev_inner, uid=uid_s)
-            notify_status(SystemdStatusBody.bridge_email_connected_idle_simple())
+                log.debug(
+                    "e2e_bridge_orphan_skip",
+                    inner_incoming_mid=prev_inner,
+                    parent_inner=parent_nm.value,
+                    uid=uid_s,
+                )
+            _imap_finalize_message(mailbox, uid, processed_folder=processed_folder)
+            session_high_uid = max(session_high_uid, uid_int)
+            continue
+
+        full_raw = _imap_rfc822_by_uid(mailbox, uid, mark_seen=False)
+
+        notify_status(SystemdStatusBody.bridge_email_delivering_uid(uid=uid))
+
+        data = rfc822_bytes_to_fsm_message(
+            full_raw,
+            settings=settings,
+            imap_uid=uid_int,
+            imap_uidvalidity=current_v,
+        )
+        route_w = IngressRouteB62Wire.parse_present_optional(data.get(HDR_ROUTE))
+        dec = IngressRouteB62Wire.parse_route_from_optional_header(route_w)
+        if dec is None:
+            raise RuntimeError("FSM-инвариант: каноническое письмо без X-Threlium-Route")
+        if not isinstance(dec, EmailIngressRoute):
+            raise RuntimeError(
+                "FSM-инвариант: ожидался EmailIngressRoute в X-Threlium-Route, "
+                f"получен {type(dec).__name__} (channel={dec.channel!r})"
+            )
+        _deliver(data)
+
+        _imap_finalize_message(mailbox, uid, processed_folder=processed_folder)
+        session_high_uid = max(session_high_uid, uid_int)
+        if _e2e_litellm_route_correlation(settings):
+            rw = data.get(HDR_ROUTE)
+            log.debug("e2e_bridge_delivered", inner_incoming_mid=prev_inner, uid=uid_s, route_tail=e2e_route_wire_tail(rw if isinstance(rw, str) else None))
+        log.info("delivered", message_id=prev_inner, uid=uid_s)
+        notify_status(SystemdStatusBody.bridge_email_connected_idle_simple())
 
     return session_high_uid
 

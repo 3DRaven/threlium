@@ -195,6 +195,22 @@ def telegram_effective_message_bridge_in_reply_to(
     )
 
 
+@nm.read_retry
+def _filter_known_message_ids(
+    candidate_mids: set[NotmuchMessageIdInner],
+) -> set[NotmuchMessageIdInner]:
+    """dedup-проверка в коротком READ-сеансе (``@nm.read_retry``, reopen-on-modified)."""
+    with nm.notmuch_database(write=False) as db:
+        return filter_known_message_ids_in_db(db, candidate_mids)
+
+
+@nm.read_retry
+def _bridge_in_reply_to_for_message(msg: Message) -> BridgeInReplyTo:
+    """Материализовать ``BridgeInReplyTo`` (VO) в коротком READ-сеансе (``@nm.read_retry``)."""
+    with nm.notmuch_database(write=False) as db:
+        return telegram_effective_message_bridge_in_reply_to(msg=msg, db=db)
+
+
 def _max_update_id() -> int:
     """Последний ``update_id`` из newest ``from:telegram``."""
     picked = latest_route_checkpoint(
@@ -297,9 +313,7 @@ async def _poll_loop(
                             )
                         )
 
-                known_mids: set[NotmuchMessageIdInner] = set()
-                with nm.notmuch_database(write=False) as db:
-                    known_mids = filter_known_message_ids_in_db(db, candidate_mids)
+                known_mids = _filter_known_message_ids(candidate_mids)
 
                 for update in updates:
                     offset = update.update_id + 1
@@ -336,11 +350,7 @@ async def _poll_loop(
                         log.info("duplicate_skip", chat_id=msg.chat_id, message_id=msg.message_id)
                         continue
 
-                    with nm.notmuch_database(write=False) as db:
-                        irt = telegram_effective_message_bridge_in_reply_to(
-                            msg=msg,
-                            db=db,
-                        )
+                    irt = _bridge_in_reply_to_for_message(msg)
 
                     deliver_msg(
                         text,

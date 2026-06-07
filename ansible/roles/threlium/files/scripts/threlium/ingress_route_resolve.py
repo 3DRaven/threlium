@@ -208,19 +208,19 @@ def _route_from_irt_snapshots(
     raise RuntimeError(_EGRESS_TASK_NO_ROUTE_ANCESTOR)
 
 
+@nm.read_retry
 def resolve_egress_task_route_ancestor_with_thread_correlation(
     msg: EmailMessage,
     expect_type: type[_RouteT],
     *,
     wrong_route_type_message: Callable[[IngressRoute], str],
 ) -> tuple[_RouteT, EgressAncestorSnapshot, ResolvedRoute]:
-    """IRT-предок + thread-корреляция в **одном** READ-сеансе notmuch.
+    """IRT-предок + thread-корреляция в **одном** коротком READ-сеансе notmuch → только VO наружу.
 
-    Расширенная версия :func:`resolve_egress_task_route_ancestor` для
-    egress-стадий с e2e-корреляцией LiteLLM (Matrix): обход IRT-цепочки и
-    поиск ``tag:route`` в корне notmuch-треда выполняются под одним
-    ``with notmuch_database``, не под двумя-тремя.
-    """
+    Расширенная версия :func:`resolve_egress_task_route_ancestor` для egress-стадий с e2e-корреляцией
+    LiteLLM (Matrix): обход IRT-цепочки и поиск ``tag:route`` в корне notmuch-треда — под одним
+    ``with notmuch_database``. ``@nm.read_retry``: при discard'е ревизии под конкурентной записью сеанс
+    переоткрывается и материализуется заново (idempotent, ``notmuch2.Message`` не утекает)."""
     start_inner = egress_fsm_start_inner_from_email(msg)
     with nm.notmuch_database(write=False) as db:
         chain = materialize_irt_chain_under_db(db, start_inner)
@@ -277,6 +277,14 @@ def resolve_route_from_thread_oldest_route_tag(msg_or_headers: EmailMessage) -> 
             "FSM-инвариант: resolve_route_from_thread_oldest_route_tag требует непустой "
             f"{MailHeaderName.MESSAGE_ID.value} на конверте"
         )
+    return _resolve_route_from_thread_oldest_route_tag_by_inner(mid_inner)
+
+
+@nm.read_retry
+def _resolve_route_from_thread_oldest_route_tag_by_inner(
+    mid_inner: NotmuchMessageIdInner,
+) -> ResolvedRoute:
+    """Короткий READ-сеанс (``@nm.read_retry``): материализует ``ResolvedRoute`` по треду."""
     with nm.notmuch_database(write=False) as db:
         return resolve_route_from_thread_oldest_route_tag_under_db(db, mid_inner)
 

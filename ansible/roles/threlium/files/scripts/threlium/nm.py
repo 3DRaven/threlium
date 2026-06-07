@@ -11,7 +11,10 @@
 доступом к полям — генератор внутри одного ``with`` (например IRT-цепочка) или
 извлечение примитивов/VO внутри сеанса у вызывающего.
 
-Родитель по ``In-Reply-To`` — только внутри :func:`open_parent_message_for_in_reply_to`.
+Единый READ-примитив — декоратор :data:`read_retry` (tenacity, reopen-on-modified): self-opening
+функция сама открывает короткий ``with notmuch_database(write=False)``, БЫСТРО материализует всё в VO и
+возвращает их; при discard'е ревизии под конкурентной записью сеанс переоткрывается. Родитель по
+``In-Reply-To`` материализуется в ``ingress`` (``parent_message_for_in_reply_in_db`` под ``read_retry``).
 Предок маршрута для egress — через IRT-цепочку
 (:func:`~threlium.ingress_route_resolve.resolve_egress_task_route_ancestor`):
 ``ResolvedRoute`` содержит материализованный снимок (``EgressAncestorSnapshot``),
@@ -35,7 +38,7 @@ from email.message import EmailMessage
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterable, Iterator
+from typing import Iterable
 
 import notmuch2  # pyright: ignore[reportMissingImports]
 from tenacity import (
@@ -65,6 +68,21 @@ def _is_retryable_xapian(exc: BaseException) -> bool:
 
 _RETRY_CONDITION = retry_if_exception(_is_retryable_xapian)
 _RETRY_BEFORE_SLEEP = before_sleep_log(_RETRY_STDLOG, logging.WARNING)
+
+
+def _is_concurrent_revision_discard(exc: BaseException) -> bool:
+    """READ под конкурентной записью: writer закоммитил, Xapian **отбросил ревизию** открытого
+    read-снапшота → in-flight чтение/материализация падает. notmuch2 отдаёт это как ОБЩИЙ
+    ``XapianError`` («A Xapian exception occurred») ИЛИ ``NullPointerError`` (C вернул ``NULL`` на
+    инвалидированном message/db — нет отдельного ``DatabaseModifiedError`` и нет ``reopen()``).
+
+    Лечится переоткрытием БД и повтором чтения с нуля (см. :data:`read_retry`). Подтверждено
+    профилированием: рвётся не линейность IRT-цепочки (``docs/THREAD_MODEL.md`` §3), а read-снапшот;
+    notmuch single-writer/many-readers корректен только при reopen-on-modified у читателя."""
+    return isinstance(exc, (notmuch2.XapianError, notmuch2.NullPointerError))
+
+
+_RETRY_READ_CONDITION = retry_if_exception(_is_concurrent_revision_discard)
 
 from threlium.types import (
     MailHeaderName,
@@ -152,14 +170,13 @@ def _message_paths_in_db(
 def header_field_optional(msg: notmuch2.Message, name: MailHeaderName) -> str | None:
     """Значение заголовка; ``name`` — только :class:`~threlium.mail_header_names.MailHeaderName`.
 
-    ``LookupError`` — заголовок пуст/нет. ``notmuch2.NullPointerError`` — C API вернул
-    ``NULL`` из ``notmuch_message_get_header`` (обрабатываем как отсутствие заголовка).
-    """
+    ``LookupError`` — заголовок пуст/нет → ``None``. ``notmuch2.NullPointerError`` **НЕ глотаем**:
+    это сигнал discard'нутой ревизии под конкурентной записью (а не «нет заголовка») — даём ему
+    всплыть в :data:`read_retry`, который переоткроет БД и материализует заново. Глотание
+    его как «отсутствие» молча портило бы данные (см. :func:`_is_concurrent_revision_discard`)."""
     try:
         return str(msg.header(name.value))
     except LookupError:
-        return None
-    except notmuch2.NullPointerError:
         return None
 
 
@@ -203,6 +220,25 @@ def notmuch_database(*, write: bool = False) -> Generator[notmuch2.Database, Non
         db.close()
 
 
+#: Декоратор **reopen-on-modified** для self-opening READ-функций (tenacity — как существующий
+#: ``notmuch_database._open`` / ``nm_settle``, без своих велосипедов). Контракт декорируемой функции
+#: (DDD VO, ``docs/TYPES.md`` «границы API»): сама открывает короткий ``with notmuch_database(write=False)``,
+#: БЫСТРО материализует всё нужное в иммутабельные VO (snapshot / ``Path`` / доменный VO) и возвращает
+#: **их** — НИКОГДА живой ``notmuch2.Message`` (валиден лишь пока открыта его ``db``). При discard'е
+#: ревизии под конкурентной записью (:func:`_is_concurrent_revision_discard`) tenacity повторяет вызов —
+#: функция переоткрывает свежую ``db`` и материализует с нуля (идемпотентно, наружу только VO). Bounded
+#: (``_RETRY_MAX_ATTEMPTS``), exp backoff, reraise. (cachetools тут не подходит — это кэш, а нам нужен
+#: СВЕЖИЙ снимок, а не переиспользование инвалидированного.)
+read_retry = retry(
+    retry=_RETRY_READ_CONDITION,
+    stop=_RETRY_STOP,
+    wait=_RETRY_WAIT,
+    before_sleep=_RETRY_BEFORE_SLEEP,
+    reraise=True,
+)
+
+
+@read_retry
 def inner_message_id_for_path(file_path: Path) -> NotmuchMessageIdInner:
     """Зафиксировать inner ``Message-ID`` по path в индексе (граница FSM после find).
 
@@ -292,6 +328,7 @@ def settle_recovery_for_stage(stage: str) -> None:
                 msg.tags.from_maildir_flags()
 
 
+@read_retry
 def message_paths(query: str, *, limit: int | None = None, sort_newest_first: bool = False) -> list[Path]:
     with notmuch_database(write=False) as db:
         return _message_paths_in_db(
@@ -310,14 +347,21 @@ def _queries_for_message_id(mid: NotmuchMessageIdInner) -> tuple[str, ...]:
     return (q, f"id:{mid.value}")
 
 
+def _first_message_path_for_message_id_in_db(
+    db: notmuch2.Database, mid: NotmuchMessageIdInner
+) -> Path | None:
+    for q in _queries_for_message_id(mid):
+        paths = _message_paths_in_db(db, q, limit=1, sort_newest_first=False)
+        if paths:
+            return paths[0]
+    return None
+
+
+@read_retry
 def first_message_path_for_message_id(mid: NotmuchMessageIdInner) -> Path | None:
     """Find a message by header Message-ID (tries both notmuch query forms)."""
     with notmuch_database(write=False) as db:
-        for q in _queries_for_message_id(mid):
-            paths = _message_paths_in_db(db, q, limit=1, sort_newest_first=False)
-            if paths:
-                return paths[0]
-        return None
+        return _first_message_path_for_message_id_in_db(db, mid)
 
 
 def _first_message_for_query(db: notmuch2.Database, q: str) -> notmuch2.Message | None:
@@ -383,18 +427,6 @@ def parent_message_for_in_reply_in_db(
     return _first_message_for_query(db, q_raw)
 
 
-@contextmanager
-def open_parent_message_for_in_reply_to(
-    in_reply: RfcInReplyToWire,
-) -> Iterator[notmuch2.Message | None]:
-    """Родитель по ``In-Reply-To``: ``Message`` валиден только внутри этого ``with``.
-
-    ``None`` — родителя нет в индексе (Case 1 в ingress).
-    """
-    with notmuch_database(write=False) as db:
-        yield parent_message_for_in_reply_in_db(db, in_reply)
-
-
 def thread_id_for_header_message_id_in_db(
     db: notmuch2.Database, mid: NotmuchMessageIdInner
 ) -> NotmuchThreadScopeId | None:
@@ -407,6 +439,7 @@ def thread_id_for_header_message_id_in_db(
     return None
 
 
+@read_retry
 def thread_id_for_header_message_id(mid: NotmuchMessageIdInner) -> NotmuchThreadScopeId | None:
     with notmuch_database(write=False) as db:
         return thread_id_for_header_message_id_in_db(db, mid)

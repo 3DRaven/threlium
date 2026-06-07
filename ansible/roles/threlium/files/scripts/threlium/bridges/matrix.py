@@ -101,6 +101,26 @@ def matrix_room_message_bridge_in_reply_to(
     )
 
 
+@nm.read_retry
+def _filter_known_message_ids(
+    candidate_mids: set[NotmuchMessageIdInner],
+) -> set[NotmuchMessageIdInner]:
+    """dedup-проверка в коротком READ-сеансе (``@nm.read_retry``, reopen-on-modified)."""
+    with nm.notmuch_database(write=False) as db:
+        return filter_known_message_ids_in_db(db, candidate_mids)
+
+
+@nm.read_retry
+def _bridge_in_reply_to_for_room_event(
+    *, room_id: MatrixRoomId, parent_event_id: MatrixRoomEventId | None
+) -> BridgeInReplyTo:
+    """Материализовать ``BridgeInReplyTo`` (VO) в коротком READ-сеансе (``@nm.read_retry``)."""
+    with nm.notmuch_database(write=False) as db:
+        return matrix_room_message_bridge_in_reply_to(
+            room_id=room_id, parent_event_id=parent_event_id, db=db
+        )
+
+
 def _sync_since_from_index() -> MatrixSyncBatchCursor | None:
     """Токен ``since`` для ``/sync``: ``next_batch`` из newest ``from:matrix``."""
     def _pick(route: MatrixIngressRoute) -> MatrixSyncBatchCursor | None:
@@ -195,9 +215,7 @@ async def _matrix_ingress_loop(
                             )
                         )
 
-                known_mids: set[NotmuchMessageIdInner] = set()
-                with nm.notmuch_database(write=False) as db:
-                    known_mids = filter_known_message_ids_in_db(db, candidate_mids)
+                known_mids = _filter_known_message_ids(candidate_mids)
 
                 for room_id_raw, room_info in resp.rooms.join.items():
                     room_id = MatrixRoomId(room_id_raw)
@@ -218,12 +236,9 @@ async def _matrix_ingress_loop(
                         if mid_nm in known_mids:
                             log.info("duplicate_skip", room_id=room_id, event_id=ev_id)
                             continue
-                        with nm.notmuch_database(write=False) as db:
-                            irt = matrix_room_message_bridge_in_reply_to(
-                                room_id=room_id,
-                                parent_event_id=parent_eid,
-                                db=db,
-                            )
+                        irt = _bridge_in_reply_to_for_room_event(
+                            room_id=room_id, parent_event_id=parent_eid
+                        )
                         route = MatrixIngressRoute(
                             channel=BridgeIngressChannel.MATRIX,
                             v=1,

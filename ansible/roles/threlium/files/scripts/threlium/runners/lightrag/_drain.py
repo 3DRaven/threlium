@@ -22,6 +22,7 @@ from threlium.lightrag_ingest import render_lightrag_ingest_document
 from threlium.nm import (
     batch_tag_add,
     notmuch_database,
+    read_retry,
     require_inner_message_id_from_notmuch_message,
 )
 from threlium.settings import (
@@ -91,8 +92,25 @@ def _effective_batch_size(settings: ThreliumSettings) -> int:
     return max(1, settings.lightrag.insert_batch)
 
 
+@read_retry
+def _correlation_snapshot_for_path(fp0: Path) -> "LitellmCorrelationSnapshot":
+    """Снять LiteLLM-correlation snapshot (VO) по пути письма; ``@read_retry`` reopen-on-modified.
+
+    ``notmuch2.Message`` не покидает сеанс — наружу только ``LitellmCorrelationSnapshot``."""
+    with notmuch_database(write=False) as db:
+        nm_msg = db.get(str(fp0.resolve()))
+        corr = build_litellm_correlation_headers_from_notmuch(
+            db, nm_msg, call_site=LitellmCallSite.LIGHTRAG_INDEX
+        )
+    return LitellmCorrelationSnapshot.from_mapping(corr)
+
+
+@read_retry
 def _collect_batch(limit: int) -> list[tuple[Path, NotmuchMessageIdInner, NotmuchThreadScopeId | None]]:
-    """(path, message_id_inner, thread_scope)[…limit] под одной READ-транзакцией."""
+    """(path, message_id_inner, thread_scope)[…limit] под одной READ-транзакцией → только VO наружу.
+
+    ``@read_retry``: при discard'е ревизии под конкурентной записью сеанс переоткрывается (rag-loop
+    в движке многопоточен; ``notmuch2.Message`` не покидает ``with``)."""
     out: list[tuple[Path, NotmuchMessageIdInner, NotmuchThreadScopeId | None]] = []
     selector = lightrag_drain_pending_search()
     with notmuch_database(write=False) as db:
@@ -116,13 +134,7 @@ async def _ainsert_with_correlation(
     settings: ThreliumSettings,
 ) -> float:
     """ainsert with e2e correlation ctxvar. Returns elapsed seconds."""
-    fp0 = Path(file_paths[0])
-    with notmuch_database(write=False) as db:
-        nm_msg = db.get(str(fp0.resolve()))
-        corr = build_litellm_correlation_headers_from_notmuch(
-            db, nm_msg, call_site=LitellmCallSite.LIGHTRAG_INDEX
-        )
-    snap = LitellmCorrelationSnapshot.from_mapping(corr)
+    snap = _correlation_snapshot_for_path(Path(file_paths[0]))
     log.debug(
         "drain_e2e_ainsert",
         batch_size=len(ids),

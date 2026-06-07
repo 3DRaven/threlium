@@ -21,12 +21,16 @@ T = TypeVar("T")
 R = TypeVar("R", bound=IngressRoute)
 
 
+@nm.read_retry
 def latest_route_checkpoint(
     bridge: NotmuchBridgeFromLocalhost,
     route_type: type[R],
     pick: Callable[[R], T | None],
 ) -> T | None:
-    """``pick(route)`` для самого нового ``tag:route from:<bridge>`` с маршрутом ``route_type``."""
+    """``pick(route)`` для самого нового ``tag:route from:<bridge>`` с маршрутом ``route_type``.
+
+    ``@nm.read_retry``: короткий сеанс, ``pick`` материализует VO из распарсенного ``route``;
+    ``notmuch2.Message`` не покидает ``with``. При discard'е ревизии сеанс переоткрывается."""
     q = NotmuchQueryConnective.join_and(
         NotmuchTag.ROUTE.as_tag_query_term(),
         bridge.as_from_query_term(),

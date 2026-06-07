@@ -39,11 +39,15 @@ HitlParentRouting = HitlParentWithoutIntent | HitlParentWithIntent
 
 
 def classify_hitl_parent_notmuch(
+    db: notmuch2.Database,
     parent_nm_msg: notmuch2.Message,
 ) -> HitlParentRouting:
     """Детекция HITL: обход предков по IRT от parent (1-N шагов) до cli_hitl_out.
 
-    Вызывается из ``ingress.main`` на прямом родителе по In-Reply-To.
+    Вызывается из ``ingress.main`` под уже открытым READ ``db`` (один сеанс с lookup родителя;
+    обёртка ``nm.read_retry`` на стороне ingress переоткроет при discard'е ревизии). ``parent_nm_msg``
+    и ходовые ``notmuch2.Message`` валидны только в этом ``db`` — наружу возвращается плоский
+    ``HitlParentRouting`` VO, не ``Message``.
 
     Алгоритм:
         1. Начать с parent_nm_msg.
@@ -55,29 +59,28 @@ def classify_hitl_parent_notmuch(
     from threlium import nm as _nm
 
     current = parent_nm_msg
-    with _nm.notmuch_database(write=False) as db:
-        for _ in range(_MAX_HITL_WALK_DEPTH):
-            if notmuch_message_sent_from_fsm_stage(current, FsmStage.CLI_HITL_OUT):
-                return HitlParentWithIntent()
+    for _ in range(_MAX_HITL_WALK_DEPTH):
+        if notmuch_message_sent_from_fsm_stage(current, FsmStage.CLI_HITL_OUT):
+            return HitlParentWithIntent()
 
-            for stage in _NON_HITL_STAGES:
-                if notmuch_message_sent_from_fsm_stage(current, stage):
-                    return HitlParentWithoutIntent()
-
-            irt_raw = _nm.header_field_optional(current, MailHeaderName.IN_REPLY_TO)
-            irt_w = RfcInReplyToWire.parse_present_optional(
-                None if irt_raw is None else str(irt_raw)
-            )
-            if irt_w is None:
+        for stage in _NON_HITL_STAGES:
+            if notmuch_message_sent_from_fsm_stage(current, stage):
                 return HitlParentWithoutIntent()
 
-            parent_inner = NotmuchMessageIdInner.from_optional_raw(irt_w.value)
-            if parent_inner is None:
-                return HitlParentWithoutIntent()
+        irt_raw = _nm.header_field_optional(current, MailHeaderName.IN_REPLY_TO)
+        irt_w = RfcInReplyToWire.parse_present_optional(
+            None if irt_raw is None else str(irt_raw)
+        )
+        if irt_w is None:
+            return HitlParentWithoutIntent()
 
-            next_msg = _nm.first_notmuch_message_for_inner_id(db, parent_inner)
-            if next_msg is None:
-                return HitlParentWithoutIntent()
-            current = next_msg
+        parent_inner = NotmuchMessageIdInner.from_optional_raw(irt_w.value)
+        if parent_inner is None:
+            return HitlParentWithoutIntent()
+
+        next_msg = _nm.first_notmuch_message_for_inner_id(db, parent_inner)
+        if next_msg is None:
+            return HitlParentWithoutIntent()
+        current = next_msg
 
     return HitlParentWithoutIntent()
