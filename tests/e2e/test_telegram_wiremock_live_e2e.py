@@ -27,21 +27,18 @@ from .toolkit import (
 )
 from .wiremock_client import (
     WiremockCorrelation,
-    assert_wiremock_telegram_e2e_openai_coverage,
     assert_wiremock_transport_egress_via_state,
+    wiremock_state_thread_root_property,
+    wiremock_state_thread_root_reply_targets,
     composite_context_key,
     find_wiremock_requests_by_body_contains,
     journal_has_compose_bootstrap_request,
-    journal_has_request,
     log_wiremock_correlation_journal,
     prepare_wiremock_scenario,
     wiremock_journal_request_body,
-    wiremock_journal_telegram_sendmessage_bodies_matching_agent_reply,
-    wiremock_journal_telegram_sendmessage_placeholder_bodies,
     wiremock_public_base,
     wiremock_state_reasoning_gate_release,
     wiremock_telegram_register_update,
-    wiremock_telegram_sendmessage_body_reply_target_message_id,
     wiremock_telegram_unregister_update,
 )
 
@@ -238,8 +235,12 @@ def test_live_telegram_wiremock_private_tail_307_second_message(
         while update_id_2 == update_id_1:
             update_id_2 = int(uuid.uuid4().int % 900_000_000) + 100_000_000
 
-        tok1 = f"tg_tail307_a_{uuid.uuid4().hex[:12]}"
-        tok2 = f"tg_tail307_b_{uuid.uuid4().hex[:12]}"
+        # ФИКСИРОВАННЫЕ маркеры (не uuid): изоляция между тестами — по thread-root (correlation_key),
+        # поэтому токены могут быть стабильными. Это позволяет статичному reasoning-стабу проверять
+        # tail-attach content-flag'ом (contains body TOK1 AND TOK2 = текст msg1 дошёл до reasoning msg2),
+        # без скана журнала по рантайм-значению. tok1 — текст msg1, tok2 — текст msg2 в общем треде.
+        tok1 = "tg-tail307-msg1-marker"
+        tok2 = "tg-tail307-msg2-marker"
         correlation_key = e2e_telegram_thread_root_mid_for_message(
             chat_id=chat_id,
             message_id=message_id_1,
@@ -323,13 +324,20 @@ def test_live_telegram_wiremock_private_tail_307_second_message(
             )
             registered_update_ids.append(update_id_2)
 
+            # До release: msg2-reasoning НЕ должно произойти (307-mutex по thread_id держит msg2, пока
+            # msg1 в обработке). Проверяем по STATE-флагу saw_msg2_reasoning (contains tok2 в reasoning),
+            # без скана журнала. Ожидаем таймаут (флаг остаётся "0").
             msg2_reasoning_before_release = False
             try:
                 poll_until(
-                    lambda: True if _reasoning_chat_completion_seen(tok2) else None,
+                    lambda: True
+                    if wiremock_state_thread_root_property(
+                        base, correlation_key, "saw_msg2_reasoning"
+                    ) == "1"
+                    else None,
                     timeout=5.0,
                     interval=1.0,
-                    desc="WireMock: проба — reasoning для второго сообщения до release (ожидаем таймаут)",
+                    desc="state: msg2 reasoning до release (ожидаем таймаут — gated 307-mutex)",
                 )
                 msg2_reasoning_before_release = True
             except TimeoutError:
@@ -342,86 +350,37 @@ def test_live_telegram_wiremock_private_tail_307_second_message(
 
             wiremock_state_reasoning_gate_release(base, ctx_key)
 
-            def _two_agent_sendmessages_seen() -> bool | None:
-                bs = wiremock_journal_telegram_sendmessage_bodies_matching_agent_reply(
-                    base,
-                    stub_tag=test_id,
-                    chat_id=chat_id,
-                    reply_body=TELEGRAM_AGENT_REPLY_BODY_TAIL_307,
-                    message_thread_id=mtid,
-                )
-                return True if len(bs) >= 2 else None
+            # Контур обоих сообщений по STATE (без журнала). Egress асинхронный → поллим.
+            # 1) Ответы на ОБА входящих: reply-target message_id placeholder-sendMessage (записаны
+            #    list.addLast {rt: …} по thread-root) → множество == {msg1, msg2}. Это и есть «ровно два
+            #    разных ответа» (count==2 = два разных таргета), без journal-скана по stub_tag.
+            def _both_reply_targets() -> set[int] | None:
+                rts = set(wiremock_state_thread_root_reply_targets(base, correlation_key))
+                return rts if {message_id_1, message_id_2} <= rts else None
 
-            poll_until(
-                _two_agent_sendmessages_seen,
+            reply_targets = poll_until(
+                _both_reply_targets,
                 timeout=TIMEOUT_POLL_SHORT,
                 interval=3.0,
-                desc=(
-                    "WireMock journal: ≥2 POST editMessageText с chat_id и текстом ответа агента "
-                    f"({TELEGRAM_AGENT_REPLY_BODY_TAIL_307!r})"
-                ),
+                desc="state: reply_parameters → reply-targets == {msg1, msg2}",
+            )
+            assert reply_targets == {message_id_1, message_id_2}, (
+                "Ответы должны быть reply ровно на msg1 и msg2 (разные routing.message_id); "
+                f"ожидалось {{{message_id_1}, {message_id_2}}}, получено {reply_targets!r}"
             )
 
-            assert_wiremock_telegram_e2e_openai_coverage(
-                base,
-                test_id=test_id,
-                chat_id=chat_id,
-                reply_body=TELEGRAM_AGENT_REPLY_BODY_TAIL_307,
-                message_thread_id=mtid,
-            )
+            # 2) LLM-фазы + egress-ответ агента дошли (saw_egress_edit content-flag по thread-root).
+            assert_wiremock_transport_egress_via_state(base, correlation_key=correlation_key)
 
-            reply_bodies = wiremock_journal_telegram_sendmessage_bodies_matching_agent_reply(
-                base,
-                stub_tag=test_id,
-                chat_id=chat_id,
-                reply_body=TELEGRAM_AGENT_REPLY_BODY_TAIL_307,
-                message_thread_id=mtid,
-            )
-            assert len(reply_bodies) == 2, (
-                "Ожидались ровно два исходящих ответа агента (POST editMessageText с текстом из reasoning-стаба); "
-                f"получено {len(reply_bodies)}. Превью тел: {[b[:900] for b in reply_bodies]!r}"
-            )
-            placeholder_bodies = wiremock_journal_telegram_sendmessage_placeholder_bodies(
-                base,
-                stub_tag=test_id,
-                chat_id=chat_id,
-            )
-            reply_targets = [
-                wiremock_telegram_sendmessage_body_reply_target_message_id(b) for b in placeholder_bodies
-            ]
-            reply_targets = [t for t in reply_targets if t is not None]
-            assert len(reply_targets) >= 2, (
-                "В каждом sendMessage (placeholder) ожидался JSON ``reply_parameters`` с ``message_id`` входящего сообщения; "
-                f"targets={reply_targets!r}, превью тел: {[b[:1200] for b in placeholder_bodies]!r}"
-            )
-            assert set(reply_targets) == {message_id_1, message_id_2}, (
-                "Ответы должны быть reply на msg1 и msg2 (разные ``routing.message_id``); "
-                f"ожидалось множество {{{message_id_1}, {message_id_2}}}, получено {set(reply_targets)!r}"
-            )
-
-            msg2_reasoning_bodies: list[str] = []
-            for e in find_wiremock_requests_by_body_contains(
-                base, tok2, stub_tag=test_id, timeout=2.0
-            ):
-                req = e.get("request")
-                if not isinstance(req, dict):
-                    continue
-                url = str(req.get("url") or "")
-                if "chat/completions" not in url:
-                    continue
-                b = wiremock_journal_request_body(e)
-                if "<envelope>" in b and '"tools"' in b:
-                    msg2_reasoning_bodies.append(b)
-
-            assert msg2_reasoning_bodies, (
-                "После завершения контура ожидался хотя бы один POST reasoning с телом msg2 "
-                f"(needle {tok2!r})."
-            )
-            joined = "\n".join(msg2_reasoning_bodies)
-            assert tok1 in joined, (
-                "В reasoning для второго сообщения ожидался текст msg1 в unified mail context "
-                "(доказательство общего notmuch-треда через tail attachment): "
-                f"tok1={tok1!r}, превью тел={joined[:4000]!r}"
+            # 3) Tail-attach: текст msg1 (tok1) попал в reasoning-промпт msg2 (tok2) — общий notmuch-тред.
+            #    Статичный content-flag saw_tail_attach = (contains body tok1) AND (contains body tok2) на
+            #    reasoning-стабе msg2 (токены фиксированы; изоляция — thread-root). Прямое чтение после
+            #    барьера reply-targets выше (контур обоих сообщений завершён).
+            assert (
+                wiremock_state_thread_root_property(base, correlation_key, "saw_tail_attach") == "1"
+            ), (
+                "tail-attach: текст msg1 должен попасть в reasoning-промпт msg2 (общий notmuch-тред) — "
+                "state saw_tail_attach"
             )
 
 
@@ -430,7 +389,7 @@ def test_live_telegram_wiremock_private_tail_307_second_message(
                 tail_attachment_confirmed=True,
                 tok1=tok1,
                 msg2_reasoning_before_release=msg2_reasoning_before_release,
-                agent_send_message_n=len(reply_bodies),
+                agent_reply_targets_n=len(reply_targets),
                 reply_targets=sorted(reply_targets),
             )
         finally:

@@ -1,16 +1,16 @@
 {
   "metadata": {
     "comment": [
-      "tail-307 reasoning ПОСЛЕ release, пока в ledger есть открытая подзадача: закрыть её через",
-      "tasks_upsert. enrich_task_plan (081) уже создал подзадачу 'Complete the user request' (open);",
-      "content_id детерминирован из текста, поэтому upsert с ТЕМ ЖЕ текстом и status=done апсёртит её",
-      "в done (а не плодит вторую). Без этого response_finalize fail-closed (есть открытая задача) и FSM",
-      "циклит enrich_fast→reasoning. Дискриминатор фаз — ТЕКСТ ledger в промпте ('(1 open, 0 done'),",
-      "НЕ sticky-state: для второго сообщения того же треда ledger снова '1 open' (свой enrich), и оно",
-      "тоже само закрывает задачу — sticky phase_tasks_ledger_done сломал бы msg2 (он бы пропустил upsert).",
-      "Параллельность tg-тестов на общем Bot-API стабе: апдейты копятся в общий массив telegram_updates",
-      "через state-extension; изоляция — композитным hasContext '<stub_tag>::<X-Threlium-Thread-Root>'.",
-      "reasoning_release снимает 307-гейт (098) — см. wiremock_state_reasoning_gate_release."
+      "tail-307 reasoning \u041f\u041e\u0421\u041b\u0415 release, \u043f\u043e\u043a\u0430 \u0432 ledger \u0435\u0441\u0442\u044c \u043e\u0442\u043a\u0440\u044b\u0442\u0430\u044f \u043f\u043e\u0434\u0437\u0430\u0434\u0430\u0447\u0430: \u0437\u0430\u043a\u0440\u044b\u0442\u044c \u0435\u0451 \u0447\u0435\u0440\u0435\u0437",
+      "tasks_upsert. enrich_task_plan (081) \u0443\u0436\u0435 \u0441\u043e\u0437\u0434\u0430\u043b \u043f\u043e\u0434\u0437\u0430\u0434\u0430\u0447\u0443 'Complete the user request' (open);",
+      "content_id \u0434\u0435\u0442\u0435\u0440\u043c\u0438\u043d\u0438\u0440\u043e\u0432\u0430\u043d \u0438\u0437 \u0442\u0435\u043a\u0441\u0442\u0430, \u043f\u043e\u044d\u0442\u043e\u043c\u0443 upsert \u0441 \u0422\u0415\u041c \u0416\u0415 \u0442\u0435\u043a\u0441\u0442\u043e\u043c \u0438 status=done \u0430\u043f\u0441\u0451\u0440\u0442\u0438\u0442 \u0435\u0451",
+      "\u0432 done (\u0430 \u043d\u0435 \u043f\u043b\u043e\u0434\u0438\u0442 \u0432\u0442\u043e\u0440\u0443\u044e). \u0411\u0435\u0437 \u044d\u0442\u043e\u0433\u043e response_finalize fail-closed (\u0435\u0441\u0442\u044c \u043e\u0442\u043a\u0440\u044b\u0442\u0430\u044f \u0437\u0430\u0434\u0430\u0447\u0430) \u0438 FSM",
+      "\u0446\u0438\u043a\u043b\u0438\u0442 enrich_fast\u2192reasoning. \u0414\u0438\u0441\u043a\u0440\u0438\u043c\u0438\u043d\u0430\u0442\u043e\u0440 \u0444\u0430\u0437 \u2014 \u0422\u0415\u041a\u0421\u0422 ledger \u0432 \u043f\u0440\u043e\u043c\u043f\u0442\u0435 ('(1 open, 0 done'),",
+      "\u041d\u0415 sticky-state: \u0434\u043b\u044f \u0432\u0442\u043e\u0440\u043e\u0433\u043e \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u044f \u0442\u043e\u0433\u043e \u0436\u0435 \u0442\u0440\u0435\u0434\u0430 ledger \u0441\u043d\u043e\u0432\u0430 '1 open' (\u0441\u0432\u043e\u0439 enrich), \u0438 \u043e\u043d\u043e",
+      "\u0442\u043e\u0436\u0435 \u0441\u0430\u043c\u043e \u0437\u0430\u043a\u0440\u044b\u0432\u0430\u0435\u0442 \u0437\u0430\u0434\u0430\u0447\u0443 \u2014 sticky phase_tasks_ledger_done \u0441\u043b\u043e\u043c\u0430\u043b \u0431\u044b msg2 (\u043e\u043d \u0431\u044b \u043f\u0440\u043e\u043f\u0443\u0441\u0442\u0438\u043b upsert).",
+      "\u041f\u0430\u0440\u0430\u043b\u043b\u0435\u043b\u044c\u043d\u043e\u0441\u0442\u044c tg-\u0442\u0435\u0441\u0442\u043e\u0432 \u043d\u0430 \u043e\u0431\u0449\u0435\u043c Bot-API \u0441\u0442\u0430\u0431\u0435: \u0430\u043f\u0434\u0435\u0439\u0442\u044b \u043a\u043e\u043f\u044f\u0442\u0441\u044f \u0432 \u043e\u0431\u0449\u0438\u0439 \u043c\u0430\u0441\u0441\u0438\u0432 telegram_updates",
+      "\u0447\u0435\u0440\u0435\u0437 state-extension; \u0438\u0437\u043e\u043b\u044f\u0446\u0438\u044f \u2014 \u043a\u043e\u043c\u043f\u043e\u0437\u0438\u0442\u043d\u044b\u043c hasContext '<stub_tag>::<X-Threlium-Thread-Root>'.",
+      "reasoning_release \u0441\u043d\u0438\u043c\u0430\u0435\u0442 307-\u0433\u0435\u0439\u0442 (098) \u2014 \u0441\u043c. wiremock_state_reasoning_gate_release."
     ]
   },
   "request": {
@@ -84,6 +84,10 @@
           "addLast": {
             "cs": "{{request.headers.[X-Threlium-Call-Site]}}"
           }
+        },
+        "state": {
+          "saw_tail_attach": "{{#if (and (contains request.body 'tg-tail307-msg1-marker') (contains request.body 'tg-tail307-msg2-marker'))}}1{{else}}{{state context=request.headers.[X-Threlium-Thread-Root] property='saw_tail_attach' default='0'}}{{/if}}",
+          "saw_msg2_reasoning": "{{#if (contains request.body 'tg-tail307-msg2-marker')}}1{{else}}{{state context=request.headers.[X-Threlium-Thread-Root] property='saw_msg2_reasoning' default='0'}}{{/if}}"
         }
       }
     }

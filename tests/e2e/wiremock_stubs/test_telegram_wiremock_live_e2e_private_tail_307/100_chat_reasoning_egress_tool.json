@@ -1,11 +1,11 @@
 {
   "metadata": {
     "comment": [
-      "tail-307 reasoning ПОСЛЕ release, когда ledger закрыт ('(0 open, 1 done'): response_finalize → egress",
-      "(editMessageText). Дискриминатор — ТЕКСТ ledger в промпте, а не sticky-state, чтобы каждое из двух",
-      "сообщений треда финализилось по СВОЕМУ закрытому ledger (100_chat_reasoning_egress_tasks_ledger_done",
-      "закрывает открытую подзадачу до этого). Изоляция/параллельность на общем стабе: композитный",
-      "hasContext '<stub_tag>::<X-Threlium-Thread-Root>'; updates тестов копятся в общий telegram_updates."
+      "tail-307 reasoning \u041f\u041e\u0421\u041b\u0415 release, \u043a\u043e\u0433\u0434\u0430 ledger \u0437\u0430\u043a\u0440\u044b\u0442 ('(0 open, 1 done'): response_finalize \u2192 egress",
+      "(editMessageText). \u0414\u0438\u0441\u043a\u0440\u0438\u043c\u0438\u043d\u0430\u0442\u043e\u0440 \u2014 \u0422\u0415\u041a\u0421\u0422 ledger \u0432 \u043f\u0440\u043e\u043c\u043f\u0442\u0435, \u0430 \u043d\u0435 sticky-state, \u0447\u0442\u043e\u0431\u044b \u043a\u0430\u0436\u0434\u043e\u0435 \u0438\u0437 \u0434\u0432\u0443\u0445",
+      "\u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0439 \u0442\u0440\u0435\u0434\u0430 \u0444\u0438\u043d\u0430\u043b\u0438\u0437\u0438\u043b\u043e\u0441\u044c \u043f\u043e \u0421\u0412\u041e\u0415\u041c\u0423 \u0437\u0430\u043a\u0440\u044b\u0442\u043e\u043c\u0443 ledger (100_chat_reasoning_egress_tasks_ledger_done",
+      "\u0437\u0430\u043a\u0440\u044b\u0432\u0430\u0435\u0442 \u043e\u0442\u043a\u0440\u044b\u0442\u0443\u044e \u043f\u043e\u0434\u0437\u0430\u0434\u0430\u0447\u0443 \u0434\u043e \u044d\u0442\u043e\u0433\u043e). \u0418\u0437\u043e\u043b\u044f\u0446\u0438\u044f/\u043f\u0430\u0440\u0430\u043b\u043b\u0435\u043b\u044c\u043d\u043e\u0441\u0442\u044c \u043d\u0430 \u043e\u0431\u0449\u0435\u043c \u0441\u0442\u0430\u0431\u0435: \u043a\u043e\u043c\u043f\u043e\u0437\u0438\u0442\u043d\u044b\u0439",
+      "hasContext '<stub_tag>::<X-Threlium-Thread-Root>'; updates \u0442\u0435\u0441\u0442\u043e\u0432 \u043a\u043e\u043f\u044f\u0442\u0441\u044f \u0432 \u043e\u0431\u0449\u0438\u0439 telegram_updates."
     ]
   },
   "request": {
@@ -79,6 +79,10 @@
           "addLast": {
             "cs": "{{request.headers.[X-Threlium-Call-Site]}}"
           }
+        },
+        "state": {
+          "saw_tail_attach": "{{#if (and (contains request.body 'tg-tail307-msg1-marker') (contains request.body 'tg-tail307-msg2-marker'))}}1{{else}}{{state context=request.headers.[X-Threlium-Thread-Root] property='saw_tail_attach' default='0'}}{{/if}}",
+          "saw_msg2_reasoning": "{{#if (contains request.body 'tg-tail307-msg2-marker')}}1{{else}}{{state context=request.headers.[X-Threlium-Thread-Root] property='saw_msg2_reasoning' default='0'}}{{/if}}"
         }
       }
     }

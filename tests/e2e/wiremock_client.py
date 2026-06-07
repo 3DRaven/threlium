@@ -422,6 +422,31 @@ def wiremock_state_thread_root_call_sites(
     return [str(x) for x in cs] if isinstance(cs, list) else []
 
 
+def wiremock_state_thread_root_reply_targets(
+    public_base: str, correlation_key: str, *, timeout: float = TIMEOUT_POLL_SHORT
+) -> list[int]:
+    """Reply-target ``message_id`` каждого transport-placeholder egress (sendMessage ``reply_parameters``).
+
+    egress-стаб пишет ``list.addLast {rt: <jsonPath fd.reply_parameters $.message_id>}`` в контекст
+    thread-root (см. probe ``005_e2e_state_reply_targets``). Возвращает int-список (порядок обслуживания).
+    Для проверки «ответы на оба входящих» — ``set(...) == {msg1, msg2}``. Без stub_tag/журнала (§3.6.1)."""
+    root = _normalize_wiremock_public_root(public_base)
+    url = f"{root}/__threlium/e2e/state/reply_targets"
+    r = _wm_session().post(url, json={"correlation_key": correlation_key}, timeout=timeout)
+    r.raise_for_status()
+    try:
+        rts = r.json().get("reply_targets")
+    except (ValueError, AttributeError):
+        return []
+    out: list[int] = []
+    for x in rts if isinstance(rts, list) else []:
+        try:
+            out.append(int(str(x).strip()))
+        except (ValueError, TypeError):
+            continue
+    return out
+
+
 def assert_wiremock_transport_egress_via_state(
     public_base: str,
     *,

@@ -1,0 +1,17 @@
+{
+  "id": "aeb27ab1-7cbd-57a3-85d9-e04b39983c7b",
+  "request": {
+    "method": "POST",
+    "urlPath": "/__threlium/e2e/state/reply_targets"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "transformers": [
+      "response-template"
+    ],
+    "body": "{\"reply_targets\": {{state context=(jsonPath request.body '$.correlation_key') list='$..rt' default='[]'}} }"
+  }
+}

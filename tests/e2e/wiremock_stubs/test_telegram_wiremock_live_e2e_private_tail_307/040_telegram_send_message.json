@@ -45,6 +45,11 @@
         "context": "{{request.headers.[X-Threlium-Thread-Root]}}",
         "state": {
           "saw_egress_send": "1"
+        },
+        "list": {
+          "addLast": {
+            "rt": "{{formData request.body 'fd' urlDecode=true}}{{regexExtract fd.reply_parameters '[0-9]+'}}"
+          }
         }
       }
     }
