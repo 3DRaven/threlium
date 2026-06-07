@@ -74,7 +74,7 @@ threlium_litellm:
   llm_endpoints:
     - score: 0.0
       enabled: true
-      model: "openai/threlium_e2e_l0"
+      model: "threlium_e2e_l0"
       api_base: "http://wiremock:8080"
       api_key: "e2e-test-key"
       timeout: 30
@@ -83,7 +83,7 @@ threlium_litellm:
         enable_thinking: false
     - score: 1.0
       enabled: true
-      model: "openai/threlium_e2e_l0"
+      model: "threlium_e2e_l0"
       api_base: "http://wiremock:8080"
       api_key: "e2e-test-key"
       timeout: 90
@@ -91,21 +91,21 @@ threlium_litellm:
         enable_thinking: false
     - score: 2.0
       enabled: true
-      model: "openai/threlium_e2e_l0"
+      model: "threlium_e2e_l0"
       api_base: "http://wiremock:8080"
       api_key: "e2e-test-key"
       timeout: 90
   embedding_endpoints:
     - embedding_score: 0.0
       enabled: true
-      model: "openai/threlium_e2e_embed"
+      model: "threlium_e2e_embed"
       api_base: "http://wiremock:8080"
       api_key: "e2e-test-key"
       timeout: 90
   rerank_endpoints:
     - rerank_score: 0.0
       enabled: true
-      model: "hosted_vllm/bge-rerank-e2e"
+      model: "bge-rerank-e2e"
       api_base: "http://wiremock:8080/v1"
       api_key: "sk-e2e"
       timeout: 30
