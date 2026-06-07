@@ -129,14 +129,31 @@ def e2e_clear_doc_status_and_restart_engine(
     *,
     repo_root: Path | None = None,
 ) -> None:
-    """Remove LightRAG doc_status and restart engine (forces knowledge bootstrap re-index)."""
+    """Wipe LightRAG state (redis KV + faiss) and restart engine → forces bootstrap RE-EMBED.
+
+    LightRAG doc_status / full_docs / chunks / entities живут в **Redis** (ключи ``doc_status:*``,
+    ``full_docs:*``, ``text_chunks:*``, ``*entities*``, ``llm_response_cache:*``) + faiss-индексы в
+    ``$THRELIUM_HOME/lightrag``. Старый ``rm -f kv_store_doc_status.json`` был no-op (JSON-файла нет —
+    стор в Redis), поэтому рестарт ловил ``Duplicate document detected (filename)`` и пропускал
+    embedding-вызов → нет ``X-Threlium-Thread-Root: e2e-bootstrap`` в журнале WireMock → таймаут.
+    Полный wipe (как в cold-reset :func:`e2e_flush_sut_fsm_maildirs`) — engine при старте бутстрапит
+    probe-корпус заново и реально дёргает embeddings. **Serial-only** (общий Redis/LightRAG/engine):
+    модуль bootstrap пропускается под xdist (см. ``test_knowledge_bootstrap_live_e2e``).
+    """
     root = repo_root or REPO_ROOT
+    lightrag_dir = shlex.quote(f"{E2E_REMOTE_THRELIUM_HOME}/lightrag")
     service_exec(
         project,
         "sut",
-        ["bash", "-lc", f"rm -f {_E2E_LIGHTRAG_DOC_STATUS}"],
+        [
+            "bash",
+            "-lc",
+            f"redis-cli flushall >/dev/null 2>&1 || true; "
+            f"rm -rf {lightrag_dir}/* 2>/dev/null || true; "
+            f"echo '[e2e] lightrag wiped (redis flushall + faiss files)'",
+        ],
         repo_root=root,
-        timeout=10,
+        timeout=15,
     )
     restart_cmd = [
         "bash",
