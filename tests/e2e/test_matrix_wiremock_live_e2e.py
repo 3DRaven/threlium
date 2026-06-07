@@ -46,7 +46,6 @@ from threlium.types import FsmStage
 from .toolkit import (
     TIMEOUT_POLL_SHORT,
     E2EComposeRuntime,
-    assert_notmuch_folder_contains_body_token,
     e2e_matrix_generate_room_ids,
     e2e_matrix_thread_root_mid_for_sync_event,
     e2e_threlium_user_unit_journalctl_bash,
@@ -180,14 +179,9 @@ def test_live_matrix_wiremock_full_contour_on_running_stack(
             except Exception:  # noqa: BLE001
                 pass
 
+        # Контур matrix (LLM + room_send egress в нужную комнату) проверен по WireMock выше; notmuch
+        # ARCHIVE-проверка (room token в архиве) была её более слабым дублем (docker-exec) — убрана.
         assert_wiremock_matrix_e2e_openai_coverage(base, test_id=test_id)
-        matrix_room_token = room_id.removeprefix("!").split(":", 1)[0]
-        assert_notmuch_folder_contains_body_token(
-            rt.project_name,
-            stage_folder_id=FsmStage.ARCHIVE.value,
-            body_token=matrix_room_token,
-            repo_root=REPO_ROOT,
-        )
 
 
 def _wait_bridge_matrix_duplicate_skip(project: str, *, event_id: str) -> None:
