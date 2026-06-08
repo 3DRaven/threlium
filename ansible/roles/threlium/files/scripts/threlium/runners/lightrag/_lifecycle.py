@@ -32,6 +32,22 @@ log = logger.bind(stage="lightrag")
 
 _T = TypeVar("_T")
 
+
+class _NoOpAsyncLock:
+    """No-op async lock: drain⊕aquery⊕bootstrap больше НЕ сериализуются глобально на RAG-loop.
+
+    Индексация развязана от тестов (enrich-барьер в mailflow assert) → она может идти async
+    background конкурентно с запросами; единый RAG event-loop под -n4 больше не упирается в
+    глобальный mutex. Стор (Redis/Faiss/NetworkX) держит конкурентные ainsert/aquery (доказано:
+    0 storage races). Остаётся не-None sentinel для readiness-проверок ``_drain_lock is not None``."""
+
+    async def __aenter__(self) -> "_NoOpAsyncLock":
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+
 _rag_loop: asyncio.AbstractEventLoop | None = None
 _rag_thread: threading.Thread | None = None
 _daemon_rag: LightRAG | None = None
@@ -204,7 +220,7 @@ def _rag_thread_main(settings: ThreliumSettings) -> None:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     _rag_loop = loop
-    _drain_lock = asyncio.Lock()
+    _drain_lock = _NoOpAsyncLock()  # глобальная сериализация снята (см. _NoOpAsyncLock)
     _bootstrap_task = None
     _boot_error.clear()
     try:

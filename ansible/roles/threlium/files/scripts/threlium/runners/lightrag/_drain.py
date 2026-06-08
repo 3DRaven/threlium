@@ -68,16 +68,9 @@ def reset_thread_locks() -> None:
 
 
 def thread_lock_for(correlation: dict[str, str] | None) -> asyncio.Lock | None:
-    if not correlation:
-        return None
-    root = correlation.get(LitellmCorrelationHeader.THREAD_ROOT_MID.value)
-    if not root:
-        return None
-    lock = _thread_locks.get(root)
-    if lock is None:
-        lock = asyncio.Lock()
-        _thread_locks[root] = lock
-    return lock
+    # Развязка индексации: тесты не ждут lightrag-drain (enrich-барьер), per-тред index↔query барьер
+    # больше не нужен — eventual consistency как в проде. No-op (без лока → конкурентно по тредам).
+    return None
 
 
 def _future_timeout_sec(settings: ThreliumSettings) -> float | None:
@@ -87,8 +80,8 @@ def _future_timeout_sec(settings: ThreliumSettings) -> float | None:
 
 
 def _effective_batch_size(settings: ThreliumSettings) -> int:
-    if settings.e2e.litellm_route_correlation:
-        return 1
+    # Индексация развязана от тестов (enrich-барьер в mailflow assert), поэтому батч из settings
+    # и в e2e — индексация async background, тесты не ждут drain.
     return max(1, settings.lightrag.insert_batch)
 
 
@@ -294,7 +287,13 @@ async def drain_single_batch(
 
 
 def schedule_on_loop(rag: LightRAG, settings: ThreliumSettings, lock: asyncio.Lock) -> None:
-    """Create a drain task if none is running (called via loop.call_soon_threadsafe)."""
+    """Create a drain task if none is running (called via loop.call_soon_threadsafe).
+
+    Singleton-гард СОХРАНЁН: конкурентные drain-задачи интерливят ainsert через общий
+    frozen-pool lightrag → per-call корреляция теряется (embeddings без X-Threlium-Call-Site →
+    unmatched). Одна drain-цепочка за раз = корреляция сохраняется. Разлок index↔query даёт
+    no-op ``_drain_lock`` (drain не блокирует aquery); singleton сериализует лишь drain↔drain.
+    """
     global _drain_task
     if _drain_task is not None and not _drain_task.done():
         return

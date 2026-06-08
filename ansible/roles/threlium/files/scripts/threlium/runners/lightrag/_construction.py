@@ -159,11 +159,12 @@ def build_rag(settings: ThreliumSettings) -> LightRAG:
         # (thread-root) — БЕЗ зависимости от порядка вызовов (ни seq, ни phase-state в RAG-фазах; phase-state
         # только у FSM/reasoning-стабов, а это прямые litellm-вызовы вне RAG-loop). Параллельные LLM/embed —
         # ключевой разлок -n2: иначе ВСЕ вызовы (индексация+запросы) обоих тестов сериализуются на одном RAG-loop.
-        # Внутритредовый порядок сохранён и так (последовательные await в aquery; per-thread-root lock для
-        # ainsert↔aquery). max_parallel_insert=1 оставляем (drain — singleton-задача, insert_batch=1).
+        # Внутритредовый порядок сохранён и так (последовательные await в aquery). Индексация
+        # развязана: тесты не ждут lightrag-drain (enrich-барьер в mailflow assert), индексация —
+        # async background. max_parallel_insert берём из settings, как в проде.
         rag_kwargs["llm_model_max_async"] = settings.lightrag.llm_model_max_async
         rag_kwargs["embedding_func_max_async"] = settings.lightrag.embedding_func_max_async
-        rag_kwargs["max_parallel_insert"] = 1
+        rag_kwargs["max_parallel_insert"] = settings.lightrag.max_parallel_insert
     else:
         rag_kwargs["llm_model_max_async"] = settings.lightrag.llm_model_max_async
         rag_kwargs["embedding_func_max_async"] = settings.lightrag.embedding_func_max_async
