@@ -25,7 +25,11 @@ import threlium.nm as nm
 from threlium.bridges import BridgeInReplyTo, build_bridge_ingress_email
 from threlium.bridges.checkpoint import latest_route_checkpoint
 from threlium.bridges.dedup import filter_known_message_ids_in_db
-from threlium.bridges.notmuch_space_anchor import resolve_bridge_tail_mid_for_space
+from threlium.bridges.notmuch_space_anchor import (
+    SPACE_SETTLE_TIMEOUT_SEC,
+    resolve_bridge_tail_mid_for_space,
+    space_thread_settled_read,
+)
 from threlium.invisible_task_mid import is_egress_placeholder_message
 from threlium.logutil import logger
 from threlium.systemd_notify import notify_status
@@ -211,6 +215,32 @@ def _bridge_in_reply_to_for_message(msg: Message) -> BridgeInReplyTo:
         return telegram_effective_message_bridge_in_reply_to(msg=msg, db=db)
 
 
+def _telegram_space_wire_for_msg(msg: Message) -> ThreliumSpaceB62Wire:
+    """Space-wire входящего сообщения (chat_id [+ forum thread]) — для per-space сериализации ingest."""
+    chat_id = int(msg.chat_id)
+    mtid_norm = int(msg.message_thread_id) if msg.message_thread_id is not None else None
+    route_stub = TelegramIngressRoute(
+        channel=BridgeIngressChannel.TELEGRAM, v=1,
+        chat_id=chat_id, message_id=0, message_thread_id=mtid_norm, update_id=0,
+    )
+    return ThreliumSpaceB62Wire.from_threlium_space(
+        telegram_space_from_ingress_route(route_stub)
+    )
+
+
+def _space_settled_for_msg(msg: Message) -> bool:
+    """Можно ли ingest'ить ``msg`` СЕЙЧАС (не форкнув тред): явный ``reply_to`` → к названному родителю
+    (всегда да); иначе fallback → предыдущий ход ЭТОГО пространства должен быть архивирован
+    (:func:`space_thread_settled_read`, один READ — без блокировки). НЕ settled → цикл паркует ``msg`` в
+    pending и идёт обслуживать ДРУГИЕ пространства (треды независимы, THREAD_MODEL §3)."""
+    if msg.reply_to_message is not None:
+        return True
+    return space_thread_settled_read(
+        bridge=NotmuchBridgeFromLocalhost.TELEGRAM,
+        space_wire=_telegram_space_wire_for_msg(msg),
+    )
+
+
 def _max_update_id() -> int:
     """Последний ``update_id`` из newest ``from:telegram``."""
     picked = latest_route_checkpoint(
@@ -287,10 +317,71 @@ async def _poll_loop(
     async with TelegramBot(token_val, **bot_kw) as bot:
         await bot.get_me()
         notify_status(SystemdStatusBody.bridge_telegram_connected_idle())
+
+        def _prefilter(update: Any, known_mids: set[NotmuchMessageIdInner]) -> tuple[Message, str] | None:
+            """Доставляемое (msg, text) или None: нет текста / reply на placeholder / дубликат (в notmuch)."""
+            msg = update.effective_message
+            if not msg:
+                return None
+            text = TelegramBridgeInboundCaptionOrText.parse(msg.text or msg.caption).value
+            if not text:
+                return None
+            reply_parent = msg.reply_to_message
+            if reply_parent is not None:
+                parent_text = reply_parent.text or reply_parent.caption or ""
+                if is_egress_placeholder_message(parent_text):
+                    log.info("reply_to_placeholder_skip", chat_id=msg.chat_id, message_id=msg.message_id)
+                    return None
+            mtid_norm = int(msg.message_thread_id) if msg.message_thread_id is not None else None
+            native = TelegramNativeId(
+                v=1, chat_id=int(msg.chat_id), message_id=int(msg.message_id),
+                message_thread_id=mtid_norm,
+            )
+            mid_nm = NotmuchMessageIdInner.from_present_wire(RfcMessageIdWire.from_native(native))
+            if mid_nm in known_mids:
+                log.info("duplicate_skip", chat_id=msg.chat_id, message_id=msg.message_id)
+                return None
+            return msg, text
+
+        def _emit(update: Any, msg: Message, text: str) -> None:
+            mtid_norm = int(msg.message_thread_id) if msg.message_thread_id is not None else None
+            irt = _bridge_in_reply_to_for_message(msg)
+            deliver_msg(
+                text, str(msg.chat_id), int(msg.message_id), update.update_id,
+                in_reply_to=irt, message_thread_id=mtid_norm,
+            )
+
+        # Pending: сообщения (fallback), чьё пространство ещё НЕ отстоялось (предыдущий ход не архивирован).
+        # offset уже сдвинут (telegram-update потреблён), держим в памяти и перепроверяем каждый тик — БЕЗ
+        # блокировки: другие пространства идут параллельно. (update, deadline, msg, text).
+        pending: list[tuple[Any, float, Message, str]] = []
         while True:
+            blocked: set[str] = set()  # пространства, уже обработанные в этом тике (FIFO + serial-per-space)
+
+            # 1) Перепроверить pending: пространство отстоялось → emit; иначе оставить (соседи независимы).
+            carried: list[tuple[Any, float, Message, str]] = []
+            for upd, deadline, msg, text in pending:
+                sk = _telegram_space_wire_for_msg(msg).value
+                if sk in blocked:
+                    carried.append((upd, deadline, msg, text))
+                    continue
+                blocked.add(sk)
+                if time.monotonic() >= deadline:
+                    log.warning(
+                        "space_settle_deadline_force_ingest",
+                        chat_id=msg.chat_id, message_id=msg.message_id,
+                    )
+                    _emit(upd, msg, text)
+                elif _space_settled_for_msg(msg):
+                    _emit(upd, msg, text)
+                else:
+                    carried.append((upd, deadline, msg, text))
+            pending = carried
+
+            # 2) Забрать новые (короткий long-poll если есть pending — быстрее их доперепроверить).
             updates = await bot.get_updates(
                 offset=offset,
-                timeout=60,
+                timeout=2 if pending else 60,
                 allowed_updates=list(DEFAULT_ALLOWED_UPDATES),
                 read_timeout=70,
                 write_timeout=70,
@@ -302,64 +393,36 @@ async def _poll_loop(
                     em = update.effective_message
                     if em:
                         mtid = int(em.message_thread_id) if em.message_thread_id is not None else None
-                        native = TelegramNativeId(
-                            v=1, chat_id=int(em.chat_id),
-                            message_id=int(em.message_id),
-                            message_thread_id=mtid,
-                        )
                         candidate_mids.add(
                             NotmuchMessageIdInner.from_present_wire(
-                                RfcMessageIdWire.from_native(native)
+                                RfcMessageIdWire.from_native(TelegramNativeId(
+                                    v=1, chat_id=int(em.chat_id), message_id=int(em.message_id),
+                                    message_thread_id=mtid,
+                                ))
                             )
                         )
-
                 known_mids = _filter_known_message_ids(candidate_mids)
 
                 for update in updates:
                     offset = update.update_id + 1
-                    msg = update.effective_message
-                    if not msg:
+                    got = _prefilter(update, known_mids)
+                    if got is None:
                         continue
-                    text = TelegramBridgeInboundCaptionOrText.parse(
-                        msg.text or msg.caption
-                    ).value
-                    if not text:
+                    msg, text = got
+                    if msg.reply_to_message is not None:
+                        # Явный reply → IRT к названному родителю; не зависит от хода пространства.
+                        _emit(update, msg, text)
                         continue
-
-                    reply_parent = msg.reply_to_message
-                    if reply_parent is not None:
-                        parent_text = reply_parent.text or reply_parent.caption or ""
-                        if is_egress_placeholder_message(parent_text):
-                            log.info("reply_to_placeholder_skip", chat_id=msg.chat_id, message_id=msg.message_id)
-                            continue
-
-                    mtid_norm = (
-                        int(msg.message_thread_id)
-                        if msg.message_thread_id is not None
-                        else None
-                    )
-
-                    native = TelegramNativeId(
-                        v=1, chat_id=int(msg.chat_id),
-                        message_id=int(msg.message_id),
-                        message_thread_id=mtid_norm,
-                    )
-                    mid_wire = RfcMessageIdWire.from_native(native)
-                    mid_nm = NotmuchMessageIdInner.from_present_wire(mid_wire)
-                    if mid_nm in known_mids:
-                        log.info("duplicate_skip", chat_id=msg.chat_id, message_id=msg.message_id)
+                    sk = _telegram_space_wire_for_msg(msg).value
+                    if sk in blocked:
+                        # Пространство уже обслужено в этом тике (FIFO) → в очередь за предыдущим.
+                        pending.append((update, time.monotonic() + SPACE_SETTLE_TIMEOUT_SEC, msg, text))
                         continue
-
-                    irt = _bridge_in_reply_to_for_message(msg)
-
-                    deliver_msg(
-                        text,
-                        str(msg.chat_id),
-                        int(msg.message_id),
-                        update.update_id,
-                        in_reply_to=irt,
-                        message_thread_id=mtid_norm,
-                    )
+                    blocked.add(sk)
+                    if _space_settled_for_msg(msg):
+                        _emit(update, msg, text)
+                    else:
+                        pending.append((update, time.monotonic() + SPACE_SETTLE_TIMEOUT_SEC, msg, text))
             notify_status(SystemdStatusBody.bridge_telegram_connected_idle())
             time.sleep(0)
 

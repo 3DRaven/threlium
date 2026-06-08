@@ -52,7 +52,11 @@ from threlium.bridges import (
 )
 from threlium.bridges.checkpoint import latest_route_checkpoint
 from threlium.bridges.dedup import filter_known_message_ids_in_db
-from threlium.bridges.notmuch_space_anchor import resolve_bridge_tail_mid_for_space
+from threlium.bridges.notmuch_space_anchor import (
+    SPACE_SETTLE_TIMEOUT_SEC,
+    resolve_bridge_tail_mid_for_space,
+    space_thread_settled_read,
+)
 from threlium.logutil import logger
 from threlium.settings import ThreliumSettings
 from threlium.types import (
@@ -119,6 +123,23 @@ def _bridge_in_reply_to_for_room_event(
         return matrix_room_message_bridge_in_reply_to(
             room_id=room_id, parent_event_id=parent_event_id, db=db
         )
+
+
+def _matrix_space_key(room_id: MatrixRoomId) -> str:
+    """Ключ пространства комнаты — для per-space сериализации ingest (FIFO + serial-per-thread)."""
+    return ThreliumSpaceB62Wire.from_threlium_space(matrix_space_from_room_id(room_id)).value
+
+
+def _matrix_space_settled(room_id: MatrixRoomId, parent_eid: MatrixRoomEventId | None) -> bool:
+    """Можно ли ingest'ить событие СЕЙЧАС: явный reply (``parent_eid``) → к названному родителю (да);
+    иначе fallback → предыдущий ход комнаты должен быть архивирован (:func:`space_thread_settled_read`,
+    один READ — без блокировки; поллинг делает цикл, не блокируя соседние комнаты, THREAD_MODEL §3)."""
+    if parent_eid is not None:
+        return True
+    return space_thread_settled_read(
+        bridge=NotmuchBridgeFromLocalhost.MATRIX,
+        space_wire=ThreliumSpaceB62Wire.from_threlium_space(matrix_space_from_room_id(room_id)),
+    )
 
 
 def _sync_since_from_index() -> MatrixSyncBatchCursor | None:
@@ -189,9 +210,65 @@ async def _matrix_ingress_loop(
     if since:
         client.next_batch = since
     sync_ok_logged = False
+
+    def _emit_event(
+        room_id: MatrixRoomId,
+        ev_id: MatrixRoomEventId,
+        mid_wire: RfcMessageIdWire,
+        parent_eid: MatrixRoomEventId | None,
+        body: str,
+        subj_w: Any,
+        checkpoint: str,
+    ) -> None:
+        irt = _bridge_in_reply_to_for_room_event(room_id=room_id, parent_event_id=parent_eid)
+        route = MatrixIngressRoute(
+            channel=BridgeIngressChannel.MATRIX, v=1, room_id=room_id, event_id=ev_id,
+            sync_batch=MatrixSyncBatchCursor(checkpoint), reply_to_event_id=parent_eid,
+        )
+        raw_obj: dict[str, object] = {
+            "route": msgspec.to_builtins(route), "body": body,
+            "room_id": room_id, "event_id": ev_id,
+        }
+        if parent_eid is not None:
+            raw_obj["reply_to_event_id"] = str(parent_eid)
+        raw_capture = msgspec.json.encode(raw_obj).decode("utf-8")
+        sw = ThreliumSpaceB62Wire.from_threlium_space(matrix_space_from_room_id(room_id))
+        msg = build_bridge_ingress_email(
+            channel=BridgeIngressChannel.MATRIX, body=body, route=route,
+            message_id=mid_wire, in_reply_to=irt, subject=subj_w,
+            raw_capture=raw_capture, space_wire=sw,
+        )
+        notify_status(SystemdStatusBody.bridge_matrix_delivering_room(room_id=room_id))
+        deliver(msg)
+
+    # Pending: события (fallback), чья комната ещё НЕ отстоялась (предыдущий ход не архивирован). sync уже
+    # потреблён (checkpoint сохранён в элементе) → держим в памяти, перепроверяем каждый тик БЕЗ блокировки;
+    # события ДРУГИХ комнат идут параллельно. (deadline, room_id, ev_id, mid_wire, parent_eid, body, subj_w, checkpoint).
+    pending: list[tuple[float, MatrixRoomId, MatrixRoomEventId, RfcMessageIdWire, MatrixRoomEventId | None, str, Any, str]] = []
     try:
         while True:
-            resp = await client.sync(timeout=60_000)
+            blocked: set[str] = set()  # комнаты, уже обработанные в этом тике (FIFO + serial-per-thread)
+
+            # 1) Перепроверить pending: комната отстоялась → emit; иначе оставить (соседи независимы).
+            carried: list[tuple[float, MatrixRoomId, MatrixRoomEventId, RfcMessageIdWire, MatrixRoomEventId | None, str, Any, str]] = []
+            for item in pending:
+                deadline, p_room, p_ev, p_mid, p_parent, p_body, p_subj, p_ckpt = item
+                sk = _matrix_space_key(p_room)
+                if sk in blocked:
+                    carried.append(item)
+                    continue
+                blocked.add(sk)
+                if time.monotonic() >= deadline:
+                    log.warning("space_settle_deadline_force_ingest", room_id=p_room, event_id=p_ev)
+                    _emit_event(p_room, p_ev, p_mid, p_parent, p_body, p_subj, p_ckpt)
+                elif _matrix_space_settled(p_room, p_parent):
+                    _emit_event(p_room, p_ev, p_mid, p_parent, p_body, p_subj, p_ckpt)
+                else:
+                    carried.append(item)
+            pending = carried
+
+            # 2) sync (короткий, если есть pending — быстрее доперепроверить).
+            resp = await client.sync(timeout=2_000 if pending else 60_000)
             if isinstance(resp, SyncError):
                 raise RuntimeError(f"FSM-инвариант: Matrix sync error: {resp!s}")
             if not isinstance(resp, SyncResponse):
@@ -236,43 +313,19 @@ async def _matrix_ingress_loop(
                         if mid_nm in known_mids:
                             log.info("duplicate_skip", room_id=room_id, event_id=ev_id)
                             continue
-                        irt = _bridge_in_reply_to_for_room_event(
-                            room_id=room_id, parent_event_id=parent_eid
-                        )
-                        route = MatrixIngressRoute(
-                            channel=BridgeIngressChannel.MATRIX,
-                            v=1,
-                            room_id=room_id,
-                            event_id=ev_id,
-                            sync_batch=MatrixSyncBatchCursor(checkpoint),
-                            reply_to_event_id=parent_eid,
-                        )
-                        raw_obj: dict[str, object] = {
-                            "route": msgspec.to_builtins(route),
-                            "body": body,
-                            "room_id": room_id,
-                            "event_id": ev_id,
-                        }
                         if parent_eid is not None:
-                            raw_obj["reply_to_event_id"] = str(parent_eid)
-                        raw_capture = msgspec.json.encode(raw_obj).decode("utf-8")
-                        sw = ThreliumSpaceB62Wire.from_threlium_space(
-                            matrix_space_from_room_id(room_id)
-                        )
-                        msg = build_bridge_ingress_email(
-                            channel=BridgeIngressChannel.MATRIX,
-                            body=body,
-                            route=route,
-                            message_id=mid_wire,
-                            in_reply_to=irt,
-                            subject=subj_w,
-                            raw_capture=raw_capture,
-                            space_wire=sw,
-                        )
-                        notify_status(
-                            SystemdStatusBody.bridge_matrix_delivering_room(room_id=room_id)
-                        )
-                        deliver(msg)
+                            # Явный reply → IRT к названному родителю; от хода комнаты не зависит.
+                            _emit_event(room_id, ev_id, mid_wire, parent_eid, body, subj_w, checkpoint)
+                            continue
+                        sk = _matrix_space_key(room_id)
+                        if sk in blocked:
+                            pending.append((time.monotonic() + SPACE_SETTLE_TIMEOUT_SEC, room_id, ev_id, mid_wire, parent_eid, body, subj_w, checkpoint))
+                            continue
+                        blocked.add(sk)
+                        if _matrix_space_settled(room_id, parent_eid):
+                            _emit_event(room_id, ev_id, mid_wire, parent_eid, body, subj_w, checkpoint)
+                        else:
+                            pending.append((time.monotonic() + SPACE_SETTLE_TIMEOUT_SEC, room_id, ev_id, mid_wire, parent_eid, body, subj_w, checkpoint))
             notify_status(SystemdStatusBody.bridge_matrix_connected_idle())
             time.sleep(0)
     finally:
