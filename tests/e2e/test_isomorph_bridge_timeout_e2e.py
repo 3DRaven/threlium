@@ -1,14 +1,13 @@
 """E2e: upstream-timeout → **504**. Мост отдаёт 504, если egress-push не пришёл за ``request_timeout_sec``.
 
-**Серийный тест** (skip под xdist): чтобы не ждать дефолтные 180c, временно понижает ``request_timeout_sec``
-моста до 8c (env-файл + рестарт моста). Понижение ГЛОБАЛЬНО для процесса моста → несовместимо с параллельными
-ходами (их FSM ~30c > 8c дали бы ложный 504), поэтому тест идёт только в одиночном прогоне (`-n0`).
-Восстановление исходного таймаута — в ``finally`` фикстуры (робастно, всегда). Стабы засижены → реальный ход
-доезжает чисто в фоне (поздний push = no-op), teardown idle без зависа.
+Параллельно-совместим (``-n N``): таймаут моста для ЭТОГО запроса понижается до 8c **per-request** директивой
+``E2E_REQUEST_TIMEOUT_SEC:8`` в теле (e2e-режим, обобщение ``E2E_MID:``, см. ``threlium.e2e_directives``) —
+БЕЗ понижения глобального конфига моста + рестарта (был serial-only). Соседние ходы используют дефолтный
+таймаут → не ломаются. Стабы засижены → реальный ход доезжает чисто в фоне (поздний push = no-op), teardown
+idle без зависа.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Generator
 
@@ -22,8 +21,6 @@ from .toolkit.isomorph_cline import (
     clean_isomorph_test_threads,
     e2e_explicit_root_mid,
     e2e_root_prompt_token,
-    sut_exec,
-    wait_bridge_health,
 )
 from .toolkit.workers import wait_for_sut_threlium_user_workers_idle
 from .wiremock_client import (
@@ -39,47 +36,29 @@ _MODEL = "claude-sonnet-4-6"
 _MARKER = "isomorph-timeout-e2e"
 _STUB_TAG = "stub-isomorph-openai-json-e2e-01"  # зашитый tag json-стабов
 _STUB_DIR = Path(__file__).parent / "wiremock_stubs" / "test_isomorph_bridge_openai_json_e2e"
-_ENV_FILE = "/home/threlium/threlium/agent/env/threlium.env"
-_VAR = "THRELIUM_BRIDGES__ISOMORPH__REQUEST_TIMEOUT_SEC"
-_LOW_TIMEOUT = 8
-
-
-def _set_bridge_timeout(rt: E2EComposeRuntime, value: str | int) -> None:
-    """Выставить ``request_timeout_sec`` моста (env-файл) + рестарт моста + дождаться health."""
-    sut_exec(rt, f"sed -i 's/^{_VAR}=.*/{_VAR}={value}/' {_ENV_FILE}")
-    sut_exec(
-        rt,
-        "export XDG_RUNTIME_DIR=/run/user/$(id -u); "
-        "systemctl --user restart threlium-bridge@isomorph.service",
-        timeout=40.0,
-    )
-    wait_bridge_health(rt, port=_ISO_PORT)
+_LOW_TIMEOUT = 2  # per-request таймаут моста для этого запроса (директива E2E_REQUEST_TIMEOUT_SEC)
 
 
 @pytest.fixture()
-def isomorph_low_timeout(e2e_runtime: E2EComposeRuntime) -> Generator[E2EComposeRuntime, None, None]:
-    if os.environ.get("PYTEST_XDIST_WORKER"):
-        pytest.skip("lowers bridge request_timeout_sec globally → serial only (-n0)")
+def isomorph_timeout_scenario(e2e_runtime: E2EComposeRuntime) -> Generator[E2EComposeRuntime, None, None]:
     rt = e2e_runtime
-    orig = (sut_exec(rt, f"grep -oE '^{_VAR}=[0-9]+' {_ENV_FILE} | cut -d= -f2").strip() or "180")
     wm_base = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
     wait_for_sut_threlium_user_workers_idle(rt.project_name, timeout=30.0)
     clean_isomorph_test_threads(rt, _MARKER)
     upsert_wiremock_mapping_directory(wm_base, _STUB_DIR, stub_tag=_STUB_TAG)
     wiremock_state_seed_context(wm_base, composite_context_key(_STUB_TAG, e2e_explicit_root_mid(_MARKER)))
-    _set_bridge_timeout(rt, _LOW_TIMEOUT)
     try:
         yield rt
     finally:
-        _set_bridge_timeout(rt, orig)  # восстановить дефолт (робастно — finally всегда)
         wait_for_sut_threlium_user_workers_idle(rt.project_name, timeout=60.0)
 
 
-def test_isomorph_bridge_upstream_timeout_504(isomorph_low_timeout: E2EComposeRuntime) -> None:
-    """При ``request_timeout_sec=8`` push не успевает (FSM ~30c) → мост снимает pending и отдаёт 504 upstream
-    timeout (``_await_json``). curl --max-time 40 > 8 → ловим именно мостовой 504, не клиентский обрыв."""
-    rt = isomorph_low_timeout
-    user = f"ping {e2e_root_prompt_token(_MARKER)} [{_MARKER}]"
+def test_isomorph_bridge_upstream_timeout_504(isomorph_timeout_scenario: E2EComposeRuntime) -> None:
+    """``E2E_REQUEST_TIMEOUT_SEC:8`` в теле → мост ждёт push 8c; push не успевает (FSM ~30c) → снимает pending
+    и отдаёт 504 upstream timeout (``_await_json``). curl --max-time 40 > 8 → ловим именно мостовой 504, не
+    клиентский обрыв. Per-request → совместимо с ``-n N`` (глобальный конфиг моста не трогается)."""
+    rt = isomorph_timeout_scenario
+    user = f"ping {e2e_root_prompt_token(_MARKER)} [{_MARKER}] E2E_REQUEST_TIMEOUT_SEC:{_LOW_TIMEOUT}"
     body: dict[str, object] = {
         "model": _MODEL, "stream": False,
         "messages": [

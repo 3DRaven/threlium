@@ -31,6 +31,7 @@ from .auth import is_authorized
 from .history import ingress_message_id, parse_history
 from .models_list import models_list_payload
 from .snowflake_mid import extract_e2e_explicit_mid
+from threlium.e2e_directives import extract_e2e_int_directive
 from .pending import IsomorphPendingRegistry
 from .push import handle_push
 from .push_types import IsomorphBridgePushPayload
@@ -97,10 +98,15 @@ async def inference_handler(request: Request, surface: IsomorphApiSurface) -> Re
     # `snowflake_to_mid`, что egress). Тогда thread-root = он, БЕЗ content-hash → нет зависимости от
     # реконструкции тела Cline/даты (устраняет date-drift сидирования). В проде (флаг off) — обычный путь.
     message_id = None
+    # E2E-ONLY: per-request override request_timeout_sec из тела (E2E_REQUEST_TIMEOUT_SEC:<int>) — чтобы
+    # тест проверил 504-таймаут БЕЗ понижения глобального конфига моста + рестарта (был serial-only; обобщение
+    # E2E_MID:, см. threlium.e2e_directives). Только за флагом e2e; токен вырезается. Прод → iso.request_timeout_sec.
+    request_timeout_override: int | None = None
     if state.settings.e2e.litellm_route_correlation:
         e2e_mid, tail_body = extract_e2e_explicit_mid(tail_body)
         if e2e_mid is not None:
             message_id = e2e_mid
+        request_timeout_override, tail_body = extract_e2e_int_directive(tail_body, "REQUEST_TIMEOUT_SEC")
     if message_id is None:
         message_id = ingress_message_id(
             parent_value=in_reply_to.value if in_reply_to else "", tail_body=tail_body)
@@ -133,12 +139,14 @@ async def inference_handler(request: Request, surface: IsomorphApiSurface) -> Re
 
     if stream:
         return StreamingResponse(
-            _event_stream(request, state, surface, corr, fut, model),
+            _event_stream(request, state, surface, corr, fut, model,
+                          timeout_override=request_timeout_override),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    return await _await_json(state, surface, corr, fut)
+    return await _await_json(state, surface, corr, fut,
+                             timeout_override=request_timeout_override)
 
 
 def _keepalive_frame(surface: IsomorphApiSurface) -> SseFrame:
@@ -161,9 +169,11 @@ def _error_frame(surface: IsomorphApiSurface, message: str) -> SseFrame:
 async def _event_stream(
     request: Request, state: _AppState, surface: IsomorphApiSurface,
     corr: str, fut: "asyncio.Future[IsomorphBridgePushPayload]", model: str,
+    *, timeout_override: int | None = None,
 ) -> AsyncIterator[str]:
     iso = state.settings.bridges.isomorph
-    deadline = asyncio.get_running_loop().time() + iso.request_timeout_sec
+    request_timeout = timeout_override if timeout_override is not None else iso.request_timeout_sec
+    deadline = asyncio.get_running_loop().time() + request_timeout
 
     def emit(frame: SseFrame) -> str:
         # Единственное место рендера SseFrame → сырая строка (край StreamingResponse).
@@ -206,10 +216,12 @@ async def _event_stream(
 async def _await_json(
     state: _AppState, surface: IsomorphApiSurface, corr: str,
     fut: "asyncio.Future[IsomorphBridgePushPayload]",
+    *, timeout_override: int | None = None,
 ) -> Response:
     iso = state.settings.bridges.isomorph
+    request_timeout = timeout_override if timeout_override is not None else iso.request_timeout_sec
     try:
-        payload = await asyncio.wait_for(asyncio.shield(fut), timeout=iso.request_timeout_sec)
+        payload = await asyncio.wait_for(asyncio.shield(fut), timeout=request_timeout)
     except asyncio.TimeoutError:
         state.registry.discard(corr, fut)
         return _surface_error(surface, "upstream timeout", err_type="api_error", status=504)
