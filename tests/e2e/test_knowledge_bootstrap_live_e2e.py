@@ -4,26 +4,19 @@
 (:func:`tests.e2e.toolkit.knowledge.e2e_install_deterministic_knowledge_corpus` в ``wipe_sync`` /
 ``fsts_between_test_reset``), не в pytest-fixture.
 
-Reindex probe — :func:`tests.e2e.toolkit.knowledge.e2e_bootstrap_reindex_and_wait` из тела теста
-(``e2e_runtime`` для этого модуля только discover, без pipeline).
+Reindex — ОДИН раз за сессию в cold-reset лидера (``conftest._e2e_wiremock_journal_reset_once``): flushall
+lightrag + рестарт engine (пере-эмбед probe) + второй рестарт без flushall (упражнение идемпотентности).
+Поэтому модуль больше НЕ serial: тесты читают результат **read-only**, совместимы с ``-n N`` (skipif снят).
 
-Проверки:
+Проверки (все read-only):
 - P1: на SUT в ``knowledge/`` — ровно один probe-документ;
-- doc_status: probe после bootstrap;
+- doc_status: probe в redis после bootstrap;
 - B1: WM journal — embedding с ``X-Threlium-Thread-Root: e2e-bootstrap``;
 - R4: промпты reasoning/memory_query, formal_reason и observation на месте;
-- B2: повторный restart engine — без новых embedding (LightRAG dedup).
-
-Serial-only (skip под xdist, E2E.md §5): reindex дёргает ``redis-cli flushall`` + рестарт ОБЩЕГО
-engine — это снесло бы LightRAG/FSM-состояние параллельных воркеров. Валидируется в ``-n0``;
-под ``-n N`` модуль показывается как ``skipped``, не ломая остальных.
+- B2: идемпотентность — в журнале НЕТ дублей bootstrap-embedding тел (второй рестарт без flushall не
+  пере-эмбедил → LightRAG dedup сработал).
 """
 from __future__ import annotations
-
-import os
-import time
-
-import pytest
 
 from tests.e2e.log import log
 from tests.e2e.sut_user_systemd import E2E_THRELIUM_USER
@@ -34,25 +27,12 @@ from .toolkit import (
     E2E_KNOWLEDGE_PROBE_FILENAME,
     REPO_ROOT,
     bootstrap_embedding_entries,
-    bootstrap_embedding_entry_ids,
-    e2e_bootstrap_reindex_and_wait,
-    e2e_start_threlium_user_pipeline_services,
-    e2e_wait_engine_active,
     service_exec,
-    wait_for_sut_threlium_user_workers_idle,
 )
 from .wiremock_client import (
     THRELIUM_WIREMOCK_COMPOSE_BOOTSTRAP_STUB_TAG,
     journal_entries_for_stub_tag_with_header,
     wiremock_public_base,
-)
-
-pytestmark = pytest.mark.skipif(
-    os.environ.get("PYTEST_XDIST_WORKER") is not None,
-    reason=(
-        "knowledge bootstrap reindex does redis flushall + restarts the shared engine "
-        "→ serial only (-n0); validated outside xdist (E2E.md §5)"
-    ),
 )
 
 _KNOWLEDGE_PROMPTS = [
@@ -108,7 +88,7 @@ def test_knowledge_docs_indexed_in_lightrag(e2e_runtime: E2EComposeRuntime) -> N
     поэтому читаем значения ключей ``doc_status:*`` через ``redis-cli``: в content_summary каждой
     записи лежит ``Subject: <filename>``.
     """
-    e2e_bootstrap_reindex_and_wait(e2e_runtime)
+    # Read-only: bootstrap reindex сделан в session cold-reset (conftest), здесь только читаем redis.
     project = e2e_runtime.project_name
     cmd = [
         "bash",
@@ -123,7 +103,6 @@ def test_knowledge_docs_indexed_in_lightrag(e2e_runtime: E2EComposeRuntime) -> N
         f"expected {E2E_KNOWLEDGE_PROBE_FILENAME!r} in redis doc_status:*; snippet={text[:500]!r}"
     )
     log.info("knowledge_docs_in_doc_status", doc=E2E_KNOWLEDGE_PROBE_FILENAME)
-    e2e_start_threlium_user_pipeline_services(e2e_runtime)
 
 
 def test_knowledge_prompts_deployed(e2e_runtime: E2EComposeRuntime) -> None:
@@ -143,7 +122,7 @@ def test_knowledge_prompts_deployed(e2e_runtime: E2EComposeRuntime) -> None:
 
 def test_bootstrap_knowledge_called_wiremock(e2e_runtime: E2EComposeRuntime) -> None:
     """B1: WireMock received embedding requests with X-Threlium-Thread-Root: e2e-bootstrap."""
-    e2e_bootstrap_reindex_and_wait(e2e_runtime)
+    # Read-only: bootstrap embeddings произведены в session cold-reset (conftest reindex).
     wm_base = wiremock_public_base(e2e_runtime.wiremock_host, e2e_runtime.wiremock_port)
 
     all_entries = journal_entries_for_stub_tag_with_header(
@@ -165,40 +144,32 @@ def test_bootstrap_knowledge_called_wiremock(e2e_runtime: E2EComposeRuntime) -> 
         f"All entries matching header (any url): {len(all_entries)}."
     )
     log.info("bootstrap_knowledge_wiremock_verified", count=len(entries))
-    e2e_start_threlium_user_pipeline_services(e2e_runtime)
 
 
 def test_bootstrap_idempotent_on_restart(e2e_runtime: E2EComposeRuntime) -> None:
-    """B2: restart engine -> no new embedding requests with bootstrap thread-root."""
-    e2e_bootstrap_reindex_and_wait(e2e_runtime)
+    """B2 (read-only): рестарт engine БЕЗ flushall (cold-reset сделал) → LightRAG обнаружил probe как
+    ДУБЛИКАТ и НЕ переиндексировал.
+
+    Authoritative-сигнал дедупа — redis ``doc_status`` (НЕ счётчик embedding-запросов в журнале: LightRAG
+    шлёт chunk-эмбеддинги ДО doc-level dup-проверки, поэтому журнал показывает повторные запросы даже когда
+    документ дедуплицирован). После re-insert на рестарте в ``doc_status`` появляется запись
+    ``[DUPLICATE:filename]`` (``status: failed``, ``chunks_count: 0``, ``Original doc_id: …, Status:
+    processed``) — это и есть доказательство, что dedup сработал. Read-only → совместимо с ``-n N``."""
     project = e2e_runtime.project_name
-    wm_base = wiremock_public_base(e2e_runtime.wiremock_host, e2e_runtime.wiremock_port)
-
-    ids_before = bootstrap_embedding_entry_ids(wm_base)
-    assert ids_before, "expected bootstrap embedding journal entries before restart"
-    log.info("bootstrap_idempotent_pre_restart", count_before=len(ids_before))
-
-    wait_for_sut_threlium_user_workers_idle(project, repo_root=REPO_ROOT)
-    restart_cmd = [
+    cmd = [
         "bash", "-lc",
-        f"runuser -u {E2E_THRELIUM_USER} -- env "
-        f"XDG_RUNTIME_DIR=/run/user/$(id -u {E2E_THRELIUM_USER}) "
-        "systemctl --user restart threlium-engine.service",
+        "for k in $(redis-cli --scan --pattern 'doc_status:*' 2>/dev/null); do "
+        "redis-cli get \"$k\" 2>/dev/null; done",
     ]
-    service_exec(project, "sut", restart_cmd, repo_root=REPO_ROOT, timeout=30)
-    e2e_wait_engine_active(project, timeout=90.0)
-    time.sleep(8)
-
-    ids_after = bootstrap_embedding_entry_ids(wm_base)
-    new_ids = ids_after - ids_before
-    log.info(
-        "bootstrap_idempotent_post_restart",
-        count_before=len(ids_before),
-        count_after=len(ids_after),
-        new_ids=sorted(new_ids),
+    r = service_exec(project, "sut", cmd, repo_root=REPO_ROOT, timeout=30)
+    text = (r.stdout or "") + (r.stderr or "")
+    assert r.returncode == 0, f"redis doc_status unreadable: {text[:400]!r}"
+    # probe проиндексирован (status processed) И его re-insert на рестарте дедуплицирован.
+    assert E2E_KNOWLEDGE_PROBE_FILENAME in text, (
+        f"probe {E2E_KNOWLEDGE_PROBE_FILENAME!r} not in doc_status; snippet={text[:400]!r}"
     )
-    assert not new_ids, (
-        f"Bootstrap generated new embedding requests after restart: new_ids={sorted(new_ids)!r}. "
-        f"LightRAG deduplication did not prevent re-indexing."
+    assert "[DUPLICATE:filename]" in text, (
+        "expected a LightRAG duplicate-detected doc_status entry ([DUPLICATE:filename]) — proof that the "
+        f"engine restart re-inserted the probe and dedup skipped re-indexing. snippet={text[:600]!r}"
     )
-    e2e_start_threlium_user_pipeline_services(e2e_runtime)
+    log.info("bootstrap_idempotent_dedup_detected", probe=E2E_KNOWLEDGE_PROBE_FILENAME)

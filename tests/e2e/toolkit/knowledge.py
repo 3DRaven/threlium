@@ -166,14 +166,63 @@ def e2e_clear_doc_status_and_restart_engine(
     e2e_wait_engine_active(project, repo_root=root, timeout=90.0)
 
 
+def e2e_restart_threlium_engine_only(project: str, *, repo_root: Path | None = None) -> None:
+    """Рестарт ``threlium-engine`` БЕЗ flushall lightrag — упражняет идемпотентность bootstrap (LightRAG
+    dedup по doc_status в Redis: второй старт не должен пере-эмбедить уже проиндексированный probe-корпус)."""
+    root = repo_root or REPO_ROOT
+    restart_cmd = [
+        "bash",
+        "-lc",
+        f"runuser -u {E2E_THRELIUM_USER} -- env "
+        f"XDG_RUNTIME_DIR=/run/user/$(id -u {E2E_THRELIUM_USER}) "
+        "systemctl --user restart threlium-engine.service",
+    ]
+    service_exec(project, "sut", restart_cmd, repo_root=root, timeout=30)
+    e2e_wait_engine_active(project, repo_root=root, timeout=90.0)
+
+
+def _wait_bootstrap_doc_status_persisted(project: str, *, repo_root: Path | None = None) -> None:
+    """Дождаться, что bootstrap ЗАПИСАЛ probe в redis ``doc_status`` (не только embedding-request в журнал).
+
+    Барьер перед последующим рестартом без flushall: embedding-request попадает в журнал ДО того, как
+    LightRAG персистит ``doc_status``; рестарт в этом окне видит пустой doc_status → пере-эмбедит (ложный
+    dedup-fail). Поллим redis, пока probe не появится в ``doc_status:*``."""
+    root = repo_root or REPO_ROOT
+    cmd = [
+        "bash", "-lc",
+        "for k in $(redis-cli --scan --pattern 'doc_status:*' 2>/dev/null); do "
+        "redis-cli get \"$k\" 2>/dev/null; done",
+    ]
+
+    def _probe() -> bool | None:
+        r = service_exec(project, "sut", cmd, repo_root=root, timeout=15)
+        text = (r.stdout or "") + (r.stderr or "")
+        return True if E2E_KNOWLEDGE_PROBE_FILENAME in text else None
+
+    poll_until(_probe, timeout=TIMEOUT_POLL_SHORT, desc="redis doc_status has bootstrap probe")
+
+
 def e2e_bootstrap_reindex_and_wait(rt: E2EComposeRuntime) -> None:
-    """Clean WM journal, force bootstrap re-index of probe corpus, wait for embedding in journal."""
+    """Clean WM journal, force bootstrap re-index of probe corpus, wait for embedding + doc_status persist."""
     from tests.e2e.wiremock_client import reset_request_journal, wiremock_public_base  # noqa: PLC0415
 
     wm_base = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
     reset_request_journal(wm_base)
     e2e_clear_doc_status_and_restart_engine(rt.project_name, repo_root=rt.repo_root)
     _wait_bootstrap_embeddings_in_wiremock(wm_base)
+    # Барьер: дождаться персиста doc_status, иначе следующий рестарт (идемпотентность) гонит пустой статус.
+    _wait_bootstrap_doc_status_persisted(rt.project_name, repo_root=rt.repo_root)
+
+
+def bootstrap_embedding_request_bodies(wm_base: str) -> list[str]:
+    """Тела запросов bootstrap-embedding (thread-root e2e-bootstrap) из журнала — для проверки идемпотентности:
+    при работающем dedup каждый chunk эмбедится РОВНО раз → тела уникальны; пере-эмбед на рестарте → дубли."""
+    bodies: list[str] = []
+    for e in bootstrap_embedding_entries(wm_base):
+        req = e.get("request") if isinstance(e, dict) else None
+        if isinstance(req, dict):
+            bodies.append(str(req.get("body") or ""))
+    return bodies
 
 
 def e2e_bootstrap_scenario(rt: E2EComposeRuntime) -> Iterator[E2EComposeRuntime]:

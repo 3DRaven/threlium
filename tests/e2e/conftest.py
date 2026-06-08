@@ -85,9 +85,11 @@ from .toolkit import (
     e2e_controller_hint_cleanup,
     e2e_controller_hint_read,
     e2e_controller_hint_write,
+    e2e_bootstrap_reindex_and_wait,
     e2e_flush_greenmail_inboxes,
     e2e_flush_sut_fsm_maildirs,
     e2e_install_deterministic_knowledge_corpus,
+    e2e_restart_threlium_engine_only,
     e2e_shared_compose_stack_is_healthy,
     e2e_start_threlium_user_pipeline_services,
     e2e_stop_threlium_user_pipeline_services,
@@ -235,6 +237,14 @@ def _e2e_wiremock_journal_reset_once(
             e2e_start_threlium_user_pipeline_services(rt)
             wait_for_sut_threlium_user_workers_idle(pn, timeout=120.0)
             reset_request_journal(wm)
+            # Bootstrap knowledge reindex — ОДИН раз за сессию здесь (лидер, до параллельных тестов), НЕ
+            # per-test: flushall lightrag + рестарт engine → bootstrap пере-эмбедит probe-корпус → embeddings
+            # (thread-root e2e-bootstrap) в свежем журнале + redis doc_status. Затем ВТОРОЙ рестарт engine БЕЗ
+            # flushall — упражняет идемпотентность (LightRAG dedup): второй старт не должен пере-эмбедить.
+            # Это сняло serial-skipif с test_knowledge_bootstrap_* (читают результат read-only под -n N).
+            e2e_bootstrap_reindex_and_wait(rt)
+            e2e_restart_threlium_engine_only(pn)
+            wait_for_sut_threlium_user_workers_idle(pn, timeout=120.0)
         except Exception as e:
             log.warning(
                 "journal_reset_skipped",
