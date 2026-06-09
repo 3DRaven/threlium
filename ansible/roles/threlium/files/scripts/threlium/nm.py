@@ -217,7 +217,20 @@ def notmuch_database(*, write: bool = False) -> Generator[notmuch2.Database, Non
     try:
         yield db
     finally:
-        db.close()
+        # close() освобождает Xapian-локи, но НЕ обнуляет указатель → db.alive остаётся True.
+        # Поэтому осиротевшие дочерние notmuch2-объекты (Message/Messages, утёкшие в traceback пойманной
+        # XapianError и пережившие сессию до цикличного GC) при ``__del__`` видят родителя живым → зовут
+        # CFFI ``notmuch_*_destroy`` на устаревшей ревизии → C++ ``Xapian::DatabaseModifiedError`` из
+        # деструктора (notmuch2 ловит лишь Python ``ObjectDestroyedError``) → ``std::terminate`` → SIGABRT,
+        # МИМО read_retry (краш в GC, вне try). ``_destroy()`` после ``close()`` делает полный
+        # ``notmuch_database_destroy`` и ОБНУЛЯЕТ ``_db_p`` → ``db.alive``=False → у любого осиротевшего
+        # ребёнка ``_destroy`` становится no-op (notmuch2: «ensure it's not been destroyed by its parent»),
+        # без обращения к Xapian. Детерминированно, без чистки traceback. ``close()`` уже закрыл БД, поэтому
+        # ``_destroy`` лишь освобождает talloc, не трогая Xapian.
+        try:
+            db.close()
+        finally:
+            db._destroy()
 
 
 #: Декоратор **reopen-on-modified** для self-opening READ-функций (tenacity — как существующий
