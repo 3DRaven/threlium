@@ -12,6 +12,6 @@
     "transformers": [
       "response-template"
     ],
-    "body": "{\"value\": \"{{state context=(jsonPath request.body '$.correlation_key') property=(jsonPath request.body '$.property') default=''}}\"}"
+    "body": "{\"value\": \"{{state context=(jsonPath request.body '$.correlation_key') property=(jsonPath request.body '$.property') default='error'}}\"}"
   }
 }

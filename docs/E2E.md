@@ -366,6 +366,32 @@ drain рендерит индексируемый документ с `To: <stag
 (значения `list`/`state` идут через `renderTemplate` с полным набором helper'ов). Скрипт — одноразовый,
 cold-reset следующего прогона стирает диагностические стабы.
 
+### 3.6.4. Отладка стабов и наблюдаемость ошибок — доступные инструменты ⭐
+
+Чем ловить баги динамических стабов (Handlebars в `recordState`/response-template), не угадывая по 40с-прогонам:
+
+1. **Прямой WireMock-скрипт (харнесс)** — на ЖИВОМ e2e-WireMock (`POST /__admin/mappings`) регистрируем
+   диагностический стаб, чей ОТВЕТ (`response-template`) ЭХАЕТ выражения по-кусочно
+   (`A=[{{regexExtract …}}] B=[{{state context=… property=…}}] …`) ИЛИ `recordState`+read-back-probe; POSTим
+   контролируемые тела/заголовки `curl`'ом, читаем рендер за секунды. Изолирует Handlebars от теста.
+2. **Response-template сюрфейсит ПОЛНЫЕ исключения** — ошибка компиляции/рендера → HTTP 500 с сообщением и
+   `^`-позицией (`could not find helper: 'quote'`). Самый быстрый способ поймать parse-ошибку шаблона.
+3. **Helper `handleError` → строка-ошибка inline** — `state` (`'context' cannot be empty`; property+list
+   вместе), `regexExtract` (`Nothing matched …` без `default`) **возвращают строку-ошибку**, а не молчат.
+   В `recordState` она становится значением property → видна probe'ом; в response — в теле.
+4. **Трёхзначное чтение property** — probe `003` дефолтит **`'error'`** (не `''`): `'1'`/`'0'`=записанные
+   значения, **`'error'`=property не записана** в контекст → recordState не сработал ИЛИ context-ключ
+   разошёлся (wiring-баг, не регрессия продукта). Так `''`-молчание заменено явным сигналом.
+5. **`updateCount` special-property** — `{{state context=X property='updateCount'}}` = сколько раз писали
+   контекст (liveness: `0` ⇒ ни один `recordState` контекст `X` не тронул — стаб не сматчен / ключ не тот).
+6. **Journal `/__admin/requests`** — реальные тела/заголовки, что РЕАЛЬНО попало в стаб. Так найдено:
+   `regexExtract '<[A-Za-z0-9]{40,}@localhost>'` берёт первый `<…@localhost>` = **Message-ID чанка**, а не
+   thread-root; надёжный ключ thread-root — заголовок **`X-Threlium-Thread-Root`** (`== correlation_key`).
+
+**Авто-capture исключений `recordState`→контекст ОТСУТСТВУЕТ** (`beforeResponseSent`→`run()` без try/catch;
+исключения идут в `notifier()` = docker-logs, не в state) и **намеренно НЕ добавляется** (правка vendored-
+`RecordStateEventListener`). Для исключений — харнесс (п.1–2); для wiring/absent — п.4 (`'error'`) и п.5.
+
 ---
 
 ## 4. Каналы: коррелятор + транспорт

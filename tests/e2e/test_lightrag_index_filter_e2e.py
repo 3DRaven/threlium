@@ -92,9 +92,16 @@ def test_lightrag_selective_indexing(
                 desc="lightrag_index drained (011 fired)",
             )
             saw = wiremock_state_thread_root_property(wm_base, correlation_key, "saw_match")
+            # Трёхзначный сигнал (StateHandlerbarHelper.getProperty + probe-default 'error'): "0"=стаб
+            # сработал, маркера нет (PASS); "1"=forbidden-маркер сматчен (drain проиндексировал ingress);
+            # "error"=property не записана в этот контекст → recordState не сработал ИЛИ context-ключ
+            # разошёлся (wiring-баг, НЕ регрессия продукта — отличаем явно, не молчим пустой строкой).
             assert saw == "0", (
                 f"drain indexed a no-history ingress message ({_FORBIDDEN_INDEX_MARKER!r} reached "
-                f"the embeddings index): saw_match={saw!r}"
+                f"the embeddings index); saw_match={saw!r}"
+                if saw == "1"
+                else f"saw_match not recorded under the thread-root context — recordState did not fire "
+                f"here (wiring/context-key, not a product regression); saw_match={saw!r}"
             )
         except Exception:
             log.debug(
