@@ -25,7 +25,7 @@ from __future__ import annotations
 from pathlib import Path
 
 
-from threlium.types import FsmStage, NotmuchTag
+from threlium.types import FsmStage
 
 from .formal_reason_assertions import (
     assert_chat_request_contains_all,
@@ -41,15 +41,16 @@ from .toolkit import (
     MailflowScenarioSpec,
     REPO_ROOT,
     assert_full_mailflow_pipeline,
-    assert_notmuch_thread_tag_count,
     discover_runtime,
     dump_failure_artifacts,
     mailflow_inject_and_wait,
+    poll_until,
 )
 from .log import clip_log_body, log
 from .wiremock_client import (
     find_wiremock_requests_by_body_contains,
     wiremock_public_base,
+    wiremock_state_thread_root_call_sites,
 )
 
 _WIREMOCK_STUBS_ROOT = Path(__file__).resolve().parent / "wiremock_stubs"
@@ -168,14 +169,18 @@ def test_formal_reason_gate_recovery_matrix_full_pipeline(
                     E2E_MATRIX_MEMORY_QUERY_TEXT,
                 ),
             )
-            # Расширенный цикл сработал: overflow накопленной gate-истории → summarize.
-            # Гейт state-driven (читает IRT, не промпт), поэтому переживает сжатие.
-            assert_notmuch_thread_tag_count(
-                project,
-                anchor_message_id=nm_inner,
-                tag=NotmuchTag.CONTEXT_SUMMARIZED.value,
-                min_count=1,
-                repo_root=REPO_ROOT,
+            # Расширенный цикл сработал: overflow накопленной gate-истории → summarize. Гейт
+            # state-driven (читает IRT, не промпт), поэтому переживает сжатие. Это ПРЕДУСЛОВИЕ для
+            # survival-ассерта ниже: без summarize история дошла бы тривиально (ложный pass). Проверяем
+            # по STATE call-site списку (§3.6.1) — summarize_thread_context сработал, — не по notmuch-тегу
+            # CONTEXT_SUMMARIZED (он лишь РЕЗУЛЬТАТ того же LLM-вызова, docker-exec не нужен).
+            poll_until(
+                lambda: True
+                if "summarize_thread_context"
+                in set(wiremock_state_thread_root_call_sites(wm_base, correlation_key))
+                else None,
+                timeout=30.0,
+                desc="gate-history overflow → summarize_thread_context fired",
             )
             # Поздний gated hop ПОСЛЕ summarize: оба error-НАБЛЮДЕНИЯ (PARSE+QUERY+FSM locked)
             # и результат memory_query пережили сжатие и дошли в одном gated-промпте.
