@@ -603,6 +603,47 @@ multi-turn.
 - **Notmuch-дедуп при повторном `/sync`** — штатно (`duplicate Message-ID, skip`).
 - **Sessionfinish после FAIL** — это **не** «зависание» runner: guard всё равно ждёт idle + пустой unmatched
   (укороченный `FAIL_DRAIN_SEC=30c`). Параллельные smoke на том же compose с runner не запускать.
+- **`recordState` `context` рендерится шаблоном, и ПУСТОЙ контекст → исключение, а не no-op.**
+  [`RecordStateEventListener`](../vendor/wiremock/wiremock-state-extension/.../RecordStateEventListener.java) делает
+  `renderTemplate(model, rawContext)` и при `isBlank` кидает `"context cannot be blank"` → стаб обслужился (0
+  unmatched), но **state не записан**. Поэтому body-content-flag, отрендерившийся в пусто, **молча теряет запись**.
+- **`regexExtract` — две формы (vendored `RegexExtractHelper`):** инлайн `{{regexExtract request.body 'pat'}}` (1
+  позиционный арг) возвращает **весь матч** (group 0) первого `find()`; варнейм-форма `{{regexExtract … 'pat' 'm'}}`
+  кладёт **capture-группы 1..N** в список `m` **0-индексированно** (`group(1)` → `m.0`, НЕ `m.1`!) и сам возвращает
+  пусто. Типичные грабли: `{{m.1}}` → out-of-bounds → blank → см. предыдущий пункт. Для извлечения body-коррелятора
+  проще инлайн: `{{regexExtract request.body '<[A-Za-z0-9]{40,}@localhost>' default='_nocorr'}}` (длинный base62
+  thread-root, дефисные Message-ID не матчатся; `default` спасает от blank на чужом теле).
+- **LightRAG `ainsert` УЖЕ параллелит внутри — снаружи не дублировать.** `ainsert` → `apipeline_enqueue_documents` +
+  `apipeline_process_enqueue_documents`, пайплайн поднимает `asyncio.Semaphore(max_parallel_insert)` + N воркер-циклов
+  ([`pipeline.py:1244,1268`](../.venv/.../lightrag/pipeline.py)). Конкурентные `ainsert` из разных задач дерутся за
+  **общий** pipeline + `pipeline_status_lock` и повторно гоняют общую очередь. Прод-параллельность индексации — это
+  `max_parallel_insert`/`*_max_async`, **не** внешний пул/много drain-цепочек.
+- **Drain singleton — НЕ узкое место, а защита от proliferation.** [`schedule_on_loop`](../ansible/.../lightrag/_drain.py)
+  гард = один коллектор/одна sweep-цепочка. Снятие гарда → каждый `schedule_index_pending` спавнит цепочку + self-
+  reschedule, и **без claim-on-collect** (тег ставится только в конце `_ainsert_batch`) цепочки повторно собирают тот
+  же незатегированный backlog → лавина избыточных ainsert'ов (наблюдалось **6341 `ainsert_complete` на ~200 доков**,
+  пачки по 8 с `elapsed≈65c`, разрешающиеся разом) → единый RAG event-loop засатурирован → `aquery` enrich'а голодает
+  → contour-таймаут. Симптом «loop голодает» — следствие proliferation, не причина.
+- **`_ainsert_with_correlation` берёт thread-root из `file_paths[0]` — на ВЕСЬ батч.** В смешанном батче (письма
+  разных thread-root) индекс-вызовы доков 2..N уйдут под коррелятор первого. Корректно только при batch_size=1
+  (drain успевает, de-facto 1). Для робастности per-message корреляции индексации в e2e — либо `_effective_batch_size→1`,
+  либо per-doc-цикл, либо (выбранное) **body-липкий-флаг + call-site** вместо thread-root для индекс-стабов
+  (коррелятор в теле, повторён в каждом чанке — `e2e_dense_threlium_ctx_body`). Прод не затронут: там корреляции нет
+  (`_ainsert_plain`), смешанные батчи штатны.
+- **Vector store = Milvus Lite (serverless), НЕ faiss.** faiss не concurrent-write-safe: при `max_parallel_insert>1`
+  гонка на `faiss_index_*.tmp` → **SIGABRT движка** → рестарт общего движка каскадит на всех `-n4`. Milvus
+  сериализует запись векторов внутри стора → `max_parallel_insert=4` безопасен. Грабли интеграции: (1) **id'ы
+  ДОЛЖНЫ влезать в `VARCHAR(64)`** — lightrag-схема хардкодит поле `id`, а сырой base62-MID (~84–108) даёт
+  chunk-id 117 → `MilvusException value length exceeds max_length=64` → insert отвергнут, pipeline halted, письмо
+  не индексировано, half-state коллекции → `[Errno 17] File exists` на след. рестарте. Фикс: `_drain._lightrag_doc_id`
+  = `th-`+sha1 (короткий dedup-ключ; notmuch-трекинг отдельно через `tag_ids`). (2) **`initialize_pipeline_status()`
+  после `initialize_storages()` обязателен** — иначе shared_storage `get_data_init_lock` no-op → конкурентный
+  `create_collection` гонит. (3) Config — из `settings.lightrag.milvus_uri/db_name`; `os.environ` лишь как граница
+  `check_storage_env_vars`; `db_name` ПУСТОЙ (непустой → серверный режим pymilvus, Lite ломается); форс-импорт
+  `pymilvus.orm` ДО выставления `MILVUS_URI` (он валидирует его как HTTP при импорте). **Эмпирически:** Milvus Lite
+  **переживает reload движка** (has_collection + load_collection целы после абрупт-выхода) — File-exists был
+  ВТОРИЧЕН к id-length, boot-wipe не нужен. Qdrant-local пробовали — **отпадает** (embedded Rust-ядро не
+  concurrent-write-safe → SIGABRT, lightrag сам пишет «use server Qdrant»).
 
 ---
 
