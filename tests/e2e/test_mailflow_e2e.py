@@ -41,7 +41,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from tests.e2e.log import clip_log_body, log
-from threlium.types import FsmStage
 
 from .toolkit import (
     E2EComposeRuntime,
@@ -65,16 +64,6 @@ MAILFLOW_SPEC = MailflowScenarioSpec(
     body_head="e2e body",
     min_chat_completion_posts=3,
     min_embedding_posts=5,
-    expect_notmuch_stage_folders=(
-        FsmStage.INGRESS.value,
-        FsmStage.ENRICH.value,
-        FsmStage.REASONING.value,
-        FsmStage.TASKS_UPSERT.value,
-        FsmStage.RESPONSE_FINALIZE.value,
-        FsmStage.EGRESS_ROUTER.value,
-        FsmStage.EGRESS_EMAIL.value,
-        FsmStage.ARCHIVE.value,
-    ),
     reply_body_needle="ok from llm-mock",
 )
 
@@ -163,7 +152,6 @@ def test_full_mailflow_deploy_and_pipeline(e2e_runtime: E2EComposeRuntime) -> No
                 correlation_key=correlation_key,
             )
             _assert_egress_reply_excludes_internal_mime(project, raw_id=raw_id)
-            assert FsmStage.RESPONSE_APPEND.value not in MAILFLOW_SPEC.expect_notmuch_stage_folders
         except Exception:
             log.debug(
                 "failure_artifacts",

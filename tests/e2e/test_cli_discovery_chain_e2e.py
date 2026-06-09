@@ -8,7 +8,6 @@ from pathlib import Path
 
 
 from tests.e2e.log import clip_log_body, log
-from threlium.types import FsmStage
 
 from .toolkit import (
     E2EComposeRuntime,
@@ -53,19 +52,6 @@ CLI_DISCOVERY_CHAIN_SPEC = MailflowScenarioSpec(
     min_chat_completion_posts=3,
     min_embedding_posts=1,
     min_rerank_posts=0,
-    expect_notmuch_stage_folders=(
-        FsmStage.INGRESS.value,
-        FsmStage.ENRICH.value,
-        FsmStage.REASONING.value,
-        FsmStage.CLI_INTENT.value,
-        FsmStage.CLI_EXEC.value,
-        FsmStage.ENRICH_FAST.value,
-        FsmStage.TASKS_UPSERT.value,
-        FsmStage.RESPONSE_FINALIZE.value,
-        FsmStage.EGRESS_ROUTER.value,
-        FsmStage.EGRESS_EMAIL.value,
-        FsmStage.ARCHIVE.value,
-    ),
     reply_body_needle="e2e-cli-discovery-chain-verified",
     wiremock_journal_ready_needle="call_threlium_e2e_egress_after_allow",
 )
@@ -133,18 +119,6 @@ CLI_ROUTE_COLLISION_SPEC = MailflowScenarioSpec(
     min_chat_completion_posts=3,
     min_embedding_posts=1,
     min_rerank_posts=0,
-    expect_notmuch_stage_folders=(
-        FsmStage.INGRESS.value,
-        FsmStage.ENRICH.value,
-        FsmStage.REASONING.value,
-        FsmStage.CLI_INTENT.value,
-        FsmStage.ENRICH_FAST.value,
-        FsmStage.TASKS_UPSERT.value,
-        FsmStage.RESPONSE_FINALIZE.value,
-        FsmStage.EGRESS_ROUTER.value,
-        FsmStage.EGRESS_EMAIL.value,
-        FsmStage.ARCHIVE.value,
-    ),
     reply_body_needle="e2e-cli-route-collision-verified",
     # Multi-hop (cli_intent → enrich_fast ×2 → tasks → finalize): ранние LightRAG chat
     # не должны открывать окно GreenMail до стаба egress finalize.

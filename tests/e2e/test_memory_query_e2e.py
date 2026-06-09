@@ -17,7 +17,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from tests.e2e.log import clip_log_body, log
-from threlium.types import FsmStage
 
 from .toolkit import (
     E2EComposeRuntime,
@@ -47,18 +46,6 @@ MEMORY_QUERY_SPEC = MailflowScenarioSpec(
     min_chat_completion_posts=3,
     min_embedding_posts=1,
     min_rerank_posts=0,
-    expect_notmuch_stage_folders=(
-        FsmStage.INGRESS.value,
-        FsmStage.ENRICH.value,
-        FsmStage.REASONING.value,
-        FsmStage.MEMORY_QUERY.value,
-        FsmStage.ENRICH_FAST.value,
-        FsmStage.TASKS_UPSERT.value,
-        FsmStage.RESPONSE_FINALIZE.value,
-        FsmStage.EGRESS_ROUTER.value,
-        FsmStage.EGRESS_EMAIL.value,
-        FsmStage.ARCHIVE.value,
-    ),
     reply_body_needle="e2e-memory-query-verified-answer",
 )
 

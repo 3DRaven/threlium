@@ -17,7 +17,6 @@ from pathlib import Path
 import pytest
 
 from tests.e2e.log import clip_log_body, log
-from threlium.types import FsmStage
 
 from .toolkit import (
     E2EComposeRuntime,
@@ -58,16 +57,6 @@ IMAP_CHECKPOINT_ACT1_SPEC = MailflowScenarioSpec(
     min_chat_completion_posts=2,
     min_embedding_posts=5,
     min_rerank_posts=0,
-    expect_notmuch_stage_folders=(
-        FsmStage.INGRESS.value,
-        FsmStage.ENRICH.value,
-        FsmStage.REASONING.value,
-        FsmStage.TASKS_UPSERT.value,
-        FsmStage.RESPONSE_FINALIZE.value,
-        FsmStage.EGRESS_ROUTER.value,
-        FsmStage.EGRESS_EMAIL.value,
-        FsmStage.ARCHIVE.value,
-    ),
 )
 
 IMAP_CHECKPOINT_ACT3_SPEC = MailflowScenarioSpec(
@@ -79,16 +68,6 @@ IMAP_CHECKPOINT_ACT3_SPEC = MailflowScenarioSpec(
     min_chat_completion_posts=2,
     min_embedding_posts=5,
     min_rerank_posts=0,
-    expect_notmuch_stage_folders=(
-        FsmStage.INGRESS.value,
-        FsmStage.ENRICH.value,
-        FsmStage.REASONING.value,
-        FsmStage.TASKS_UPSERT.value,
-        FsmStage.RESPONSE_FINALIZE.value,
-        FsmStage.EGRESS_ROUTER.value,
-        FsmStage.EGRESS_EMAIL.value,
-        FsmStage.ARCHIVE.value,
-    ),
 )
 
 

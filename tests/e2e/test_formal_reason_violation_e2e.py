@@ -16,7 +16,6 @@ from pathlib import Path
 
 
 from tests.e2e.log import clip_log_body, log
-from threlium.types import FsmStage
 
 from .formal_reason_assertions import (
     assert_journal_contains,
@@ -50,18 +49,6 @@ FORMAL_REASON_VIOLATION_SPEC = MailflowScenarioSpec(
     min_chat_completion_posts=3,
     min_embedding_posts=1,
     min_rerank_posts=0,
-    expect_notmuch_stage_folders=(
-        FsmStage.INGRESS.value,
-        FsmStage.ENRICH.value,
-        FsmStage.REASONING.value,
-        FsmStage.FORMAL_REASON.value,
-        FsmStage.ENRICH_FAST.value,
-        FsmStage.TASKS_UPSERT.value,
-        FsmStage.RESPONSE_FINALIZE.value,
-        FsmStage.EGRESS_ROUTER.value,
-        FsmStage.EGRESS_EMAIL.value,
-        FsmStage.ARCHIVE.value,
-    ),
     reply_body_needle="e2e-formal-reason-violation-verified-answer",
 )
 

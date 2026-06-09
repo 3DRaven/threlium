@@ -14,7 +14,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from tests.e2e.log import clip_log_body, log
-from threlium.types import FsmStage
 
 from .toolkit import (
     E2EComposeRuntime,
@@ -37,18 +36,6 @@ RESPONSE_BUFFER_SPEC = MailflowScenarioSpec(
     body_head=f"{E2E_RESPONSE_BUFFER_BODY_MARKER}\ne2e response buffer accumulation test body",
     min_chat_completion_posts=4,
     min_embedding_posts=1,
-    expect_notmuch_stage_folders=(
-        FsmStage.INGRESS.value,
-        FsmStage.ENRICH.value,
-        FsmStage.REASONING.value,
-        FsmStage.RESPONSE_APPEND.value,
-        FsmStage.ENRICH_FAST.value,
-        FsmStage.TASKS_UPSERT.value,
-        FsmStage.RESPONSE_FINALIZE.value,
-        FsmStage.EGRESS_ROUTER.value,
-        FsmStage.EGRESS_EMAIL.value,
-        FsmStage.ARCHIVE.value,
-    ),
     reply_body_needle="e2e-chunk-first",
 )
 

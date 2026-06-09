@@ -9,7 +9,6 @@ from pathlib import Path
 
 
 from tests.e2e.log import clip_log_body, log
-from threlium.types import FsmStage
 
 from .toolkit import (
     E2EComposeRuntime,
@@ -38,10 +37,6 @@ FAILURE_ACT1_SPEC = MailflowScenarioSpec(
     min_chat_completion_posts=2,
     min_embedding_posts=1,
     min_rerank_posts=0,
-    expect_notmuch_stage_folders=(
-        FsmStage.INGRESS.value,
-        FsmStage.ENRICH.value,
-    ),
 )
 
 

@@ -104,15 +104,12 @@ from .mailflow import (
 )
 from .notmuch_assert import (
     assert_notmuch_folder_contains_body_token,
-    assert_notmuch_thread_fully_in_stages,
-    assert_notmuch_thread_has_messages_in_folders,
     assert_notmuch_thread_has_no_unread,
     assert_notmuch_thread_stage_message_count_at_least,
     assert_notmuch_thread_tag_count,
     poll_notmuch_positive,
     poll_notmuch_thread_in_stage_folder,
     poll_lightrag_indexed_positive,
-    wait_for_notmuch_message,
 )
 from .pipeline import (
     e2e_start_threlium_user_pipeline_services,

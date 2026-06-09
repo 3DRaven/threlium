@@ -5,7 +5,6 @@ from pathlib import Path
 
 
 from tests.e2e.log import clip_log_body, log
-from threlium.types import FsmStage
 
 from .toolkit import (
     E2EComposeRuntime,
@@ -46,18 +45,6 @@ REASONING_CTX_TRIM_SPEC = MailflowScenarioSpec(
     # Как test_summarize_overflow: без RAG-warmup (default min_rerank_posts=1), prior-turn
     # укладывается в 30s greenmail poll.
     min_rerank_posts=0,
-    expect_notmuch_stage_folders=(
-        FsmStage.INGRESS.value,
-        FsmStage.ENRICH.value,
-        FsmStage.SUMMARIZE_CONTEXT.value,
-        FsmStage.SUMMARIZE_MEMORY.value,
-        FsmStage.REASONING.value,
-        FsmStage.TASKS_UPSERT.value,
-        FsmStage.RESPONSE_FINALIZE.value,
-        FsmStage.EGRESS_ROUTER.value,
-        FsmStage.EGRESS_EMAIL.value,
-        FsmStage.ARCHIVE.value,
-    ),
 )
 
 

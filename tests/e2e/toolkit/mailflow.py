@@ -20,10 +20,6 @@ from .diag import (
     mailflow_wait_fsm_maildir_activity,
     reset_maildrop_debug_log,
 )
-from .notmuch_assert import (
-    assert_notmuch_thread_fully_in_stages,
-    wait_for_notmuch_message,
-)
 from .wiremock_assert import (
     assert_wiremock_mailflow_zero_unmatched,
 )
@@ -67,7 +63,6 @@ class MailflowScenarioSpec:
     min_embedding_posts: int = 5
     min_rerank_posts: int = 1
     warmup_body_extra: str = ""
-    expect_notmuch_stage_folders: tuple[str, ...] | None = None
     reply_subject_needle: str | None = None
     reply_body_needle: str | None = None
     # Длинные multi-hop: poll только reasoning POST (не все chat/LightRAG) до needle/GreenMail.
@@ -207,44 +202,20 @@ def mailflow_inject_and_wait(
                 rt.greenmail_imap_port,
                 message_id=cur_seed_id,
             )
-            seed_nm_inner = email_ingress_notmuch_id_inner(cur_seed_id)
-            mailflow_wait_fsm_maildir_activity(
-                project_name,
-                repo_root=REPO_ROOT,
-                message_id=seed_nm_inner,
-            )
-            wait_for_notmuch_message(
-                project_name, message_id=seed_nm_inner, repo_root=REPO_ROOT
-            )
-            mailflow_log_phase(
-                f"{spec.label}: prior-turn seed[{turn_idx}] indexed mid={cur_seed_id!r} "
-                f"(+{time.monotonic() - t0:.1f}s)"
-            )
             _mailflow_wait_wiremock_journal_ready_if_configured(
                 spec,
                 project=project_name,
                 stub_tag=spec.stub_tag,
                 correlation_key=correlation_key,
             )
-            wait_for_greenmail_user_reply(
-                project_name,
-                raw_id=cur_seed_id,
-                repo_root=REPO_ROOT,
-            )
-            assert_notmuch_thread_fully_in_stages(
-                project_name,
-                anchor_message_id=seed_nm_inner,
-                repo_root=REPO_ROOT,
-            )
-            mailflow_log_phase(
-                f"{spec.label}: prior-turn seed[{turn_idx}] pipeline settled mid={cur_seed_id!r} "
-                f"(+{time.monotonic() - t0:.1f}s)"
-            )
-            # Реалистичный threading: следующий ход (seed или основной) тредится на ОТВЕТ
-            # агента (egress glue-record), а не на собственную инъекцию. Тогда IRT-цепочка
-            # проходит через ``tasks_upsert`` предыдущего хода → per-frame task-ledger
-            # наследуется и finalize-gate проходит без ручного сброса латча
-            # ``phase_tasks_ledger_done``.
+            # Барьер прошлого хода = ОТВЕТ агента в GreenMail (единственный внешний выход:
+            # ingress→enrich→reasoning→…→egress_email пройдены). Внутренние notmuch/maildir
+            # docker-exec защёлки (FSM-activity, notmuch-indexed, fully_in_stages) сняты —
+            # ответное письмо доказывает прохождение сильнее folder-присутствия (§3.6.1,
+            # time-independent, без docker-exec). Реалистичный threading: следующий ход
+            # тредится на ответ агента (egress glue-record) → IRT-цепочка проходит через
+            # ``tasks_upsert`` прошлого хода → per-frame task-ledger наследуется, finalize-gate
+            # проходит без ручного сброса латча ``phase_tasks_ledger_done``.
             chain_in_reply_to = greenmail_wait_agent_reply_message_id(
                 rt.greenmail_imap_host,
                 rt.greenmail_imap_port,

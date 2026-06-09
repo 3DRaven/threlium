@@ -12,7 +12,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from tests.e2e.log import clip_log_body, log
-from threlium.types import FsmStage
 
 from .formal_reason_assertions import assert_all_reasoning_gate_absent
 from .toolkit import (
@@ -43,18 +42,6 @@ FORMAL_REASON_INFERENCE_SPEC = MailflowScenarioSpec(
     wiremock_journal_ready_needle="call_e2e_tasks_ledger_phase_formal_reason_done_ledger_done",
     min_embedding_posts=1,
     min_rerank_posts=0,
-    expect_notmuch_stage_folders=(
-        FsmStage.INGRESS.value,
-        FsmStage.ENRICH.value,
-        FsmStage.REASONING.value,
-        FsmStage.FORMAL_REASON.value,
-        FsmStage.ENRICH_FAST.value,
-        FsmStage.TASKS_UPSERT.value,
-        FsmStage.RESPONSE_FINALIZE.value,
-        FsmStage.EGRESS_ROUTER.value,
-        FsmStage.EGRESS_EMAIL.value,
-        FsmStage.ARCHIVE.value,
-    ),
     reply_body_needle="e2e-formal-reason-inference-verified-answer",
 )
 

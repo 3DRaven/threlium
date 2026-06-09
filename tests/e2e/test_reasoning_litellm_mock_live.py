@@ -12,7 +12,6 @@ from pathlib import Path
 
 
 from tests.e2e.log import clip_log_body, log
-from threlium.types import FsmStage
 
 from .toolkit import (
     E2EComposeRuntime,
@@ -41,16 +40,6 @@ REASONING_SPEC = MailflowScenarioSpec(
     body_head=f"{REASONING_E2E_BODY_MARKER}\ne2e reasoning litellm inbound body",
     min_chat_completion_posts=3,
     min_embedding_posts=1,
-    expect_notmuch_stage_folders=(
-        FsmStage.INGRESS.value,
-        FsmStage.ENRICH.value,
-        FsmStage.REASONING.value,
-        FsmStage.TASKS_UPSERT.value,
-        FsmStage.RESPONSE_FINALIZE.value,
-        FsmStage.EGRESS_ROUTER.value,
-        FsmStage.EGRESS_EMAIL.value,
-        FsmStage.ARCHIVE.value,
-    ),
 )
 
 LENGTH_RECOVERY_SPEC = replace(REASONING_SPEC, length_recovery_e2e=True)

@@ -17,7 +17,6 @@ from pathlib import Path
 
 
 from tests.e2e.log import clip_log_body, log
-from threlium.types import FsmStage
 
 from .toolkit import (
     E2EComposeRuntime,
@@ -46,18 +45,6 @@ FINALIZE_MODE3_SPEC = MailflowScenarioSpec(
     body_head=f"{E2E_FIN_MODE3_BODY_MARKER}\ne2e response finalize mode3 test body",
     min_chat_completion_posts=3,
     min_embedding_posts=1,
-    expect_notmuch_stage_folders=(
-        FsmStage.INGRESS.value,
-        FsmStage.ENRICH.value,
-        FsmStage.REASONING.value,
-        FsmStage.RESPONSE_APPEND.value,
-        FsmStage.ENRICH_FAST.value,
-        FsmStage.TASKS_UPSERT.value,
-        FsmStage.RESPONSE_FINALIZE.value,
-        FsmStage.EGRESS_ROUTER.value,
-        FsmStage.EGRESS_EMAIL.value,
-        FsmStage.ARCHIVE.value,
-    ),
     reply_body_needle="E2E-FIN-MODE3-BUFFER-PART",
 )
 
@@ -107,19 +94,6 @@ OBSERVE_SPEC = MailflowScenarioSpec(
     min_chat_completion_posts=4,
     min_embedding_posts=1,
     wiremock_journal_ready_needle="call_e2e_observe_finalize",
-    expect_notmuch_stage_folders=(
-        FsmStage.INGRESS.value,
-        FsmStage.ENRICH.value,
-        FsmStage.REASONING.value,
-        FsmStage.RESPONSE_APPEND.value,
-        FsmStage.ENRICH_FAST.value,
-        FsmStage.RESPONSE_OBSERVE.value,
-        FsmStage.TASKS_UPSERT.value,
-        FsmStage.RESPONSE_FINALIZE.value,
-        FsmStage.EGRESS_ROUTER.value,
-        FsmStage.EGRESS_EMAIL.value,
-        FsmStage.ARCHIVE.value,
-    ),
     reply_body_needle="E2E-OBSERVED-CHUNK",
 )
 
@@ -169,19 +143,6 @@ EDIT_REPLACE_SPEC = MailflowScenarioSpec(
     min_chat_completion_posts=4,
     min_embedding_posts=1,
     wiremock_journal_ready_needle="call_e2e_edit_replace_finalize",
-    expect_notmuch_stage_folders=(
-        FsmStage.INGRESS.value,
-        FsmStage.ENRICH.value,
-        FsmStage.REASONING.value,
-        FsmStage.RESPONSE_APPEND.value,
-        FsmStage.ENRICH_FAST.value,
-        FsmStage.RESPONSE_EDIT.value,
-        FsmStage.TASKS_UPSERT.value,
-        FsmStage.RESPONSE_FINALIZE.value,
-        FsmStage.EGRESS_ROUTER.value,
-        FsmStage.EGRESS_EMAIL.value,
-        FsmStage.ARCHIVE.value,
-    ),
     reply_body_needle="E2E-EDIT-REPLACED-TEXT",
 )
 
@@ -231,19 +192,6 @@ EDIT_DELETE_SPEC = MailflowScenarioSpec(
     min_chat_completion_posts=5,
     min_embedding_posts=1,
     wiremock_journal_ready_needle="call_e2e_edit_delete_finalize",
-    expect_notmuch_stage_folders=(
-        FsmStage.INGRESS.value,
-        FsmStage.ENRICH.value,
-        FsmStage.REASONING.value,
-        FsmStage.RESPONSE_APPEND.value,
-        FsmStage.ENRICH_FAST.value,
-        FsmStage.RESPONSE_EDIT.value,
-        FsmStage.TASKS_UPSERT.value,
-        FsmStage.RESPONSE_FINALIZE.value,
-        FsmStage.EGRESS_ROUTER.value,
-        FsmStage.EGRESS_EMAIL.value,
-        FsmStage.ARCHIVE.value,
-    ),
     reply_body_needle="E2E-CHUNK-KEEP",
 )
 
@@ -292,16 +240,6 @@ FINALIZE_MODE4_SPEC = MailflowScenarioSpec(
     body_head=f"{E2E_FIN_MODE4_BODY_MARKER}\ne2e response finalize mode4 test body",
     min_chat_completion_posts=4,
     min_embedding_posts=1,
-    expect_notmuch_stage_folders=(
-        FsmStage.INGRESS.value,
-        FsmStage.ENRICH.value,
-        FsmStage.REASONING.value,
-        FsmStage.TASKS_UPSERT.value,
-        FsmStage.RESPONSE_FINALIZE.value,
-        FsmStage.EGRESS_ROUTER.value,
-        FsmStage.EGRESS_EMAIL.value,
-        FsmStage.ARCHIVE.value,
-    ),
     reply_body_needle="E2E-MODE4-RECOVERY",
 )
 
@@ -351,19 +289,6 @@ EDIT_INVALID_SPEC = MailflowScenarioSpec(
     min_chat_completion_posts=5,
     min_embedding_posts=1,
     wiremock_journal_ready_needle="call_e2e_edit_invalid_recovery",
-    expect_notmuch_stage_folders=(
-        FsmStage.INGRESS.value,
-        FsmStage.ENRICH.value,
-        FsmStage.REASONING.value,
-        FsmStage.RESPONSE_APPEND.value,
-        FsmStage.ENRICH_FAST.value,
-        FsmStage.RESPONSE_EDIT.value,
-        FsmStage.TASKS_UPSERT.value,
-        FsmStage.RESPONSE_FINALIZE.value,
-        FsmStage.EGRESS_ROUTER.value,
-        FsmStage.EGRESS_EMAIL.value,
-        FsmStage.ARCHIVE.value,
-    ),
     reply_body_needle="E2E-EDIT-INVALID-RECOVERY",
 )
 

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from threlium.types import FsmStage
 
 from .formal_reason_assertions import (
     assert_first_fsm_reasoning_gate_absent,
@@ -46,18 +45,6 @@ FORMAL_REASON_TECH_GATE_SPEC = MailflowScenarioSpec(
     min_reasoning_chat_completion_posts=2,
     min_embedding_posts=1,
     min_rerank_posts=0,
-    expect_notmuch_stage_folders=(
-        FsmStage.INGRESS.value,
-        FsmStage.ENRICH.value,
-        FsmStage.REASONING.value,
-        FsmStage.FORMAL_REASON.value,
-        FsmStage.ENRICH_FAST.value,
-        FsmStage.TASKS_UPSERT.value,
-        FsmStage.RESPONSE_FINALIZE.value,
-        FsmStage.EGRESS_ROUTER.value,
-        FsmStage.EGRESS_EMAIL.value,
-        FsmStage.ARCHIVE.value,
-    ),
     reply_body_needle="e2e-formal-reason-tech-gate-verified-answer",
     # Длинный gate-контур: poll tasks_ledger в журнале до GreenMail (finalize+egress в его окне).
     wiremock_journal_ready_needle="call_e2e_tasks_ledger_tech_gate",

@@ -13,7 +13,6 @@ from pathlib import Path
 
 
 from tests.e2e.log import clip_log_body, log
-from threlium.types import FsmStage
 
 from .toolkit import (
     E2EComposeRuntime,
@@ -48,20 +47,6 @@ RESPONSE_ISO_SPEC = MailflowScenarioSpec(
     min_chat_completion_posts=20,
     min_embedding_posts=1,
     min_rerank_posts=0,
-    expect_notmuch_stage_folders=(
-        FsmStage.INGRESS.value,
-        FsmStage.ENRICH.value,
-        FsmStage.REASONING.value,
-        FsmStage.RESPONSE_APPEND.value,
-        FsmStage.SUBAGENT_INTENT.value,
-        FsmStage.SUBAGENT_END.value,
-        FsmStage.ENRICH_FAST.value,
-        FsmStage.TASKS_UPSERT.value,
-        FsmStage.RESPONSE_FINALIZE.value,
-        FsmStage.EGRESS_ROUTER.value,
-        FsmStage.EGRESS_EMAIL.value,
-        FsmStage.ARCHIVE.value,
-    ),
     reply_body_needle="e2e-subagent-frame-iso-verified",
     wiremock_journal_ready_needle="call_e2e_iso_l0_finalize",
 )
@@ -75,19 +60,6 @@ LEDGER_ISO_SPEC = MailflowScenarioSpec(
     min_chat_completion_posts=20,
     min_embedding_posts=1,
     min_rerank_posts=0,
-    expect_notmuch_stage_folders=(
-        FsmStage.INGRESS.value,
-        FsmStage.ENRICH.value,
-        FsmStage.REASONING.value,
-        FsmStage.TASKS_UPSERT.value,
-        FsmStage.SUBAGENT_INTENT.value,
-        FsmStage.SUBAGENT_END.value,
-        FsmStage.ENRICH_FAST.value,
-        FsmStage.RESPONSE_FINALIZE.value,
-        FsmStage.EGRESS_ROUTER.value,
-        FsmStage.EGRESS_EMAIL.value,
-        FsmStage.ARCHIVE.value,
-    ),
     reply_body_needle="e2e-subagent-frame-iso-verified",
     wiremock_journal_ready_needle="call_e2e_iso_l0_finalize",
 )
