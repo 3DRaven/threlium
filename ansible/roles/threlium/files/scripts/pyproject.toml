@@ -15,10 +15,14 @@ dependencies = [
     "imap-tools>=1.13.0,<2.0.0",
     "jinja2>=3.1.6",
     "jsonschema>=4.23.0",
-    # Milvus Lite (serverless embedded) вместо faiss: faiss НЕ безопасен для конкурентной записи
-    # (max_parallel_insert>1 → SIGABRT на tmp-файле); Milvus сериализует vector-write внутри storage.
-    "pymilvus>=2.5,<3.1",
-    "milvus-lite>=2.4",
+    # LanceDB (vector_storage через threlium-адаптер lancedb_impl): встраиваемый Lance-стор с MVCC
+    # (конкурентные read+write безопасны), нативный async (не морозит rag-loop синхронным gRPC, в отличие
+    # от Milvus Lite — память n4-rag-loop-stall-pyspy). Заменяет и faiss (concurrent-write segfault), и
+    # Milvus Lite (37× медленнее + loop-freeze). Тянет pyarrow.
+    "lancedb>=0.25",
+    # CozoDB (graph_storage через threlium-адаптер cozo_impl, rocksdb-backend): встраиваемый MVCC граф
+    # вместо in-memory NetworkX — безопасная конкурентная запись (Stage-2). Память n4-rag-loop-stall-pyspy.
+    "pycozo[embedded]>=0.7",
     "lightrag-hku[api]==1.5.0",
     "httpx>=0.27.0",
     "matrix-nio>=0.25.2,<0.26",

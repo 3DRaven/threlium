@@ -1,7 +1,6 @@
 """RAG instance construction and e2e correlation bridge installation."""
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
@@ -77,41 +76,48 @@ def _addon_params(settings: ThreliumSettings) -> dict[str, object]:
     return {"language": language, "entity_types": entity_types}
 
 
-def _configure_milvus_lite(settings: ThreliumSettings, *, working_dir: str) -> None:
-    """Сконфигурировать Milvus Lite (serverless embedded) для ``MilvusVectorDBStorage``.
+def _register_lancedb_storage() -> None:
+    """Зарегистрировать threlium-адаптер ``LanceDBVectorDBStorage`` в реестре lightrag — БЕЗ патча вендора.
 
-    Конфиг — из ``settings.lightrag`` (``milvus_uri`` / ``milvus_db_name``), НЕ из голого env (TYPES.md
-    §«конфигурация централизована в ThreliumSettings»). ``os.environ`` здесь — лишь вынужденный транспорт
-    на границе с LightRAG: он жёстко проверяет ПРИСУТСТВИЕ ``MILVUS_URI``+``MILVUS_DB_NAME`` в окружении
-    (``check_storage_env_vars``), а ``milvus_impl`` читает их оттуда. Пустой ``milvus_uri`` → Lite-файл
-    ``working_dir/milvus_lite.db`` (serverless). ``db_name`` пустой по умолчанию: непустой → pymilvus уходит
-    в серверный режим (``Illegal uri`` для локального ``.db``) → Lite ломается; ``milvus_impl`` пустой
-    ``db_name`` в ``MilvusClient`` не передаёт. Milvus сериализует запись векторов внутри storage (нет faiss
-    concurrent-write SIGABRT) → ``max_parallel_insert``/``*_max_async`` можно держать >1.
-
-    Порядок импорта критичен: ``pymilvus.orm.connections`` валидирует ``MILVUS_URI`` как HTTP-адрес ПРИ
-    ИМПОРТЕ своего модуля-синглтона (``async_milvus_client`` тянет ``orm.collection`` → ``orm.connections``).
-    Локальный ``.db`` (Lite) — отдельный путь ``MilvusClient(uri=.db)``, но ORM-модуль всё равно подгружается
-    и падает на ``.db``. Поэтому форсируем импорт ORM, ПОКА ``MILVUS_URI`` ещё не выставлен (синглтон
-    инициализируется на дефолте), и только затем кладём ``.db`` в env для ``MilvusClient``.
+    Мутируем три module-level dict'а ``lightrag.kg``: allowlist реализаций (`verify_storage_implementation`
+    гейтит по нему), env-требования (пусто — стор файловый) и name→module (``get_storage_class`` лениво
+    импортит этот путь). Идемпотентно. Модуль ``lancedb_impl`` тянет тяжёлый ``import lancedb`` только при
+    реальном старте стора (в ``initialize``), не на регистрации.
     """
-    import pymilvus.orm.connections  # noqa: F401  # init ORM-синглтон до выставления MILVUS_URI
-    from pymilvus.milvus_client import async_milvus_client  # noqa: F401
+    from lightrag.kg import (  # noqa: PLC0415
+        STORAGE_ENV_REQUIREMENTS,
+        STORAGE_IMPLEMENTATIONS,
+        STORAGES,
+    )
 
-    uri = settings.lightrag.milvus_uri.strip() or str(Path(working_dir) / "milvus_lite.db")
-    os.environ["MILVUS_URI"] = uri
-    os.environ["MILVUS_DB_NAME"] = settings.lightrag.milvus_db_name.strip()
-    # HNSW (а не дефолтный AUTOINDEX): на Milvus Lite AUTOINDEX уходит в direct-API fallback
-    # build_index_params, который не прокидывает metric_type → 'create_index missing required
-    # metric_type'. Конкретный тип ведёт lightrag по корректной add_index-ветке (milvus_impl).
-    index_type = settings.lightrag.milvus_index_type.strip()
-    if index_type:
-        os.environ["MILVUS_INDEX_TYPE"] = index_type
+    impls = STORAGE_IMPLEMENTATIONS["VECTOR_STORAGE"]["implementations"]
+    if "LanceDBVectorDBStorage" not in impls:
+        impls.append("LanceDBVectorDBStorage")
+    STORAGE_ENV_REQUIREMENTS.setdefault("LanceDBVectorDBStorage", [])
+    STORAGES["LanceDBVectorDBStorage"] = "threlium.runners.lightrag.lancedb_impl"
+
+
+def _register_cozo_storage() -> None:
+    """Зарегистрировать threlium-адаптер ``CozoGraphStorage`` (GRAPH_STORAGE) в реестре lightrag — без патча
+    вендора (как LanceDB). ``cozo_impl`` тянет ``import pycozo`` только в ``initialize``."""
+    from lightrag.kg import (  # noqa: PLC0415
+        STORAGE_ENV_REQUIREMENTS,
+        STORAGE_IMPLEMENTATIONS,
+        STORAGES,
+    )
+
+    impls = STORAGE_IMPLEMENTATIONS["GRAPH_STORAGE"]["implementations"]
+    if "CozoGraphStorage" not in impls:
+        impls.append("CozoGraphStorage")
+    STORAGE_ENV_REQUIREMENTS.setdefault("CozoGraphStorage", [])
+    STORAGES["CozoGraphStorage"] = "threlium.runners.lightrag.cozo_impl"
 
 
 def build_rag(settings: ThreliumSettings) -> LightRAG:
     """Construct LightRAG instance from settings (not yet initialized)."""
     install_overlay(settings)
+    _register_lancedb_storage()
+    _register_cozo_storage()
 
     body_max, overlap_toks = _chunk_dims(settings)
     llm_ep = resolve_llm_endpoint(settings.litellm, LitellmRoutingSite.LIGHTRAG_LLM)
@@ -162,13 +168,20 @@ def build_rag(settings: ThreliumSettings) -> LightRAG:
         # upsert'ы, без полной перезаписи. localhost-only (bind 127.0.0.1, protected-mode yes), REDIS_URI
         # по умолчанию redis://localhost:6379. doc_status тоже в Redis (Json писал его на КАЖДЫЙ upsert).
         "kv_storage": "RedisKVStorage",
-        # MilvusVectorDBStorage (Milvus Lite, serverless embedded) вместо Faiss: faiss НЕ безопасен для
-        # конкурентной записи (max_parallel_insert>1 → гонка на tmp-файле faiss_index_entities.index.tmp →
-        # SIGABRT движка). Milvus сам сериализует запись векторов внутри storage, поэтому можно держать
-        # параллельной всю обработку (max_parallel_insert/*_max_async), а сериализуется только vector-write.
-        # Lite-режим: MILVUS_URI = локальный .db в working_dir (без сервера; см. env ниже перед LightRAG()).
-        "vector_storage": "MilvusVectorDBStorage",
-        "graph_storage": "NetworkXStorage",
+        # LanceDBVectorDBStorage (threlium-адаптер ``lancedb_impl``, регистрируется в рантайме): встраиваемый
+        # Lance-стор с MVCC (конкурентные чтения+записи безопасны — нет faiss concurrent-write segfault, нет
+        # single-process сериализации Milvus Lite) и НАТИВНЫМ async API (не морозит rag-loop синхронным gRPC,
+        # как Milvus). Lock-free: адаптер без ``_storage_lock``, конкуренцию арбитрит MVCC. Эмбеддинг на upsert,
+        # без отложенного flush. Это разблокирует будущее снятие единого rag-loop (независимые aquery/ainsert).
+        # Trade-off: per-query latency LanceDB выше faiss на малом корпусе (фреймворк-оверхед) — приемлемо,
+        # приоритет стабильность/конкурентность, не скорость. Память: n4-rag-loop-stall-pyspy.
+        "vector_storage": "LanceDBVectorDBStorage",
+        # CozoGraphStorage (threlium-адаптер cozo_impl, rocksdb): встраиваемый MVCC граф вместо in-memory
+        # NetworkX. NetworkX держался на единственном asyncio-loop для взаимного исключения над self._graph;
+        # cozo (RocksDB MVCC) безопасен при конкурентной записи в разные узлы (lightrag фанит граф-upsert через
+        # Semaphore(8) + per-entity keyed-lock) → разблокирует Stage-2 (снятие единого rag-loop). Память:
+        # n4-rag-loop-stall-pyspy.
+        "graph_storage": "CozoGraphStorage",
         "doc_status_storage": "RedisDocStatusStorage",
         "chunk_token_size": body_max,
         "chunk_overlap_token_size": overlap_toks,
@@ -185,23 +198,13 @@ def build_rag(settings: ThreliumSettings) -> LightRAG:
             rerank_ep=rerank_ep,
             default_max_retries=settings.litellm.max_retries,
         )
-    if settings.e2e.litellm_route_correlation:
-        # max_async НЕ обязан быть 1 для детерминизма: корреляция теперь per-call (ctxvar call-site +
-        # thread-root, штампится на каждый запрос), а стабы матчатся по X-Threlium-Call-Site + hasContext
-        # (thread-root) — БЕЗ зависимости от порядка вызовов (ни seq, ни phase-state в RAG-фазах; phase-state
-        # только у FSM/reasoning-стабов, а это прямые litellm-вызовы вне RAG-loop). Параллельные LLM/embed —
-        # ключевой разлок -n2: иначе ВСЕ вызовы (индексация+запросы) обоих тестов сериализуются на одном RAG-loop.
-        # Внутритредовый порядок сохранён и так (последовательные await в aquery). Индексация
-        # развязана: тесты не ждут lightrag-drain (enrich-барьер в mailflow assert), индексация —
-        # async background. max_parallel_insert берём из settings, как в проде.
-        rag_kwargs["llm_model_max_async"] = settings.lightrag.llm_model_max_async
-        rag_kwargs["embedding_func_max_async"] = settings.lightrag.embedding_func_max_async
-        rag_kwargs["max_parallel_insert"] = settings.lightrag.max_parallel_insert
-    else:
-        rag_kwargs["llm_model_max_async"] = settings.lightrag.llm_model_max_async
-        rag_kwargs["embedding_func_max_async"] = settings.lightrag.embedding_func_max_async
-        rag_kwargs["max_parallel_insert"] = settings.lightrag.max_parallel_insert
-    _configure_milvus_lite(settings, working_dir=rag_kwargs["working_dir"])
+    # Параллельность из settings (e2e и прод одинаково): корреляция per-call (ctxvar call-site + thread-root
+    # на каждый запрос), стабы матчатся по X-Threlium-Call-Site + hasContext(thread-root) — БЕЗ зависимости от
+    # порядка вызовов. LanceDB MVCC безопасен для конкурентной записи → ``max_parallel_insert`` можно держать >1
+    # (drain-singleton батчит → ainsert переиспользует внутреннюю параллельность lightrag через семафор).
+    rag_kwargs["llm_model_max_async"] = settings.lightrag.llm_model_max_async
+    rag_kwargs["embedding_func_max_async"] = settings.lightrag.embedding_func_max_async
+    rag_kwargs["max_parallel_insert"] = settings.lightrag.max_parallel_insert
     rag = LightRAG(**rag_kwargs)
     if settings.e2e.litellm_route_correlation:
         _install_query_correlation_bridge(rag)

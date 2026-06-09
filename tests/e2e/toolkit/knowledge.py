@@ -152,11 +152,13 @@ def e2e_clear_doc_status_and_restart_engine(
             f"systemctl --user {action} threlium-engine.service",
         ]
 
-    # ПОРЯДОК: stop → wipe → start. Milvus Lite (milvus_lite.db) держит каталог открытым у живого
-    # движка; ``rm -rf`` при работающем движке оставляет half-state (collections/ переживает rm через
-    # открытые inode / встроенный Milvus пересоздаёт) → lightrag force-create → «File exists» → crash-
-    # loop bootstrap. Faiss это терпел (файлы пересоздаются), Milvus — нет. Останавливаем движок, чистим
-    # redis+файлы на освобождённом каталоге, затем стартуем на чистом сторе.
+    # ПОРЯДОК: stop → wipe → start. ОБЯЗАТЕЛЬНО останавливать движок ДО ``rm -rf``: встраиваемые сторы
+    # держат файловые локи у живого процесса — CozoDB (graph_storage, ``lightrag/cozo_graph/`` rocksdb-LOCK)
+    # и LanceDB (vector_storage, ``lightrag/lancedb/``). ``rm -rf`` при работающем движке оставил бы half-state
+    # → bootstrap crash-loop. ``rm -rf {lightrag_dir}/*`` (wildcard) вычищает ОБА новых каталога (cozo_graph +
+    # lancedb лежат под working_dir) вместе с прочим lightrag-состоянием → каждая сессия стартует на чистом
+    # графе+векторах. redis flushall убирает KV/doc_status. Затем старт на чистом сторе. (Историч.: тот же
+    # stop-first был нужен Milvus Lite; faiss файлы пересоздавал и терпел live-rm, но cozo/lancedb — нет.)
     service_exec(project, "sut", _engine_systemctl("stop"), repo_root=root, timeout=30)
     service_exec(
         project,

@@ -23,9 +23,7 @@ from threlium.runners.lightrag._bootstrap import bootstrap_knowledge_dir
 from threlium.runners.lightrag._construction import build_rag
 from threlium.runners.lightrag._drain import (
     reset_drain_task,
-    reset_thread_locks,
     schedule_on_loop,
-    thread_lock_for,
 )
 
 log = logger.bind(stage="lightrag")
@@ -106,12 +104,10 @@ def run_rag_coroutine(
     timeout = _future_timeout_sec(settings)
 
     async def _runner() -> _T:
+        # Корреляция per-call через ctxvar; БЕЗ пер-тред index↔query барьера (eventual consistency:
+        # query не ждёт in-flight ainsert своего треда — RAG = supplementary память).
         token = set_litellm_correlation_ctxvar(correlation) if correlation is not None else None
-        lock = thread_lock_for(correlation)  # пер-тред барьер: query ждёт in-flight ainsert СВОЕГО треда
         try:
-            if lock is not None:
-                async with lock:
-                    return await coro
             return await coro
         finally:
             if token is not None:
@@ -258,7 +254,6 @@ def _rag_thread_main(settings: ThreliumSettings) -> None:
         _rag_loop = None
         _drain_lock = None
         _bootstrap_task = None
-        reset_thread_locks()  # loop-bound asyncio.Lock'и — сбросить при пересоздании loop
         reset_drain_task()
 
 
@@ -313,5 +308,4 @@ def stop_rag_loop_thread(*, settings: ThreliumSettings | None = None) -> None:
     _daemon_rag = None
     _drain_lock = None
     _bootstrap_task = None
-    reset_thread_locks()
     reset_drain_task()

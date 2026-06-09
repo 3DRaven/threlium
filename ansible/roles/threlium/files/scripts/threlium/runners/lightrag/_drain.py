@@ -69,24 +69,6 @@ def _lightrag_doc_id(mid_inner: NotmuchMessageIdInner) -> str:
     return "th-" + hashlib.sha1(mid_inner.value.encode("utf-8")).hexdigest()
 
 
-# Пер-тред (по thread-root корреляции) asyncio.Lock на RAG-loop: сериализует ``ainsert``↔``aquery`` ОДНОГО
-# notmuch-треда (каузальный index→query: enrich-query ждёт in-flight индексацию своего треда), но НЕ разные
-# треды (свой лок → конкурентно). Ключ — thread-root (есть в e2e; в прод может отсутствовать → без лока,
-# eventual consistency). Создаётся/читается ТОЛЬКО на RAG-loop (без гонок); сброс при пересоздании loop.
-_thread_locks: dict[str, asyncio.Lock] = {}
-
-
-def reset_thread_locks() -> None:
-    """Сбросить пер-тред локи (loop-bound asyncio.Lock) при пересоздании RAG-loop."""
-    _thread_locks.clear()
-
-
-def thread_lock_for(correlation: dict[str, str] | None) -> asyncio.Lock | None:
-    # Развязка индексации: тесты не ждут lightrag-drain (enrich-барьер), per-тред index↔query барьер
-    # больше не нужен — eventual consistency как в проде. No-op (без лока → конкурентно по тредам).
-    return None
-
-
 def _future_timeout_sec(settings: ThreliumSettings) -> float | None:
     llm_ep = resolve_llm_endpoint(settings.litellm, LitellmRoutingSite.LIGHTRAG_LLM)
     v = float(llm_ep.timeout)
@@ -149,17 +131,13 @@ async def _ainsert_with_correlation(
         call_site=snap.call_site,
         first_mid=ids[0],
     )
-    # Пер-тред барьер: индексация треда держит его лок, чтобы enrich-aquery ЭТОГО треда дождался
-    # завершения (index→query causal order); разные треды — разные локи, конкурентно.
+    # Корреляция per-call (call-site + thread-root) через ctxvar; БЕЗ пер-тред index↔query барьера —
+    # RAG = eventual-consistent supplementary память, индексация может отставать от запросов (контекст
+    # переписки приходит детерминированно через notmuch/FSM, не через RAG read-your-writes).
     token = set_litellm_correlation_ctxvar(snap.as_dict())
-    lock = thread_lock_for(snap.as_dict())
     try:
         t0 = time.monotonic()
-        if lock is not None:
-            async with lock:
-                await rag.ainsert(texts, ids=ids, file_paths=file_paths)
-        else:
-            await rag.ainsert(texts, ids=ids, file_paths=file_paths)
+        await rag.ainsert(texts, ids=ids, file_paths=file_paths)
         return time.monotonic() - t0
     finally:
         reset_litellm_correlation_ctxvar(token)
