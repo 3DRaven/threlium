@@ -15,7 +15,10 @@ dependencies = [
     "imap-tools>=1.13.0,<2.0.0",
     "jinja2>=3.1.6",
     "jsonschema>=4.23.0",
-    "faiss-cpu>=1.14.0",
+    # Milvus Lite (serverless embedded) вместо faiss: faiss НЕ безопасен для конкурентной записи
+    # (max_parallel_insert>1 → SIGABRT на tmp-файле); Milvus сериализует vector-write внутри storage.
+    "pymilvus>=2.5,<3.1",
+    "milvus-lite>=2.4",
     "lightrag-hku[api]==1.5.0",
     "httpx>=0.27.0",
     "matrix-nio>=0.25.2,<0.26",

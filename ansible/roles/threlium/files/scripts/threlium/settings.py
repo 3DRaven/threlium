@@ -441,9 +441,10 @@ class LightragSettings(BaseModel):
     )
     insert_batch: int = Field(default=16, ge=1, description="Размер батча ainsert в RAG-loop.")
     max_parallel_insert: int = Field(
-        default=2,
+        default=4,
         ge=1,
-        description="Потолок LightRAG max_parallel_insert (не e2e).",
+        description="Потолок LightRAG max_parallel_insert (e2e+прод). Milvus сериализует vector-write "
+        "внутри storage (в отличие от faiss → SIGABRT при >1), поэтому параллельная обработка безопасна.",
     )
     llm_model_max_async: int = Field(
         default=4,
@@ -454,6 +455,16 @@ class LightragSettings(BaseModel):
         default=4,
         ge=1,
         description="Потолок LightRAG embedding_func_max_async (и в e2e: корреляция per-call).",
+    )
+    milvus_uri: str = Field(
+        default="",
+        description="MILVUS_URI для MilvusVectorDBStorage; пусто → Milvus Lite (serverless embedded, "
+        "файл working_dir/milvus_lite.db). Прод может указать реальный сервер (http[s]://…).",
+    )
+    milvus_db_name: str = Field(
+        default="",
+        description="MILVUS_DB_NAME; пусто → Milvus Lite (непустой db_name → серверный режим pymilvus, "
+        "несовместим с локальным .db). Задавать только при реальном Milvus-сервере.",
     )
     embed_dim: str = Field(
         default="",

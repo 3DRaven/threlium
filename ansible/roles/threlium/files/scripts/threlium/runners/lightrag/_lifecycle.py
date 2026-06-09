@@ -229,6 +229,15 @@ def _rag_thread_main(settings: ThreliumSettings) -> None:
             notify_status(SystemdStatusBody.lightrag_initializing_storages())
             rag = build_rag(settings)
             await rag.initialize_storages()
+            # ОБЯЗАТЕЛЬНО после initialize_storages (известный баг lightrag-hku): без
+            # initialize_pipeline_status() shared_storage не инициализирует _data_init_lock →
+            # get_data_init_lock() в Milvus initialize() — no-op → конкурентный create_collection
+            # (max_parallel_insert>1) гонит «File exists». Канонический init lightrag = оба вызова.
+            from lightrag.kg.shared_storage import (  # noqa: PLC0415
+                initialize_pipeline_status,
+            )
+
+            await initialize_pipeline_status()
             notify_status(SystemdStatusBody.lightrag_storages_ready())
             return rag
 

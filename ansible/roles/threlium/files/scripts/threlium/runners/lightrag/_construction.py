@@ -1,6 +1,7 @@
 """RAG instance construction and e2e correlation bridge installation."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -76,6 +77,32 @@ def _addon_params(settings: ThreliumSettings) -> dict[str, object]:
     return {"language": language, "entity_types": entity_types}
 
 
+def _configure_milvus_lite(settings: ThreliumSettings, *, working_dir: str) -> None:
+    """Сконфигурировать Milvus Lite (serverless embedded) для ``MilvusVectorDBStorage``.
+
+    Конфиг — из ``settings.lightrag`` (``milvus_uri`` / ``milvus_db_name``), НЕ из голого env (TYPES.md
+    §«конфигурация централизована в ThreliumSettings»). ``os.environ`` здесь — лишь вынужденный транспорт
+    на границе с LightRAG: он жёстко проверяет ПРИСУТСТВИЕ ``MILVUS_URI``+``MILVUS_DB_NAME`` в окружении
+    (``check_storage_env_vars``), а ``milvus_impl`` читает их оттуда. Пустой ``milvus_uri`` → Lite-файл
+    ``working_dir/milvus_lite.db`` (serverless). ``db_name`` пустой по умолчанию: непустой → pymilvus уходит
+    в серверный режим (``Illegal uri`` для локального ``.db``) → Lite ломается; ``milvus_impl`` пустой
+    ``db_name`` в ``MilvusClient`` не передаёт. Milvus сериализует запись векторов внутри storage (нет faiss
+    concurrent-write SIGABRT) → ``max_parallel_insert``/``*_max_async`` можно держать >1.
+
+    Порядок импорта критичен: ``pymilvus.orm.connections`` валидирует ``MILVUS_URI`` как HTTP-адрес ПРИ
+    ИМПОРТЕ своего модуля-синглтона (``async_milvus_client`` тянет ``orm.collection`` → ``orm.connections``).
+    Локальный ``.db`` (Lite) — отдельный путь ``MilvusClient(uri=.db)``, но ORM-модуль всё равно подгружается
+    и падает на ``.db``. Поэтому форсируем импорт ORM, ПОКА ``MILVUS_URI`` ещё не выставлен (синглтон
+    инициализируется на дефолте), и только затем кладём ``.db`` в env для ``MilvusClient``.
+    """
+    import pymilvus.orm.connections  # noqa: F401  # init ORM-синглтон до выставления MILVUS_URI
+    from pymilvus.milvus_client import async_milvus_client  # noqa: F401
+
+    uri = settings.lightrag.milvus_uri.strip() or str(Path(working_dir) / "milvus_lite.db")
+    os.environ["MILVUS_URI"] = uri
+    os.environ["MILVUS_DB_NAME"] = settings.lightrag.milvus_db_name.strip()
+
+
 def build_rag(settings: ThreliumSettings) -> LightRAG:
     """Construct LightRAG instance from settings (not yet initialized)."""
     install_overlay(settings)
@@ -129,13 +156,12 @@ def build_rag(settings: ThreliumSettings) -> LightRAG:
         # upsert'ы, без полной перезаписи. localhost-only (bind 127.0.0.1, protected-mode yes), REDIS_URI
         # по умолчанию redis://localhost:6379. doc_status тоже в Redis (Json писал его на КАЖДЫЙ upsert).
         "kv_storage": "RedisKVStorage",
-        # FaissVectorDBStorage вместо NanoVectorDBStorage: nano-vdb на каждый flush (index_done_callback,
-        # раз в batch) пере-сериализует ВЕСЬ json (vdb_chunks.json ~1.1MB: вся матрица векторов base64 +
-        # все метаданные) — ~28% CPU движка в json.dump (профиль py-spy). Faiss держит бинарный индекс
-        # (faiss.write_index, инкрементальный add) + компактный meta.json. Та же конфигурация порога
-        # (cosine_better_than_threshold из vector_db_storage_cls_kwargs), файловое хранилище без внешних
-        # сервисов. Требует faiss-cpu (см. pyproject).
-        "vector_storage": "FaissVectorDBStorage",
+        # MilvusVectorDBStorage (Milvus Lite, serverless embedded) вместо Faiss: faiss НЕ безопасен для
+        # конкурентной записи (max_parallel_insert>1 → гонка на tmp-файле faiss_index_entities.index.tmp →
+        # SIGABRT движка). Milvus сам сериализует запись векторов внутри storage, поэтому можно держать
+        # параллельной всю обработку (max_parallel_insert/*_max_async), а сериализуется только vector-write.
+        # Lite-режим: MILVUS_URI = локальный .db в working_dir (без сервера; см. env ниже перед LightRAG()).
+        "vector_storage": "MilvusVectorDBStorage",
         "graph_storage": "NetworkXStorage",
         "doc_status_storage": "RedisDocStatusStorage",
         "chunk_token_size": body_max,
@@ -169,6 +195,7 @@ def build_rag(settings: ThreliumSettings) -> LightRAG:
         rag_kwargs["llm_model_max_async"] = settings.lightrag.llm_model_max_async
         rag_kwargs["embedding_func_max_async"] = settings.lightrag.embedding_func_max_async
         rag_kwargs["max_parallel_insert"] = settings.lightrag.max_parallel_insert
+    _configure_milvus_lite(settings, working_dir=rag_kwargs["working_dir"])
     rag = LightRAG(**rag_kwargs)
     if settings.e2e.litellm_route_correlation:
         _install_query_correlation_bridge(rag)

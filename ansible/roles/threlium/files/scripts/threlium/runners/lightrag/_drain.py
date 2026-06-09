@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
 from pathlib import Path
 
@@ -53,6 +54,19 @@ def reset_drain_task() -> None:
     """Reset drain task state (called during lifecycle cleanup)."""
     global _drain_task
     _drain_task = None
+
+
+def _lightrag_doc_id(mid_inner: NotmuchMessageIdInner) -> str:
+    """Короткий стабильный lightrag-doc-id из inner-MID.
+
+    Milvus-схема lightrag (`milvus_impl.py`) задаёт поле ``id`` как ``VARCHAR(64)``; threlium-MID
+    (base62, ~84–108) + chunk-суффикс lightrag даёт chunk-id >64 → ``MilvusException code=6 value
+    length exceeds max_length=64`` → insert отвергнут, pipeline halted, письмо не индексируется
+    (faiss длину не ограничивал). Это лишь dedup-ключ lightrag (трекинг notmuch — отдельно, через
+    ``tag_ids``/``LIGHTRAG_INDEXED``), не user-facing; sha1 детерминирован → ``doc_status`` dedup и
+    idempotency-bootstrap целы. ``th-`` + 40 hex = 43 симв. → chunk-id ~52 < 64.
+    """
+    return "th-" + hashlib.sha1(mid_inner.value.encode("utf-8")).hexdigest()
 
 
 # Пер-тред (по thread-root корреляции) asyncio.Lock на RAG-loop: сериализует ``ainsert``↔``aquery`` ОДНОГО
@@ -219,7 +233,7 @@ async def _ainsert_batch(
             skip_tag_ids.append(mid_inner)
             continue
         texts.append(text)
-        ids.append(mid_inner.value)
+        ids.append(_lightrag_doc_id(mid_inner))
         tag_ids.append(mid_inner)
         file_paths.append(str(fp))
 
