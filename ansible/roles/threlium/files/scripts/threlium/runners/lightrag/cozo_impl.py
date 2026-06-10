@@ -52,6 +52,34 @@ def _records(res: Any) -> list[dict[str, Any]]:
     return [dict(zip(headers, row)) for row in res.get("rows", [])]
 
 
+def _cozo_error_detail(e: Exception) -> str:
+    """Безопасно извлечь РЕАЛЬНОЕ сообщение cozo-ошибки.
+
+    pycozo ``QueryException.__str__`` для embedded-движка падает с ``'str' object has no attribute
+    'get'``: ``resp`` — простая строка (сообщение), а ``__str__`` зовёт ``resp.get('message')`` без
+    hasattr-гарда (в отличие от ``__repr__``). Эта подмена маскирует НАСТОЯЩУЮ ошибку (например
+    ``Symbol 'src' in rule head is unbound``) под бессмысленный ``AttributeError`` и роняет весь
+    pipeline. Поэтому НИКОГДА не зовём ``str(QueryException)`` — читаем ``.resp`` напрямую:
+    dict (client-режим) → display/message; str (embedded) → как есть.
+    """
+    resp = getattr(e, "resp", None)
+    if isinstance(resp, dict):
+        return str(resp.get("display") or resp.get("message") or resp)
+    if resp is not None:
+        return str(resp)
+    return f"{type(e).__name__}: {e!r}"
+
+
+def _param_shapes(params: dict[str, Any] | None) -> dict[str, str]:
+    """Формы параметров (без дампа данных) для диагностики упавшего запроса."""
+    if not params:
+        return {}
+    return {
+        k: (f"list[{len(v)}]" if isinstance(v, list) else type(v).__name__)
+        for k, v in params.items()
+    }
+
+
 @dataclass
 class CozoGraphStorage(BaseGraphStorage):
     def __post_init__(self) -> None:
@@ -92,12 +120,27 @@ class CozoGraphStorage(BaseGraphStorage):
 
     async def _run(self, q: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         # cozo-клиент синхронный → to_thread: не блокирует loop + конкурентно (cozo thread-safe, MVCC).
-        res = await asyncio.to_thread(self._db.run, q, params or {})
+        try:
+            res = await asyncio.to_thread(self._db.run, q, params or {})
+        except Exception as e:
+            # Ловим падение СРАЗУ, с РЕАЛЬНЫМ сообщением cozo (pycozo __str__ его маскирует, см.
+            # _cozo_error_detail) + текстом запроса и формами параметров → любой будущий Datalog/данные-
+            # сбой диагностируется мгновенно. Re-raise чистым RuntimeError, чтобы str(e) выше по стеку
+            # (lightrag merge) не пере-маскировал ошибку обратно в 'str' object has no attribute 'get'.
+            detail = _cozo_error_detail(e)
+            logger.error(
+                f"[{self.workspace}] cozo query failed: {detail} :: "
+                f"query={q!r} params={_param_shapes(params)}"
+            )
+            raise RuntimeError(f"cozo query failed: {detail}") from e
         return _records(res)
 
     # ---- existence / read (singular) ----
     async def has_node(self, node_id: str) -> bool:
-        return bool(await self._run(f"?[id] := *{self._nodes}{{id: $id}}", {"id": node_id}))
+        # ``{id: $id}`` — индексный фильтр по PK (point-lookup), но он НЕ связывает переменную ``id``;
+        # голова ``?[id]`` тогда несвязана → cozo ``eval::unbound_symb_in_head``. Связываем константой
+        # ``x = $id`` для головы, фильтр оставляем индексным.
+        return bool(await self._run(f"?[x] := *{self._nodes}{{id: $id}}, x = $id", {"id": node_id}))
 
     async def get_node(self, node_id: str) -> dict[str, str] | None:
         rows = await self._run(f"?[data] := *{self._nodes}{{id: $id, data}}", {"id": node_id})
@@ -105,7 +148,11 @@ class CozoGraphStorage(BaseGraphStorage):
 
     async def has_edge(self, source_node_id: str, target_node_id: str) -> bool:
         s, t = _canon(source_node_id, target_node_id)
-        return bool(await self._run(f"?[src] := *{self._edges}{{src: $s, tgt: $t}}", {"s": s, "t": t}))
+        # Как и has_node: ``{src: $s, tgt: $t}`` — индексный фильтр по PK, но ``src`` в голове остаётся
+        # несвязанным (``eval::unbound_symb_in_head``). Связываем ``x = $s`` для головы.
+        return bool(
+            await self._run(f"?[x] := *{self._edges}{{src: $s, tgt: $t}}, x = $s", {"s": s, "t": t})
+        )
 
     async def get_edge(
         self, source_node_id: str, target_node_id: str

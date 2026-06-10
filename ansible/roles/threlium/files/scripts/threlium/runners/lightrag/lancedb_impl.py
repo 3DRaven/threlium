@@ -83,6 +83,21 @@ class LanceDBVectorDBStorage(BaseVectorStorage):
         self._tbl = None
         self._db = None
 
+    async def _io(self, op: str, coro: Any, **ctx: Any) -> Any:
+        """Выполнить I/O LanceDB, СРАЗУ логируя реальное падение (op + контекст) и пробрасывая дальше.
+
+        Симметрично ``cozo_impl._run``: любой будущий сбой стора (схема/IO/тип/embedding) ловится с
+        диагностикой, а не молча роняет doc-pipeline под безликим исключением. Контекст (``ctx``) —
+        формы/счётчики, без дампа векторов.
+        """
+        try:
+            return await coro
+        except Exception as e:
+            logger.error(
+                f"[{self.workspace}] LanceDB {op} failed (table={self._table_name}): {e!r} ctx={ctx}"
+            )
+            raise
+
     async def index_done_callback(self) -> None:
         # No-op: LanceDB персистит каждую запись (merge_insert) сразу (MVCC, durable) — отложенного
         # буфера/flush нет (в отличие от faiss/nano, которые материализуют индекс здесь).
@@ -114,11 +129,13 @@ class LanceDBVectorDBStorage(BaseVectorStorage):
         rows = [self._row(doc_id, embeddings[i], data[doc_id]) for i, doc_id in enumerate(ids)]
         # merge_insert по ``id`` = upsert (update существующего / insert нового). MVCC: запись
         # сразу durable+видима, без index_done flush.
-        await (
+        await self._io(
+            "upsert",
             self._tbl.merge_insert("id")
             .when_matched_update_all()
             .when_not_matched_insert_all()
-            .execute(rows)
+            .execute(rows),
+            n=len(rows),
         )
 
     # ---- read ----
@@ -136,7 +153,9 @@ class LanceDBVectorDBStorage(BaseVectorStorage):
         else:
             vec = np.asarray(await self.embedding_func([query]), dtype=np.float32)[0]
         q = await self._tbl.search(vec.tolist())
-        rows = await q.distance_type("cosine").limit(top_k).to_list()
+        rows = await self._io(
+            "query", q.distance_type("cosine").limit(top_k).to_list(), top_k=top_k
+        )
         results: list[dict[str, Any]] = []
         for row in rows:
             # LanceDB cosine ``_distance`` = 1 − cosine_similarity → восстанавливаем similarity,
@@ -158,14 +177,18 @@ class LanceDBVectorDBStorage(BaseVectorStorage):
     async def get_by_id(self, id: str) -> dict[str, Any] | None:
         if self._tbl is None:
             return None
-        rows = await self._tbl.query().where(f"id = {_sql_str(id)}").to_list()
+        rows = await self._io(
+            "get_by_id", self._tbl.query().where(f"id = {_sql_str(id)}").to_list(), id=id
+        )
         return self._format(rows[0]) if rows else None
 
     async def get_by_ids(self, ids: list[str]) -> list[dict[str, Any]]:
         if not ids or self._tbl is None:
             return []
         in_list = ", ".join(_sql_str(i) for i in ids)
-        rows = await self._tbl.query().where(f"id IN ({in_list})").to_list()
+        rows = await self._io(
+            "get_by_ids", self._tbl.query().where(f"id IN ({in_list})").to_list(), n=len(ids)
+        )
         by_id = {str(r.get("id")): self._format(r) for r in rows}
         return [by_id.get(str(i)) for i in ids]
 
@@ -173,7 +196,11 @@ class LanceDBVectorDBStorage(BaseVectorStorage):
         if not ids or self._tbl is None:
             return {}
         in_list = ", ".join(_sql_str(i) for i in ids)
-        rows = await self._tbl.query().where(f"id IN ({in_list})").to_list()
+        rows = await self._io(
+            "get_vectors_by_ids",
+            self._tbl.query().where(f"id IN ({in_list})").to_list(),
+            n=len(ids),
+        )
         return {
             str(r["id"]): list(r["vector"])
             for r in rows
@@ -185,7 +212,7 @@ class LanceDBVectorDBStorage(BaseVectorStorage):
         if not ids or self._tbl is None:
             return
         in_list = ", ".join(_sql_str(i) for i in ids)
-        await self._tbl.delete(f"id IN ({in_list})")
+        await self._io("delete", self._tbl.delete(f"id IN ({in_list})"), n=len(ids))
 
     async def delete_entity(self, entity_name: str) -> None:
         await self.delete([compute_mdhash_id(entity_name, prefix="ent-")])
@@ -197,7 +224,11 @@ class LanceDBVectorDBStorage(BaseVectorStorage):
         ):
             return
         name = _sql_str(entity_name)
-        await self._tbl.delete(f"src_id = {name} OR tgt_id = {name}")
+        await self._io(
+            "delete_entity_relation",
+            self._tbl.delete(f"src_id = {name} OR tgt_id = {name}"),
+            entity=entity_name,
+        )
 
     async def drop(self) -> dict[str, str]:
         try:
