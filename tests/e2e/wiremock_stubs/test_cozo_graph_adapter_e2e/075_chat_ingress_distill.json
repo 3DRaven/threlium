@@ -1,0 +1,76 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
+    "headers": {
+      "X-Threlium-Call-Site": {
+        "equalTo": "ingress_distill"
+      }
+    },
+    "bodyPatterns": [
+      {
+        "matches": "(?s).*(openai/threlium_e2e_l0|threlium_e2e_l0).*"
+      },
+      {
+        "contains": "\"tools\""
+      },
+      {
+        "contains": "ingress_distill"
+      }
+    ],
+    "customMatcher": {
+      "name": "state-matcher",
+      "parameters": {
+        "hasContext": "stub-cozo-graph-adapter-01::{{request.headers.[X-Threlium-Thread-Root]}}"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "transformers": [
+      "response-template"
+    ],
+    "jsonBody": {
+      "id": "chatcmpl-summarize_context-ingress-distill",
+      "object": "chat.completion",
+      "created": 0,
+      "model": "gpt-4o-mini",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "tool_calls",
+          "message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_ingress_distill_summarize_context",
+                "type": "function",
+                "function": {
+                  "name": "ingress_distill",
+                  "arguments": "{\"user_intent\": \"E2E-SUM-ORIG-HEAD-MARKER turn:{{request.headers.[message-id]}} e2e summarize-context distilled brief; accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler accumulation-filler\", \"user_reply_language\": \"Russian\", \"open_gaps\": [], \"step_back_notes\": [\"Ingress distill brief for stub-cozo-graph-adapter-01 accumulation turn.\"]}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "serveEventListeners": [
+    {
+      "name": "recordState",
+      "parameters": {
+        "context": "{{request.headers.[X-Threlium-Thread-Root]}}",
+        "list": {
+          "addLast": {
+            "cs": "{{request.headers.[X-Threlium-Call-Site]}}"
+          }
+        }
+      }
+    }
+  ]
+}

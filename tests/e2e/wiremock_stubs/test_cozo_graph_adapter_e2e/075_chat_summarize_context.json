@@ -1,0 +1,75 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
+    "headers": {
+      "X-Threlium-Call-Site": {
+        "equalTo": "summarize_thread_context"
+      }
+    },
+    "bodyPatterns": [
+      {
+        "contains": "\"tools\""
+      }
+    ],
+    "customMatcher": {
+      "name": "state-matcher",
+      "parameters": {
+        "hasContext": "stub-cozo-graph-adapter-01::{{request.headers.[X-Threlium-Thread-Root]}}"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "transformers": [
+      "response-template"
+    ],
+    "jsonBody": {
+      "id": "chatcmpl-e2e-wiremock-summarize-context",
+      "object": "chat.completion",
+      "created": 0,
+      "model": "gpt-4o-mini",
+      "choices": [
+        {
+          "index": 0,
+          "finish_reason": "tool_calls",
+          "message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_summarize_thread_context_e2e",
+                "type": "function",
+                "function": {
+                  "name": "summarize_thread_context",
+                  "arguments": "{\"summary\": \"E2E-SUM-CONTEXT-MARKER: consolidated thread context for e2e summarize pipeline.\"}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "serveEventListeners": [
+    {
+      "name": "recordState",
+      "parameters": {
+        "context": "{{request.headers.[X-Threlium-Thread-Root]}}",
+        "list": {
+          "addLast": {
+            "cs": "{{request.headers.[X-Threlium-Call-Site]}}"
+          }
+        },
+        "state": {
+          "saw_distill": "{{#if (or (contains request.body '## Original user message') (contains request.body '## User intent') (contains request.body '## User reply language') (contains request.body '## Step-back context') (contains request.body '## Open gaps'))}}1{{else}}{{state context=request.headers.[X-Threlium-Thread-Root] property='saw_distill' default='0'}}{{/if}}",
+          "saw_head": "{{#if (contains request.body 'E2E-SUM-ORIG-HEAD-MARKER')}}1{{else}}{{state context=request.headers.[X-Threlium-Thread-Root] property='saw_head' default='0'}}{{/if}}",
+          "saw_raw_pad_input": "{{#if (contains request.body 'PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP')}}1{{else}}{{state context=request.headers.[X-Threlium-Thread-Root] property='saw_raw_pad_input' default='0'}}{{/if}}"
+        }
+      }
+    }
+  ]
+}
