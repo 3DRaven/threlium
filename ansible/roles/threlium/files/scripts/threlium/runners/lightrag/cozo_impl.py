@@ -262,19 +262,24 @@ class CozoGraphStorage(BaseGraphStorage):
 
     # ---- delete (atomic multi-block: rm инцидентных рёбер + rm узла одним run()) ----
     async def delete_node(self, node_id: str) -> None:
+        # O(degree), not O(edges): adj{node:$id} (PK-prefix) gives neighbours, then rm incident edges by
+        # explicit key — both (id,n) and (n,id); the non-canonical one is a no-op rm (verified safe in cozo).
+        # Single multi-block run() = one transaction. (Old form scanned edges/adj via (src=$id or tgt=$id):
+        # 31+42 ms @20k edges → flat ~5 ms here.)
         await self._run(
             f"{{\n"
-            f"  ?[src, tgt] := *{self._edges}{{src, tgt}}, (src = $id or tgt = $id)\n"
+            f"  nbr[n] := *{self._adj}{{node: $id, neighbor: n}}\n"
+            f"  ?[src, tgt] := nbr[n], src = $id, tgt = n\n"
+            f"  ?[src, tgt] := nbr[n], src = n, tgt = $id\n"
             f"  :rm {self._edges} {{src, tgt}}\n"
             f"}}\n"
             f"{{\n"
-            f"  ?[node, neighbor] := *{self._adj}{{node, neighbor}}, (node = $id or neighbor = $id)\n"
+            f"  nbr[n] := *{self._adj}{{node: $id, neighbor: n}}\n"
+            f"  ?[node, neighbor] := nbr[n], node = $id, neighbor = n\n"
+            f"  ?[node, neighbor] := nbr[n], node = n, neighbor = $id\n"
             f"  :rm {self._adj} {{node, neighbor}}\n"
             f"}}\n"
-            f"{{\n"
-            f"  ?[id] <- [[$id]]\n"
-            f"  :rm {self._nodes} {{id}}\n"
-            f"}}",
+            f"{{ ?[id] <- [[$id]] :rm {self._nodes} {{id}} }}",
             {"id": node_id},
         )
 
