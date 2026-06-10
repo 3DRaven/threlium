@@ -32,7 +32,7 @@ class ChatCompletionMessageToolCall(Protocol):
 
 NonEmptyStr: TypeAlias = Annotated[str, msgspec.Meta(min_length=1)]
 
-log = logger.bind(module=__name__)
+log = logger.bind(component=__name__)
 
 _PayloadT = TypeVar("_PayloadT")
 

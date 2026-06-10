@@ -51,7 +51,7 @@ from tenacity import (
 
 from threlium.logutil import logger
 
-log = logger.bind(module=__name__)
+log = logger.bind(component=__name__)
 _RETRY_STDLOG = logging.getLogger(__name__)
 
 _RETRY_MAX_ATTEMPTS = 5

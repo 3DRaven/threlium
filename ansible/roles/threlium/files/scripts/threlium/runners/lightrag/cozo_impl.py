@@ -36,7 +36,9 @@ from typing import Any
 
 from lightrag.base import BaseGraphStorage
 from lightrag.types import KnowledgeGraph, KnowledgeGraphEdge, KnowledgeGraphNode
-from lightrag.utils import logger
+from threlium.logutil import logger
+
+log = logger.bind(component="cozo_store")
 
 
 def _canon(a: str, b: str) -> tuple[str, str]:
@@ -111,8 +113,13 @@ class CozoGraphStorage(BaseGraphStorage):
                 f"?[node, neighbor] := *{self._edges}{{src: neighbor, tgt: node}}\n"
                 f":put {self._adj} {{node, neighbor}}"
             )
-        logger.debug(
-            f"[{self.workspace}] CozoDB graph ready: {self._nodes}/{self._edges}/{self._adj} ({self._db_path})"
+        log.debug(
+            "cozo_graph_ready",
+            workspace=self.workspace,
+            nodes=self._nodes,
+            edges=self._edges,
+            adj=self._adj,
+            db_path=self._db_path,
         )
 
     async def finalize(self) -> None:
@@ -128,9 +135,12 @@ class CozoGraphStorage(BaseGraphStorage):
             # сбой диагностируется мгновенно. Re-raise чистым RuntimeError, чтобы str(e) выше по стеку
             # (lightrag merge) не пере-маскировал ошибку обратно в 'str' object has no attribute 'get'.
             detail = _cozo_error_detail(e)
-            logger.error(
-                f"[{self.workspace}] cozo query failed: {detail} :: "
-                f"query={q!r} params={_param_shapes(params)}"
+            log.error(
+                "cozo_query_failed",
+                workspace=self.workspace,
+                detail=detail,
+                query=q,
+                params=_param_shapes(params),
             )
             raise RuntimeError(f"cozo query failed: {detail}") from e
         return _records(res)
@@ -443,5 +453,5 @@ class CozoGraphStorage(BaseGraphStorage):
             self._db.run(f":create {self._adj} {{node: String, neighbor: String}}")
             return {"status": "success", "message": "graph dropped"}
         except Exception as e:  # noqa: BLE001
-            logger.error(f"[{self.workspace}] CozoDB drop failed: {e}")
+            log.error("cozo_drop_failed", workspace=self.workspace, error=repr(e))
             return {"status": "error", "message": str(e)}

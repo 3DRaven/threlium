@@ -443,8 +443,8 @@ class LightragSettings(BaseModel):
     max_parallel_insert: int = Field(
         default=4,
         ge=1,
-        description="Потолок LightRAG max_parallel_insert (e2e+прод). Milvus сериализует vector-write "
-        "внутри storage (в отличие от faiss → SIGABRT при >1), поэтому параллельная обработка безопасна.",
+        description="Потолок LightRAG max_parallel_insert (e2e+прод). Текущие сторы — LanceDB (vector, "
+        "MVCC lock-free) и CozoDB (graph, MVCC) — конкурентно-безопасны на запись, поэтому >1 безопасно.",
     )
     llm_model_max_async: int = Field(
         default=4,
@@ -455,22 +455,6 @@ class LightragSettings(BaseModel):
         default=4,
         ge=1,
         description="Потолок LightRAG embedding_func_max_async (и в e2e: корреляция per-call).",
-    )
-    milvus_uri: str = Field(
-        default="",
-        description="MILVUS_URI для MilvusVectorDBStorage; пусто → Milvus Lite (serverless embedded, "
-        "файл working_dir/milvus_lite.db). Прод может указать реальный сервер (http[s]://…).",
-    )
-    milvus_db_name: str = Field(
-        default="",
-        description="MILVUS_DB_NAME; пусто → Milvus Lite (непустой db_name → серверный режим pymilvus, "
-        "несовместим с локальным .db). Задавать только при реальном Milvus-сервере.",
-    )
-    milvus_index_type: str = Field(
-        default="HNSW",
-        description="MILVUS_INDEX_TYPE для vector-индекса. HNSW (ANN, прод-масштаб) идёт по корректной "
-        "ветке lightrag build_index_params (add_index с metric_type); дефолтный AUTOINDEX на Milvus "
-        "Lite уходит в direct-API fallback и роняет 'create_index missing metric_type' (non-fatal шум).",
     )
     embed_dim: str = Field(
         default="",

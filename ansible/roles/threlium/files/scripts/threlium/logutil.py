@@ -28,10 +28,12 @@ _FOREIGN_PRE_CHAIN = [
     structlog.stdlib.ExtraAdder(),
 ]
 
-_LITELLM_LOGGER_NAMES: tuple[str, ...] = ("LiteLLM", "LiteLLM Proxy", "LiteLLM Router")
-# Шумные HTTP/Docker-клиенты e2e harness: при root=DEBUG каждый docker exec / WireMock Admin
-# даёт десятки строк в секунду → переполнение QueueHandler и «зависание» pytest/collect.
-_FOREIGN_LOGGER_NAMES: tuple[str, ...] = (
+# Внешние библиотеки/инструменты — логируем на **INFO**, продукт (threlium) остаётся на корневом DEBUG.
+# НЕ глушим в WARNING и НЕ отключаем: это резало полезную диагностику LLM/HTTP/индексации. На INFO
+# HTTP-клиенты дают по ОДНОЙ строке на запрос (без DEBUG-флуда тел/заголовков, который раньше переполнял
+# QueueHandler); lightrag — pipeline-статус/worker init/shutdown/прогресс; litellm — маршрутизация/стоимость
+# вызовов. Если какой-то внешний логгер окажется шумным/битым на INFO — точечное исключение, не общий обрез.
+_EXTERNAL_LOGGER_NAMES: tuple[str, ...] = (
     "httpx",
     "httpcore",
     "httpcore.connection",
@@ -41,6 +43,9 @@ _FOREIGN_LOGGER_NAMES: tuple[str, ...] = (
     "requests",
     "charset_normalizer",
     "lightrag",
+    "LiteLLM",
+    "LiteLLM Proxy",
+    "LiteLLM Router",
 )
 
 _LOG_CLIP_SUFFIX = "…"
@@ -58,18 +63,19 @@ def clip_log_text(value: str, *, max_len: int = _DEFAULT_LOG_TEXT_MAX_LEN) -> st
     return f"{value[: max_len - len(_LOG_CLIP_SUFFIX)]}{_LOG_CLIP_SUFFIX}"
 
 
-def _configure_litellm_loggers() -> None:
-    """Заглушить internal LiteLLM logging (StandardLoggingPayload, callbacks).
+def _configure_external_loggers() -> None:
+    """Внешние логгеры (HTTP-клиенты, lightrag, litellm) → INFO с propagate в root.
 
-    Threlium логирует вызовы LLM через structlog в ``litellm_client`` и stage loggers;
-    ``verbose_logger`` LiteLLM при ошибке ``model_dump()`` на StandardLoggingPayload
-    пишет ERROR+traceback — здесь отключаем полностью.
+    Продукт остаётся на корневом уровне (DEBUG); внешние — на INFO (полезный поток без DEBUG-флуда).
+    Собственные хендлеры внешних логгеров снимаем, чтобы запись шла через единый root QueueHandler
+    (JSON→journald), а не дублировалась/обходила формат.
     """
-    for name in _LITELLM_LOGGER_NAMES:
+    for name in _EXTERNAL_LOGGER_NAMES:
         lg = logging.getLogger(name)
         lg.handlers.clear()
-        lg.propagate = False
-        lg.disabled = True
+        lg.disabled = False
+        lg.propagate = True
+        lg.setLevel(logging.INFO)
 
 
 def setup_logging(log_level: str = "DEBUG") -> None:
@@ -125,12 +131,13 @@ def setup_logging(log_level: str = "DEBUG") -> None:
         ],
         logger_factory=structlog.stdlib.LoggerFactory(),
         wrapper_class=structlog.stdlib.BoundLogger,
-        cache_logger_on_first_use=False,
+        # Безопасно с lazy ``logger`` ниже: модульный ``log = logger.bind(...)`` НЕ материализует
+        # bound-логгер на импорте (до ``setup_logging``), поэтому кэш фиксирует уже сконфигурированный
+        # JSON-логгер, а не дефолтный ``PrintLogger``. Даёт пер-вызовный выигрыш на rag-loop/FSM-потоках.
+        cache_logger_on_first_use=True,
     )
 
-    _configure_litellm_loggers()
-    for name in _FOREIGN_LOGGER_NAMES:
-        logging.getLogger(name).setLevel(logging.WARNING)
+    _configure_external_loggers()
 
 
 def shutdown_logging() -> None:
@@ -141,4 +148,42 @@ def shutdown_logging() -> None:
         _listener = None
 
 
-logger = structlog.get_logger()
+_structlog_logger = structlog.get_logger()
+
+
+class _LazyBoundLogger:
+    """Ленивая обёртка над ``structlog``-bound-логгером: реальный ``.bind(**binds)`` откладывается до
+    ПЕРВОГО использования (первый ``log.info``/``debug``/…), а не на импорте модуля.
+
+    Зачем: ``structlog`` BoundLoggerLazyProxy материализуется именно на ``.bind()`` — против активной
+    конфигурации в этот момент. 40+ модулей делают ``log = logger.bind(stage=...)`` на уровне модуля; если
+    ``.bind()`` выполнить ДО ``setup_logging()``, он зафиксирует дефолтный ``PrintLogger`` (текст в stdout
+    мимо JSON/journald и мимо уровней внешних логгеров). Откладывая ``.bind()`` до первого вызова (всегда
+    после ``setup_logging`` в обоих entrypoint-ах), снимаем это скрытое import-order-условие. Результат
+    кэшируется → накладные только на первый вызов.
+    """
+
+    def __init__(self, **binds: object) -> None:
+        self.__dict__["_binds"] = binds
+        self.__dict__["_real"] = None
+
+    def __getattr__(self, item: str):  # noqa: ANN204 — делегирование произвольных атрибутов bound-логгера
+        real = self.__dict__.get("_real")
+        if real is None:
+            real = _structlog_logger.bind(**self.__dict__["_binds"])
+            self.__dict__["_real"] = real
+        return getattr(real, item)
+
+
+class _LazyLoggerFactory:
+    """Модульный ``logger``: ``.bind(**)`` → ленивая обёртка; прямой ``logger.info(...)`` тоже ленив."""
+
+    def bind(self, **binds: object) -> _LazyBoundLogger:
+        return _LazyBoundLogger(**binds)
+
+    def __getattr__(self, item: str):  # noqa: ANN204
+        return getattr(_LazyBoundLogger(), item)
+
+
+# Публичный ``logger``: ленивый, чтобы модульные ``log = logger.bind(...)`` не материализовались на импорте.
+logger = _LazyLoggerFactory()

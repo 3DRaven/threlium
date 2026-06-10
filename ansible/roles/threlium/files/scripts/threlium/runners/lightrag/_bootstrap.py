@@ -75,7 +75,7 @@ def _read_batch_documents(
         try:
             content = path.read_text(encoding="utf-8", errors="replace")
         except OSError as e:
-            log.warning("bootstrap_knowledge: cannot read %s: %s", path, e)
+            log.warning("bootstrap_knowledge_read_failed", path=str(path), error=repr(e))
             continue
         if not content.strip():
             continue
@@ -115,12 +115,12 @@ async def bootstrap_knowledge_dir(
     """
     knowledge_dir = Path(settings.home) / "knowledge"
     if not knowledge_dir.is_dir():
-        log.info("bootstrap_knowledge: directory not found, skipping: %s", knowledge_dir)
+        log.info("bootstrap_knowledge_dir_missing", knowledge_dir=str(knowledge_dir))
         return 0
 
     candidate_files = list(_iter_eligible_files(knowledge_dir))
     if not candidate_files:
-        log.info("bootstrap_knowledge: no eligible files in %s", knowledge_dir)
+        log.info("bootstrap_knowledge_no_files", knowledge_dir=str(knowledge_dir))
         return 0
 
     batch_size = max(1, settings.lightrag.insert_batch)
@@ -139,10 +139,10 @@ async def bootstrap_knowledge_dir(
             await rag.ainsert(texts, ids=ids, file_paths=file_paths)
         done += len(texts)
         log.info(
-            "bootstrap_knowledge: batch indexed (%d/%d, %.1fs) from %s",
-            done,
-            total,
-            time.monotonic() - t0,
-            knowledge_dir,
+            "bootstrap_knowledge_batch_indexed",
+            done=done,
+            total=total,
+            elapsed_sec=round(time.monotonic() - t0, 1),
+            knowledge_dir=str(knowledge_dir),
         )
     return done

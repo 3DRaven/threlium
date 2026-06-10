@@ -31,7 +31,11 @@ import numpy as np
 import pyarrow as pa
 
 from lightrag.base import BaseVectorStorage
-from lightrag.utils import compute_mdhash_id, logger
+from lightrag.utils import compute_mdhash_id
+
+from threlium.logutil import logger
+
+log = logger.bind(component="lancedb_store")
 
 
 def _sql_str(value: Any) -> str:
@@ -77,7 +81,12 @@ class LanceDBVectorDBStorage(BaseVectorStorage):
             self._tbl = await self._db.open_table(self._table_name)
         else:
             self._tbl = await self._db.create_table(self._table_name, schema=self._schema())
-        logger.debug(f"[{self.workspace}] LanceDB table ready: {self._table_name} ({self._uri})")
+        log.debug(
+            "lancedb_table_ready",
+            workspace=self.workspace,
+            table=self._table_name,
+            uri=self._uri,
+        )
 
     async def finalize(self) -> None:
         self._tbl = None
@@ -93,8 +102,13 @@ class LanceDBVectorDBStorage(BaseVectorStorage):
         try:
             return await coro
         except Exception as e:
-            logger.error(
-                f"[{self.workspace}] LanceDB {op} failed (table={self._table_name}): {e!r} ctx={ctx}"
+            log.error(
+                "lancedb_io_failed",
+                workspace=self.workspace,
+                op=op,
+                table=self._table_name,
+                error=repr(e),
+                ctx=ctx,
             )
             raise
 
@@ -241,5 +255,5 @@ class LanceDBVectorDBStorage(BaseVectorStorage):
                 )
             return {"status": "success", "message": "table dropped"}
         except Exception as e:  # noqa: BLE001 — статус наружу, как у lightrag-сторов
-            logger.error(f"[{self.workspace}] LanceDB drop failed: {e}")
+            log.error("lancedb_drop_failed", workspace=self.workspace, error=repr(e))
             return {"status": "error", "message": str(e)}

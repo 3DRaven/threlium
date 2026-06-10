@@ -37,7 +37,7 @@ from .push import handle_push
 from .push_types import IsomorphBridgePushPayload
 from .sse import SseFrame
 
-log = logger.bind(bridge="isomorph")
+log = logger.bind(component="isomorph")
 
 DeliverFn = Callable[[EmailMessage], None]
 

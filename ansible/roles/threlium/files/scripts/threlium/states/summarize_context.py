@@ -19,7 +19,7 @@ from threlium.fsm_emit import build_fsm_step_to_stage
 from threlium.litellm_correlation_headers import fsm_correlation_snap
 from threlium.litellm_required_tool import build_site_call, invoke_required_tool
 from threlium.litellm_tool_spec import load_tool_spec
-from threlium.logutil import logger
+from threlium.logutil import clip_log_text, logger
 from threlium.mime_reform import system_part_text
 from threlium.prompts import render_prompt
 from threlium.settings import ThreliumSettings
@@ -109,7 +109,7 @@ def main(
     body_raw = system_part_text(msg).strip()
     parsed = _parse_payload(body_raw)
     if parsed is None:
-        log.error("unparseable_payload", body_preview=body_raw[:200])
+        log.error("unparseable_payload", body_preview=clip_log_text(body_raw, max_len=200))
         return None
 
     units = parsed

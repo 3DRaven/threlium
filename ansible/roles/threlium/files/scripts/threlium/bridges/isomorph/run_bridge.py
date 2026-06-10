@@ -17,7 +17,7 @@ from threlium.settings import ThreliumSettings
 
 from .server import build_app
 
-log = logger.bind(bridge="isomorph")
+log = logger.bind(component="isomorph")
 
 
 def run_bridge(deliver: Callable[[EmailMessage], None], *, settings: ThreliumSettings) -> None:

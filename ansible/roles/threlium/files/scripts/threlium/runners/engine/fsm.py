@@ -5,6 +5,8 @@ import threading
 from email.message import EmailMessage
 from pathlib import Path
 
+from structlog.contextvars import bind_contextvars, reset_contextvars
+
 from threlium.delivery import run_fdm
 from threlium.logutil import logger
 from threlium.mail import email_message_from_bytes, serialize_rfc822_for_wire
@@ -72,50 +74,59 @@ def _run_stage(
     mid_w = RfcMessageIdWire.parse_present_from_email(msg, MailHeaderName.MESSAGE_ID)
     mid_display = (mid_w.value.strip() if mid_w is not None and mid_w.value.strip() else "?")
     _log = logger.bind(stage=stage_vo.value)
-    _log.info("fsm_enter", message_id=mid_display)
+    # Корреляция в structlog-contextvars: ``message_id`` (+ notmuch-thread) авто-проступает во ВСЕ логи
+    # синхронного дерева стадии (хендлер и всё, что он зовёт), а не протягивается руками в каждый вызов —
+    # ``merge_contextvars`` (logutil, первый в цепочке процессоров) добавляет их к каждой записи. ``reset``
+    # в finally даёт per-message-скоуп при переиспользовании потока воркером (как и litellm-ctxvar ниже).
+    _cv = bind_contextvars(
+        message_id=mid_display,
+        notmuch_thread_id=(thread_scope.value if thread_scope is not None else None),
+    )
+    try:
+        _log.info("fsm_enter")
 
-    incoming_stage = FsmStage.from_incoming_to(msg)
-    if incoming_stage != stage_vo:
-        raise RuntimeError(
-            f"FSM mis-routing: worker stage={stage_vo.value!r}, "
-            f"{MailHeaderName.TO}: stage={incoming_stage.value!r}"
-        )
+        incoming_stage = FsmStage.from_incoming_to(msg)
+        if incoming_stage != stage_vo:
+            raise RuntimeError(
+                f"FSM mis-routing: worker stage={stage_vo.value!r}, "
+                f"{MailHeaderName.TO}: stage={incoming_stage.value!r}"
+            )
 
-    handler = STAGE_MAIN_HANDLERS[stage_vo]
+        handler = STAGE_MAIN_HANDLERS[stage_vo]
 
-    if not settings.e2e.litellm_route_correlation:
-        out_msg = handler(msg, stage_vo, config=settings)
-    else:
-        corr = build_litellm_correlation_headers(msg, call_site=LitellmCallSite.FSM)
-        snap = LitellmCorrelationSnapshot.from_mapping(corr)
-        tid_s = thread_scope.value if thread_scope is not None else "?"
-        _log.debug(
-            "e2e_fsm_corr_set",
-            thread=threading.current_thread().name,
-            ident=threading.get_ident(),
-            notmuch_thread_id=tid_s,
-            route_tail=e2e_route_wire_tail(snap.route_wire),
-            call_site=snap.call_site,
-        )
-        # ContextVar (а не TLS): на синхронном FSM-потоке ведёт себя как thread-local (set→read на одном
-        # потоке), а token-reset гарантирует per-message-скоуп при переиспользовании потока воркером.
-        token = set_litellm_correlation_ctxvar(snap.as_dict())
-        try:
+        if not settings.e2e.litellm_route_correlation:
             out_msg = handler(msg, stage_vo, config=settings)
-        finally:
-            reset_litellm_correlation_ctxvar(token)
+        else:
+            corr = build_litellm_correlation_headers(msg, call_site=LitellmCallSite.FSM)
+            snap = LitellmCorrelationSnapshot.from_mapping(corr)
+            _log.debug(
+                "e2e_fsm_corr_set",
+                thread=threading.current_thread().name,
+                ident=threading.get_ident(),
+                route_tail=e2e_route_wire_tail(snap.route_wire),
+                call_site=snap.call_site,
+            )
+            # ContextVar (а не TLS): на синхронном FSM-потоке ведёт себя как thread-local (set→read на одном
+            # потоке), а token-reset гарантирует per-message-скоуп при переиспользовании потока воркером.
+            token = set_litellm_correlation_ctxvar(snap.as_dict())
+            try:
+                out_msg = handler(msg, stage_vo, config=settings)
+            finally:
+                reset_litellm_correlation_ctxvar(token)
 
-    if out_msg is None:
-        _log.info("fsm_result_terminal")
-        return b""
-    if not isinstance(out_msg, EmailMessage):
-        raise TypeError(
-            f"handler {stage_vo.value!r} returned {type(out_msg).__name__}, "
-            f"expected EmailMessage | None"
-        )
-    next_stage = FsmStage.from_incoming_to(out_msg)
-    _log.info("fsm_result_transition", next_stage=next_stage.value)
-    return serialize_rfc822_for_wire(out_msg)
+        if out_msg is None:
+            _log.info("fsm_result_terminal")
+            return b""
+        if not isinstance(out_msg, EmailMessage):
+            raise TypeError(
+                f"handler {stage_vo.value!r} returned {type(out_msg).__name__}, "
+                f"expected EmailMessage | None"
+            )
+        next_stage = FsmStage.from_incoming_to(out_msg)
+        _log.info("fsm_result_transition", next_stage=next_stage.value)
+        return serialize_rfc822_for_wire(out_msg)
+    finally:
+        reset_contextvars(**_cv)
 
 
 def process_thread_message(
