@@ -36,6 +36,17 @@
     {
       "name": "recordState",
       "parameters": {
+        "context": "{{#if (contains request.body 'To: ingress@localhost')}}forbidden-index-{{regexExtract request.body '<[A-Za-z0-9]{40,}@localhost>' default='_nocorr'}}{{else}}_no_forbidden_marker{{/if}}",
+        "list": {
+          "addLast": {
+            "hit": "1"
+          }
+        }
+      }
+    },
+    {
+      "name": "recordState",
+      "parameters": {
         "context": "{{request.headers.[X-Threlium-Thread-Root]}}",
         "state": {
           "saw_match": "{{#if (contains request.body (state context=request.headers.[X-Threlium-Thread-Root] property='search_for' default='__NO_SEARCH__'))}}1{{else}}{{state context=request.headers.[X-Threlium-Thread-Root] property='saw_match' default='0'}}{{/if}}"

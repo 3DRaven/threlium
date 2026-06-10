@@ -5,12 +5,15 @@
 индексируется» здесь НЕ проверяется — он покрыт ``test_lightrag_correlator_integrity`` (тот проверяет,
 что wrapper ``lightrag_index`` в принципе срабатывает). Дублировать покрытие незачем.
 
-**Как проверяем exclusion без docker-exec/notmuch** (docs/E2E.md §3.6.3, seeded-marker на generic-стабе):
-тест сидит forbidden-маркер ``To: ingress@localhost`` в СВОЙ thread-root контекст; generic
-embeddings-index стаб (``compose_bootstrap/011``) на каждом indexing-вызове берёт «что искать» ИЗ
-контекста запроса, ``contains`` тело и sticky-пишет ``saw_match`` В ТОТ ЖЕ per-test контекст. Drain
-рендерит индексируемый документ с ``To: <stage>@localhost`` в теле; пропущенный ingress не рендерится
-вовсе → ``saw_match == "0"``. Контур/idle подтверждает ``assert_full_mailflow_pipeline`` (GreenMail+state).
+**Как проверяем exclusion без docker-exec/notmuch** (docs/E2E.md §3.6.3, concurrency-safe forbidden-флаг):
+generic embeddings-index стаб (``compose_bootstrap/011``) несёт СТАТИЧЕСКИЙ forbidden-маркер
+``To: ingress@localhost`` и на каждом indexing-вызове **append-only** пишет hit в ВЫДЕЛЕННЫЙ контекст
+``forbidden-index-<body-corr>`` ТОЛЬКО когда тело содержит маркер (есть в индексируемом MIME-чанке с
+``To:``-заголовком, нет в query-embed'ах). В этот контекст пишет лишь маркер-embed → единственный писатель,
+без read-modify-write гонки. Тест читает ``list_size("forbidden-index-" + correlation_key)`` → ``0`` =
+no-history письмо НЕ проиндексировано (PASS). Прежний «динамический seed + sticky saw_match» развалился под
+параллельным lightrag-drain'ом (seed-гонка + потеря записей + ненадёжный thread-root header) — см. §3.6.3.
+Контур/idle подтверждает ``assert_full_mailflow_pipeline`` (GreenMail+state).
 """
 from __future__ import annotations
 
@@ -32,8 +35,7 @@ from .toolkit import (
 from .wiremock_client import (
     wiremock_public_base,
     wiremock_state_thread_root_call_sites,
-    wiremock_state_seed_context,
-    wiremock_state_thread_root_property,
+    wiremock_state_thread_root_list_size,
 )
 
 _WIREMOCK_STUBS_ROOT = Path(__file__).resolve().parent / "wiremock_stubs"
@@ -68,10 +70,10 @@ def test_lightrag_selective_indexing(
         try:
             rt = discover_runtime(project, repo_root=REPO_ROOT)
             wm_base = wiremock_public_base(rt.wiremock_host, rt.wiremock_port)
-            # Сид forbidden-маркера в СВОЙ thread-root контекст ДО drain (drain async, отстаёт от контура).
-            wiremock_state_seed_context(
-                wm_base, correlation_key, search_for=_FORBIDDEN_INDEX_MARKER
-            )
+            # Никакого динамического seed: forbidden-маркер (``To: ingress@localhost``) СТАТИЧЕН в
+            # generic index-стабе 011 (docs/E2E.md §3.6.3). Динамический seed гонится с конкурентными
+            # lightrag-embed'ами (доказано: seed коммитится ПОЗЖЕ embed'ов → маркер не виден) — поэтому
+            # его нет.
             assert_full_mailflow_pipeline(
                 LIGHTRAG_FILTER_SPEC,
                 project=project,
@@ -80,9 +82,8 @@ def test_lightrag_selective_indexing(
                 stub_tag=stub_tag,
                 correlation_key=correlation_key,
             )
-            # Drain async: дождаться, что indexing вообще сработал (lightrag_index в call-site списке) —
-            # иначе saw_match ещё не записан (читали бы пусто). 011 пишет cs-список и saw_match одним
-            # recordState под одним body-flag контекстом → присутствие cs гарантирует записанный saw_match.
+            # Drain async: дождаться, что embedding вообще сработал (lightrag_index в call-site списке) —
+            # иначе forbidden-проверка читала бы состояние до индексации.
             poll_until(
                 lambda: True
                 if "lightrag_index"
@@ -91,17 +92,18 @@ def test_lightrag_selective_indexing(
                 timeout=30.0,
                 desc="lightrag_index drained (011 fired)",
             )
-            saw = wiremock_state_thread_root_property(wm_base, correlation_key, "saw_match")
-            # Трёхзначный сигнал (StateHandlerbarHelper.getProperty + probe-default 'error'): "0"=стаб
-            # сработал, маркера нет (PASS); "1"=forbidden-маркер сматчен (drain проиндексировал ingress);
-            # "error"=property не записана в этот контекст → recordState не сработал ИЛИ context-ключ
-            # разошёлся (wiring-баг, НЕ регрессия продукта — отличаем явно, не молчим пустой строкой).
-            assert saw == "0", (
-                f"drain indexed a no-history ingress message ({_FORBIDDEN_INDEX_MARKER!r} reached "
-                f"the embeddings index); saw_match={saw!r}"
-                if saw == "1"
-                else f"saw_match not recorded under the thread-root context — recordState did not fire "
-                f"here (wiring/context-key, not a product regression); saw_match={saw!r}"
+            # Concurrency-safe forbidden-index проверка (docs/E2E.md §3.6.3): 011 APPEND'ит hit в контекст
+            # ``forbidden-index-<body-corr>`` ТОЛЬКО когда тело embed'а несёт ``To: ingress@localhost``
+            # (есть в ИНДЕКСИРУЕМОМ чанке, нет в query-embed'ах). Append-only в контекст, куда пишет лишь
+            # маркер-embed → единственный писатель, без read-modify-write гонки (в отличие от sticky-флага,
+            # который терял запись под конкуренцией). ``body-corr`` == ``correlation_key`` (Message-ID
+            # no-history письма в его собственном чанке). list_size 0 = письмо НЕ проиндексировано (PASS).
+            hits = wiremock_state_thread_root_list_size(
+                wm_base, f"forbidden-index-{correlation_key}"
+            )
+            assert hits == 0, (
+                f"drain indexed a no-history ingress message: {_FORBIDDEN_INDEX_MARKER!r} reached the "
+                f"embeddings index ({hits} forbidden-index hit(s) recorded for thread {correlation_key!r})."
             )
         except Exception:
             log.debug(

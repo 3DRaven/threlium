@@ -293,6 +293,9 @@ call-site список (§3.6.1) даёт **счёт/наличие** стади
 - **Наличие:** `"saw_X": "{{#if (contains request.body 'MARKER')}}1{{else}}…{{/if}}"`; тест: `saw_X == "1"`.
 - **Sticky** (для multi-hop: флаг не сбрасывать следующим вызовом без маркера) — в `{{else}}` читаем текущее
   значение: `{{state context=request.headers.[X-Threlium-Thread-Root] property='saw_X' default='0'}}`.
+  **⚠ Только для НЕ-конкурентных стадий** (reasoning/summarize — последовательны на handler-треде). На
+  КОНКУРЕНТНЫХ вызовах (lightrag-drain: много embed'ов параллельно на общий контекст) sticky read-modify-write
+  ТЕРЯЕТ записи — см. §3.6.3, там concurrency-safe append-only вместо sticky.
 - **Несколько вариантов:** `(or (contains … 'H1') (contains … 'H2') …)` (jknack `or` — вариадик).
 - **Отсутствие (нет negative matchers — они хрупки):** позитивный флаг «forbidden present» + ассерт `== "0"`.
   Посекционное отсутствие (контент запрещён в одной секции, допустим в другой) `contains` не выражает →
@@ -324,38 +327,54 @@ reasoning; memory → memory-note в reasoning; hitl → артефакт resume
 без LLM (`cli_exec`/`enrich_fast`/`egress_router`/`archive`) в call-site списке не видны — их эффект ловим
 именно этим content-flag или ответным письмом, не notmuch-папкой.
 
-### 3.6.3. Seeded-marker флаг на ОБЩЕМ (bootstrap) стабе — per-test проверка без своей логики в стабе ⭐
+### 3.6.3. Per-test флаг на ОБЩЕМ стабе под КОНКУРЕНЦИЕЙ — статический маркер + append-only ⭐
 
 Когда проверку нельзя положить на СВОЙ стаб теста, потому что сматченный стаб **общий, кросс-тестовый**
 (bootstrap-«случай, который не разделить» — напр. `011_embeddings_generic_index`: drain КАЖДОГО теста шлёт
 `lightrag_index`; свой стаб у теста невозможен — `priority` в сценарных стабах запрещён, развести нечем) —
-используем **seeded-marker**: тест задаёт, ЧТО искать, общий стаб это исполняет.
+общий стаб несёт **личный счётчик теста**: статически вычисляет нужный маркер и пишет его в контекст,
+ключёванный по тесту; ОСТАЛЬНЫЕ тесты этот счётчик просто не читают.
 
-**Механика** (подтверждена кодом `RecordStateEventListener`/`StateHandlerbarHelper`):
-- Тест при старте сидит в СВОЙ thread-root контекст property `search_for` (через setup-стаб
-  `…/state/setup`, тело `{correlation_key, search_for}`).
-- Общий стаб одним статическим `recordState` **читает `search_for` ИЗ контекста запроса**, `contains` его в
-  теле и **sticky-пишет флаг в ТОТ ЖЕ контекст**:
+**⚠ Грабли конкуренции (расследовано 2026-06-10 на `test_lightrag_index_filter_e2e`).** Наивный
+«seeded-marker + sticky-флаг» (тест динамически сидит `search_for`, общий стаб `contains`-ит его и
+sticky-пишет `saw_match` через read-modify-write) **разваливается под параллельным lightrag-drain'ом**.
+Три независимо доказанные причины (изолированные пробы прямым POST на живой WireMock, см. §3.6.4):
+1. **Thread-root HEADER не доходит до lightrag-вызовов надёжно.** Корреляция в lightrag идёт через ctxvar,
+   а HTTP-заголовок `X-Threlium-Thread-Root` под внутренней параллельностью lightrag (общий rag-loop, конкурентные
+   задачи/батчи) теряется/перемешивается. Значит `recordState.context = {{request.headers.[X-Threlium-Thread-Root]}}`
+   уезжает в пустой/чужой контекст. Надёжный коррелятор lightrag-вызова — **`regexExtract` Message-ID ИЗ ТЕЛА**
+   (он в чанке/запросе всегда есть). [Это разворачивает прежнюю рекомендацию «ключ = заголовок».]
+2. **Динамический `seed` гонится с embed'ами.** `search_for` сидится перед контуром, но конкурентные embed'ы
+   фаерят РАНЬШЕ коммита seed → читают `default` → маркер «не виден» (в пробе: seed стабильно коммитился
+   ПОЗЖЕ всех 40 embed'ов → флаг всегда `0`/пусто).
+3. **Read-modify-write теряет записи.** `recordState` на общий контекст не атомарен: sticky-флаг
+   (`{{else}}{{state … property='saw_match'}}{{/if}}`) и даже `list.addLast` ТЕРЯЮТ записи под контеншном
+   (в пробе: cs 37–50 из 50; sticky `1` затирался конкурентным `0` в 1 из 6 прогонов). Крайний случай —
+   inner `state`-read под контеншном отдаёт неконсистентное → `contains` бросает → `handleState` падает →
+   property не пишется вовсе (`/state/property` отдаёт probe-default `'error'`), хотя `list` соседнего
+   листенера всё равно лёг (отсюда «cs есть, флага нет» — внешне «невозможное» состояние).
+
+**Concurrency-safe идиома (рабочая): статический маркер + append-only в ВЫДЕЛЕННЫЙ контекст.**
+- Маркер **СТАТИЧЕН в стабе** (хардкод), не сидится тестом → seed-гонки (2) нет, и в `#if` НЕТ inner
+  `state`-read → нет источника throw (3-крайний).
+- Контекст ключуется по **body-corr** (`regexExtract` Message-ID), не по заголовку (1).
+- Запись — **`list.addLast` в контекст, куда пишет ТОЛЬКО маркер-embed**: при совпадении — `forbidden-index-<corr>`,
+  иначе — junk-контекст `_no_forbidden_marker`. В целевой контекст пишет лишь ОДИН embed → **единственный
+  писатель, нет read-modify-write гонки** (3 неприменимо). Тест читает `…/state/list_size`:
   ```
-  saw_match = {{#if (contains request.body (state context=<ключ> property='search_for' default='\0'))}}1
-              {{else}}{{state context=<ключ> property='saw_match' default='0'}}{{/if}}
+  context = {{#if (contains request.body 'To: ingress@localhost')}}forbidden-index-{{regexExtract request.body '<[A-Za-z0-9]{40,}@localhost>' default='_nocorr'}}{{else}}_no_forbidden_marker{{/if}}
+  list.addLast = { "hit": "1" }
   ```
-- Тест читает `saw_match` (`…/state/property`): forbidden-present → `== "0"`; required-present → `== "1"`.
+- Тест: `list_size("forbidden-index-" + correlation_key) == 0` (для no-history письма body-corr чанка ==
+  его собственный Message-ID == thread-root). `0` = не проиндексировано (PASS); `>0` = drain зря
+  проиндексировал (FAIL). **Отсутствие/наличие append-only — concurrency-safe** (потеря записи дала бы лишь
+  ложный PASS у НЕГАТИВНОГО ассерта, а ложный hit исключён: junk не читается).
 
-**Изоляция сохраняется сама собой:** `recordState.context` рендерится ПОФАЙЛОВО на каждый запрос
-(`createContextName`), thread-root динамичен (uuid) → у каждого теста **свой контекст**. Стаб НЕ держит
-test-specific логику — что искать задаёт тест, сидя это в свой контекст; другие тесты `search_for` не сидят
-→ `default` не матчит → no-op. Так на ОДНОМ общем стабе узнаём для каждого теста, сработал ли он на ЕГО
-контенте (значение можно расширить до **списка** встреченных маркеров — `list.addLast`).
-
-**Контекст-ключ = заголовок `X-Threlium-Thread-Root` (канон §3.6.1), НЕ `regexExtract` тела.** Грабли:
-`{{regexExtract request.body '<[A-Za-z0-9]{40,}@localhost>'}}` берёт **первый** `<…@localhost>` = это
-**Message-ID чанка** (из MIME `Message-ID:`), а thread-root `correlation_key` лежит ниже в dense-контексте
-(не первым) → флаг уехал бы в per-message контексты, тест прочёл бы пусто. Заголовок
-`X-Threlium-Thread-Root` надёжно `== correlation_key` на ВСЕХ запросах (вкл. entity-embeddings без корра в
-теле). Пример: `test_lightrag_index_filter_e2e` (selective indexing) — сидит `search_for="To: ingress@localhost"`,
-drain рендерит индексируемый документ с `To: <stage>` в теле, пропущенный ingress не рендерится → `saw_match == "0"`.
-Валидировано -n0 и -n4 (параллельный drain, скрамбла нет).
+Пример: `test_lightrag_index_filter_e2e` — индексируемый чанк несёт `To: ingress@localhost` (MIME-заголовок),
+query-embed его не несёт → у не-проиндексированного no-history письма hit'ов 0. Изоляционные пробы под 50
+конкурентных серверов: NOT-indexed → `0` (6/6), INDEXED → `1` (6/6); валидировано -n0 (green) и -n2.
+Маркер `To: …` НЕ уникален между тестами — изоляцию даёт body-corr контекст, чужие hit'ы лежат в чужих
+`forbidden-index-<MID>` и никем не читаются.
 
 **Отладка Handlebars — прямой WireMock-скрипт, без 40с e2e-прогонов.** Регистрируем на ЖИВОМ e2e-WireMock
 (`/__admin/mappings`) диагностический стаб, чей ОТВЕТ (`response-template`) ЭХАЕТ выражения по-кусочно
