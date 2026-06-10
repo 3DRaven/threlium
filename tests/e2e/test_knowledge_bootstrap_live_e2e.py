@@ -1,12 +1,12 @@
 """E2E: детерминированная bootstrap-индексация knowledge + инфраструктурные проверки.
 
-Детерминизм: probe-корпус ``e2e_bootstrap_probe.md`` ставится при cold reset
-(:func:`tests.e2e.toolkit.knowledge.e2e_install_deterministic_knowledge_corpus` в ``wipe_sync`` /
-``fsts_between_test_reset``), не в pytest-fixture.
-
-Reindex — ОДИН раз за сессию в cold-reset лидера (``conftest._e2e_wiremock_journal_reset_once``): flushall
-lightrag + рестарт engine (пере-эмбед probe) + второй рестарт без flushall (упражнение идемпотентности).
-Поэтому модуль больше НЕ serial: тесты читают результат **read-only**, совместимы с ``-n N`` (skipif снят).
+Детерминизм + reindex — ОДИН раз за сессию в cold-reset лидера
+(``conftest._e2e_wiremock_journal_reset_once``), НЕ в pytest-fixture и НЕ в теле теста: cold-reset
+снимает engine, делает wipe LightRAG (redis FLUSHALL + rm lightrag), заменяет запечённый корпус ОДНИМ
+probe-документом ``e2e_bootstrap_probe.md`` из тестовых ресурсов
+(:func:`tests.e2e.toolkit.knowledge.e2e_install_deterministic_knowledge_corpus`), поднимает engine
+(bootstrap эмбедит ровно probe) и делает второй рестарт без wipe (упражнение идемпотентности → dedup).
+Поэтому модуль НЕ serial: тесты читают результат **read-only**, совместимы с ``-n N``.
 
 Проверки (все read-only):
 - P1: на SUT в ``knowledge/`` — ровно один probe-документ;

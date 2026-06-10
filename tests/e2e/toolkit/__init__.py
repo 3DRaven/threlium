@@ -84,14 +84,9 @@ from .imap_checkpoint import (
     restart_email_bridge_service,
 )
 from .knowledge import (
-    bootstrap_embedding_entries,
-    bootstrap_embedding_entry_ids,
-    bootstrap_embedding_request_bodies,
-    e2e_bootstrap_reindex_and_wait,
-    e2e_bootstrap_scenario,
     e2e_install_deterministic_knowledge_corpus,
     e2e_restart_threlium_engine_only,
-    e2e_wait_engine_active,
+    e2e_wait_bootstrap_indexed,
 )
 from .lightrag_assert import (
     assert_notmuch_mailflow_thread_has_lightrag_indexed,

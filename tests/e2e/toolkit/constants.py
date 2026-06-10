@@ -101,12 +101,11 @@ E2E_SUM_ORIG_PAD_MARKER = "E2E-SUM-ORIG-PAD-MARKER"
 E2E_SUMMARIZE_LLM_NEEDLE = "context summarizer"
 
 E2E_KNOWLEDGE_PROBE_FILENAME = "e2e_bootstrap_probe.md"
+# Детерминированный probe-документ живёт в тестовых ресурсах (репо), а не инлайн-строкой: cold-reset
+# заменяет им весь запечённый knowledge-корпус перед reindex (см. e2e_install_deterministic_knowledge_corpus).
 _E2E_KNOWLEDGE_PROBE_CONTENT = (
-    "# E2E Bootstrap Probe\n"
-    "\n"
-    "Deterministic single-document corpus for the knowledge bootstrap indexing e2e.\n"
-    "Threlium routes ingress mail through the FSM pipeline and indexes knowledge here.\n"
-)
+    REPO_ROOT / "tests" / "e2e" / "fixtures" / E2E_KNOWLEDGE_PROBE_FILENAME
+).read_text(encoding="utf-8")
 E2E_BOOTSTRAP_THREAD_ROOT = "e2e-bootstrap"
 _E2E_LIGHTRAG_DOC_STATUS = f"{E2E_REMOTE_THRELIUM_HOME}/lightrag/kv_store_doc_status.json"
 E2E_GREENMAIL_READINESS_PROBE_FROM = "pytest-readiness@localhost"

@@ -73,7 +73,6 @@ except ImportError:
     DockerCompose = None  # type: ignore[misc, assignment]
 
 from .toolkit import (
-    E2E_PROJECT,
     E2E_SUT_IMAGE_ENV,
     TIMEOUT_POLL_SHORT,
     E2EComposeRuntime,
@@ -85,7 +84,6 @@ from .toolkit import (
     e2e_controller_hint_cleanup,
     e2e_controller_hint_read,
     e2e_controller_hint_write,
-    e2e_bootstrap_reindex_and_wait,
     e2e_flush_greenmail_inboxes,
     e2e_flush_sut_fsm_maildirs,
     e2e_install_deterministic_knowledge_corpus,
@@ -93,6 +91,7 @@ from .toolkit import (
     e2e_shared_compose_stack_is_healthy,
     e2e_start_threlium_user_pipeline_services,
     e2e_stop_threlium_user_pipeline_services,
+    e2e_wait_bootstrap_indexed,
     resolve_e2e_sut_image,
     run_greenmail_host_readiness_probe,
     wait_for_sut_threlium_user_workers_idle,
@@ -182,16 +181,33 @@ def _e2e_wiremock_journal_reset_once(
 ) -> None:
     """Один раз за **инвокацию pytest** (все xdist-процессы): session cold reset SUT + WireMock.
 
-    Под IPC-``FileLock`` лидер: stop user pipeline → полный flush Maildir/notmuch/LightRAG
-    и GreenMail → ``reset_request_journal`` + ``wiremock_state_reset_all_contexts`` +
-    ``reset_non_bootstrap_wiremock_mappings`` → bootstrap stubs → start pipeline → idle →
-    повторный сброс журнала. Между тестами pipeline **не** перезапускается и per-test чистки
-    **нет**: корреляторы динамичны (uuid у mailflow/isomorph) → прогоны/соседи не пересекаются,
-    изоляция = коррелятор (``docs/E2E.md`` §3.6.1); накопление сбрасывает session-flush.
+    Под IPC-``FileLock`` лидер выполняет ДЕТЕРМИНИРОВАННУЮ подготовку индекса **ровно один раз** до
+    параллельных тестов (поэтому это НЕ thrash — engine рестартует под локом, пока контуров ещё нет;
+    см. [[n4-coldreset-thrash-rootcause]]):
 
-  Изоляция WireMock между тестами: ``state-matcher`` + ``composite_context_key``
-    (уникальный ``correlation_key`` на запуск). В конце сессии pipeline **не** останавливается
-    (post-mortem); ``pytest_sessionfinish`` ждёт idle и проверяет пустой unmatched.
+    1. ``e2e_stop_threlium_user_pipeline_services`` — снять engine + work@ + sweep@ (мосты живут);
+    2. WireMock: ``reset_request_journal`` + ``wiremock_state_reset_all_contexts`` +
+       ``reset_non_bootstrap_wiremock_mappings`` + ``upsert_wiremock_compose_bootstrap_stubs`` и
+       ``e2e_flush_greenmail_inboxes`` + settle — опустошить ИСТОЧНИКИ (State/GreenMail), пока мост
+       не переинжектил утёкший update в ingress уже ПОСЛЕ flush;
+    3. ``e2e_flush_sut_fsm_maildirs`` (engine снят) — стереть Maildir + notmuch + **весь LightRAG**
+       (redis ``FLUSHALL`` + ``rm -rf lightrag``). КРИТИЧНО: в индекс LightRAG за прогон попадает не
+       только документ из ``knowledge/``, а КАЖДОЕ обработанное письмо → без этого wipe мусор писем
+       прошлого прогона переживёт сессию и исказит изоляцию;
+    4. ``e2e_install_deterministic_knowledge_corpus`` — заменить запечённый 27-доковый корпус ОДНИМ
+       маленьким probe-документом из тестовых ресурсов (``tests/e2e/fixtures``), чтобы reindex
+       проиндексировал ровно его;
+    5. ``e2e_start_threlium_user_pipeline_services`` — поднять engine на чистом сторе: bootstrap
+       индексирует ровно probe; ``e2e_wait_bootstrap_indexed`` — барьер (embedding в WireMock +
+       persist ``doc_status`` в redis), после которого индекс готов и тесты могут стартовать;
+    6. ``e2e_restart_threlium_engine_only`` — идемпотентный рестарт без wipe (LightRAG dedup →
+       ``[DUPLICATE:filename]``, который читает ``test_bootstrap_idempotent_on_restart``);
+    7. idle + повторный ``reset_request_journal``.
+
+    Между тестами pipeline **не** перезапускается и per-test чистки **нет**: корреляторы динамичны
+    (uuid у mailflow/isomorph) → прогоны/соседи не пересекаются, изоляция = коррелятор
+    (``docs/E2E.md`` §3.6.1). В конце сессии pipeline **не** останавливается (post-mortem);
+    ``pytest_sessionfinish`` ждёт idle и проверяет пустой unmatched.
 
     *session_tmp* уникален на каждый запуск pytest (xdist: ``getbasetemp().parent``).
     Маркер ``e2e_wm_journal_reset.done`` — только внутри одной инвокации pytest.
@@ -233,13 +249,16 @@ def _e2e_wiremock_journal_reset_once(
             upsert_wiremock_compose_bootstrap_stubs(wm)
             e2e_flush_greenmail_inboxes(rt)
             time.sleep(_E2E_BRIDGE_INJECT_SETTLE_SEC)
+            # SINK flush (engine снят): Maildir + notmuch + ВЕСЬ LightRAG (redis FLUSHALL + rm lightrag).
+            # В индекс за прогон попадает каждое обработанное письмо — без wipe мусор писем прошлой сессии
+            # пережил бы reset и исказил изоляцию. Engine ещё стоит → cozo/lancedb локи сняты, rm безопасен.
             e2e_flush_sut_fsm_maildirs(rt)
-            e2e_start_threlium_user_pipeline_services(rt)
-            wait_for_sut_threlium_user_workers_idle(pn, timeout=120.0)
-            reset_request_journal(wm)
+            # Детерминированный корпус: запечённые 27 playbook-доков → ОДИН маленький probe из тестовых
+            # ресурсов, чтобы стартующий engine проиндексировал ровно его (engine ещё стоит, до reindex).
+            e2e_install_deterministic_knowledge_corpus(rt)
         except Exception as e:
-            # Раннее, НЕ деструктивное для движка (стек ещё не готов) — можно безопасно повторить на
-            # следующем тесте (marker НЕ ставим).
+            # До старта engine: стек ещё снят, ничего деструктивного для параллельных контуров не сделано
+            # (их нет — мы под локом до тестов) → безопасно повторить на следующем тесте (marker НЕ ставим).
             log.warning(
                 "journal_reset_skipped",
                 error=repr(e),
@@ -247,24 +266,25 @@ def _e2e_wiremock_journal_reset_once(
             )
             return
 
-        # Bootstrap knowledge reindex — ОДИН раз за сессию здесь (лидер, до параллельных тестов), НЕ
-        # per-test: flushall lightrag + рестарт engine → bootstrap пере-эмбедит probe-корпус → embeddings
-        # (thread-root e2e-bootstrap) в свежем журнале + redis doc_status. Затем ВТОРОЙ рестарт engine БЕЗ
-        # flushall — упражняет идемпотентность (LightRAG dedup): второй старт не должен пере-эмбедить.
-        # Это сняло serial-skipif с test_knowledge_bootstrap_* (читают результат read-only под -n N).
+        # Bootstrap reindex — ОДИН раз за сессию здесь (лидер, до параллельных тестов): поднять engine на
+        # чистом сторе с probe-корпусом → bootstrap индексирует ровно probe (embedding thread-root
+        # e2e-bootstrap в свежем журнале + persist redis doc_status). Затем ВТОРОЙ рестарт engine БЕЗ wipe —
+        # упражняет идемпотентность (LightRAG dedup → [DUPLICATE:filename]); это сняло serial-skipif с
+        # test_knowledge_bootstrap_* (читают результат read-only под -n N).
         #
-        # THRASH-GUARD (n4-coldreset-thrash): эта часть ДЕСТРУКТИВНА для ОБЩЕГО движка (stop→wipe lightrag→
-        # start + ВТОРОЙ рестарт) и ОБЯЗАНА выполниться РОВНО ОДИН раз за сессию. Если bootstrap-WAIT упадёт
-        # под -n4 (doc_status probe timeout / LLM 404), повтор на каждом следующем тесте пере-рестартует
-        # общий движок → ``rag_shutdown_cancelled_tasks`` отменяет in-flight RAG ВСЕХ параллельных контуров →
-        # каскад таймаутов (thrash-петля, корень -n4-флака). Поэтому marker ставится НЕЗАВИСИМО от исхода
-        # wait: деструктивный рестарт уже применён, повторять его нельзя. Это НЕ маскировка timeout — корневую
-        # причину (LLM 404 на bootstrap-embeddings) чиним отдельно; здесь лишь защита общего стека от
-        # повторного деструктивного рестарта.
+        # THRASH-GUARD (n4-coldreset-thrash): со старта engine эта часть ДЕСТРУКТИВНА для ОБЩЕГО движка
+        # (рестарт отменяет in-flight RAG) и ОБЯЗАНА выполниться РОВНО ОДИН раз. Если barrier-wait упадёт
+        # (doc_status timeout / LLM 404), повтор на каждом следующем тесте пере-рестартовал бы общий движок →
+        # ``rag_shutdown_cancelled_tasks`` рубит контуры ВСЕХ параллельных тестов → каскад таймаутов. Поэтому
+        # marker ставится НЕЗАВИСИМО от исхода wait: рестарт уже применён, повторять его нельзя. Это НЕ
+        # маскировка timeout — корневую причину чиним отдельно; здесь лишь защита общего стека.
         try:
-            e2e_bootstrap_reindex_and_wait(rt)
+            reset_request_journal(wm)
+            e2e_start_threlium_user_pipeline_services(rt)
+            e2e_wait_bootstrap_indexed(rt)
             e2e_restart_threlium_engine_only(pn)
             wait_for_sut_threlium_user_workers_idle(pn, timeout=120.0)
+            reset_request_journal(wm)
         except Exception as e:
             log.warning(
                 "journal_reset_bootstrap_incomplete",
@@ -362,31 +382,20 @@ def _compose_prereq_failure_message() -> str | None:
     return None
 
 
-# Bootstrap-модуль: ``e2e_runtime`` только discover (reindex — helper из тела теста).
-_E2E_BOOTSTRAP_MODULE = "test_knowledge_bootstrap_live_e2e.py"
-
-
-def _e2e_request_is_bootstrap_module(request: pytest.FixtureRequest) -> bool:
-    p = getattr(request.node, "path", None)
-    return p is not None and Path(p).name == _E2E_BOOTSTRAP_MODULE
-
-
 @pytest.fixture(scope="function")
 def e2e_runtime(
     compose_stack: E2EComposeRuntime,
-    request: pytest.FixtureRequest,
 ) -> Generator[E2EComposeRuntime, None, None]:
-    """Per-test runtime: mailflow prep (pipeline + drain) или тихий discover для bootstrap-модуля."""
+    """Per-test runtime: read-only discover общего стека.
+
+    Никакой per-test подготовки (рестарт/чистка/reindex) — изоляция между тестами держится на
+    динамических корреляторах (``docs/E2E.md`` §3.6.1), а детерминированный bootstrap-индекс готовит
+    session cold-reset (:func:`_e2e_wiremock_journal_reset_once`) один раз до параллельных тестов.
+    """
     global _ACTIVE_E2E_PROJECT
     project_name = compose_stack.project_name
     _ACTIVE_E2E_PROJECT = project_name
     os.environ["COMPOSE_PROJECT_NAME"] = project_name
-
-    if _e2e_request_is_bootstrap_module(request):
-        rt = discover_runtime(project_name)
-        e2e_install_deterministic_knowledge_corpus(rt)
-        yield rt
-        return
 
     rt = discover_runtime(project_name)
     yield rt
