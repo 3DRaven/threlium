@@ -12,7 +12,6 @@ from threlium import nm
 from threlium.irt_chain import (
     IrtAncestorSnapshot,
     iter_in_reply_to_ancestors_from_inner_id,
-    materialize_irt_chain_under_db,
 )
 
 from threlium.types import (
@@ -208,31 +207,29 @@ def _route_from_irt_snapshots(
     raise RuntimeError(_EGRESS_TASK_NO_ROUTE_ANCESTOR)
 
 
-@nm.read_retry
 def resolve_egress_task_route_ancestor_with_thread_correlation(
     msg: EmailMessage,
     expect_type: type[_RouteT],
     *,
     wrong_route_type_message: Callable[[IngressRoute], str],
 ) -> tuple[_RouteT, EgressAncestorSnapshot, ResolvedRoute]:
-    """IRT-предок + thread-корреляция в **одном** коротком READ-сеансе notmuch → только VO наружу.
+    """IRT-предок + thread-корреляция (``tag:route`` в корне) → только VO наружу.
 
     Расширенная версия :func:`resolve_egress_task_route_ancestor` для egress-стадий с e2e-корреляцией
-    LiteLLM (Matrix): обход IRT-цепочки и поиск ``tag:route`` в корне notmuch-треда — под одним
-    ``with notmuch_database``. ``@nm.read_retry``: при discard'е ревизии под конкурентной записью сеанс
-    переоткрывается и материализуется заново (idempotent, ``notmuch2.Message`` не утекает)."""
+    LiteLLM (Matrix). IRT-цепочка — через единый stage-scoped механизм материализации
+    :func:`~threlium.irt_chain.iter_in_reply_to_ancestors_from_inner_id` (РОВНО раз на ``start_inner`` за
+    стадию, переиспользуется остальными обходами); поиск route-tag — свой короткий ``@nm.read_retry``-сеанс
+    по тому же ``start_inner``. Оба читают иммутабельные данные (цепочка предков + route-tag корня —
+    стабильны), отдельные сеансы безопасны и не утекают ``notmuch2.Message``."""
     start_inner = egress_fsm_start_inner_from_email(msg)
-    with nm.notmuch_database(write=False) as db:
-        chain = materialize_irt_chain_under_db(db, start_inner)
-        route_resolved = _route_from_irt_snapshots(chain)
-        r = route_resolved.api_payload
-        if not isinstance(r, expect_type):
-            raise RuntimeError(wrong_route_type_message(r))
-        snap = _egress_snap_from_resolved(route_resolved)
-        thread_resolved = resolve_route_from_thread_oldest_route_tag_under_db(
-            db, start_inner
-        )
-        return r, snap, thread_resolved
+    chain = iter_in_reply_to_ancestors_from_inner_id(start_inner)
+    route_resolved = _route_from_irt_snapshots(chain)
+    r = route_resolved.api_payload
+    if not isinstance(r, expect_type):
+        raise RuntimeError(wrong_route_type_message(r))
+    snap = _egress_snap_from_resolved(route_resolved)
+    thread_resolved = _resolve_route_from_thread_oldest_route_tag_by_inner(start_inner)
+    return r, snap, thread_resolved
 
 
 def resolve_route_from_thread_oldest_route_tag_under_db(

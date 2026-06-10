@@ -199,13 +199,6 @@ def _materialize_irt_chain(
     return result
 
 
-def materialize_irt_chain_under_db(
-    db: notmuch2.Database, start_inner: NotmuchMessageIdInner
-) -> list[IrtAncestorSnapshot]:
-    """Как :func:`iter_in_reply_to_ancestors_from_inner_id`, но под уже открытым READ ``db``."""
-    return _materialize_irt_chain(db, start_inner)
-
-
 # Кэш материализации IRT-цепочки на ВРЕМЯ одной FSM-стадии (per-message). Одна стадия обходит цепочку
 # МНОГО раз (enrich_context — 5 мест, task/collect, route-resolve, subagent-classifier, response/collect,
 # formal_reason_gate, enrich_fast…), каждый обход заново открывает notmuch и читает N предков × ~6
