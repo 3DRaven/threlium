@@ -1,6 +1,5 @@
 {
   "id": "c9d8e7f6-a5b4-4c3d-8e2f-1a0b9c8d7e6f",
-  "priority": 10,
   "request": {
     "method": "POST",
     "urlPathPattern": "^(/v1/chat/completions|/chat/completions)$",
