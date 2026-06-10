@@ -8,6 +8,7 @@ from pathlib import Path
 from structlog.contextvars import bind_contextvars, reset_contextvars
 
 from threlium.delivery import run_fdm
+from threlium.irt_chain import irt_chain_materialization_cache
 from threlium.logutil import logger
 from threlium.mail import email_message_from_bytes, serialize_rfc822_for_wire
 from threlium.settings import ThreliumSettings
@@ -94,25 +95,32 @@ def _run_stage(
 
         handler = STAGE_MAIN_HANDLERS[stage_vo]
 
-        if not settings.e2e.litellm_route_correlation:
-            out_msg = handler(msg, stage_vo, config=settings)
-        else:
-            corr = build_litellm_correlation_headers(msg, call_site=LitellmCallSite.FSM)
-            snap = LitellmCorrelationSnapshot.from_mapping(corr)
-            _log.debug(
-                "e2e_fsm_corr_set",
-                thread=threading.current_thread().name,
-                ident=threading.get_ident(),
-                route_tail=e2e_route_wire_tail(snap.route_wire),
-                call_site=snap.call_site,
-            )
-            # ContextVar (а не TLS): на синхронном FSM-потоке ведёт себя как thread-local (set→read на одном
-            # потоке), а token-reset гарантирует per-message-скоуп при переиспользовании потока воркером.
-            token = set_litellm_correlation_ctxvar(snap.as_dict())
-            try:
+        # IRT-цепочка иммутабельна в пределах обработки одной стадии, а хендлер+хелперы обходят её МНОГО раз
+        # (enrich_context — 5 мест, task/collect, route-resolve, subagent-classifier, response/collect, …).
+        # Активируем scope материализации ОДИН раз здесь, в stage-runner'е (универсально для любой стадии) —
+        # внутри ``iter_in_reply_to_ancestors_from_inner_id`` материализует цепочку из notmuch РОВНО раз на
+        # ``start_inner``, остальные обходы — из ambient-кэша scope (без правки сотен call-site'ов и без
+        # глобального кэша со staleness между растущими сообщениями треда).
+        with irt_chain_materialization_cache():
+            if not settings.e2e.litellm_route_correlation:
                 out_msg = handler(msg, stage_vo, config=settings)
-            finally:
-                reset_litellm_correlation_ctxvar(token)
+            else:
+                corr = build_litellm_correlation_headers(msg, call_site=LitellmCallSite.FSM)
+                snap = LitellmCorrelationSnapshot.from_mapping(corr)
+                _log.debug(
+                    "e2e_fsm_corr_set",
+                    thread=threading.current_thread().name,
+                    ident=threading.get_ident(),
+                    route_tail=e2e_route_wire_tail(snap.route_wire),
+                    call_site=snap.call_site,
+                )
+                # ContextVar (а не TLS): на синхронном FSM-потоке ведёт себя как thread-local (set→read на
+                # одном потоке), а token-reset гарантирует per-message-скоуп при переиспользовании потока.
+                token = set_litellm_correlation_ctxvar(snap.as_dict())
+                try:
+                    out_msg = handler(msg, stage_vo, config=settings)
+                finally:
+                    reset_litellm_correlation_ctxvar(token)
 
         if out_msg is None:
             _log.info("fsm_result_terminal")
